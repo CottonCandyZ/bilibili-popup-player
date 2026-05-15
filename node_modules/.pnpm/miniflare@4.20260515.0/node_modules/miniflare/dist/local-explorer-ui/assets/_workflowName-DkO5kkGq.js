@@ -1,1 +1,0 @@
-import{Gn as e,Ln as t}from"./index-BLt9UbtI.js";var n=e(),r=()=>(0,n.jsx)(t,{});export{r as component};

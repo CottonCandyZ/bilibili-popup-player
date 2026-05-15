@@ -1,3 +1,5 @@
+import { nodeResolve } from '@rollup/plugin-node-resolve';
+
 const userscriptBanner = `// ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
@@ -11,6 +13,7 @@ const userscriptBanner = `// ==UserScript==
 
 export default {
   input: 'src/main.js',
+  plugins: [nodeResolve({ browser: true })],
   output: {
     file: 'bilibili-popup-player-nano.user.js',
     format: 'iife',

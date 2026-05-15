@@ -1,3 +1,6 @@
+import { createEffect, createSignal, onCleanup } from 'solid-js';
+import { render } from 'solid-js/web';
+
   const APP = 'bili-popup-player-nano';
   const STYLE_ID = `${APP}-style`;
   const DOCUMENT_STYLE_ID = `${APP}-document-style`;
@@ -59,6 +62,10 @@
       switchingWindow: false,
     },
   };
+
+  const [modeSignal, setModeSignal] = createSignal(state.mode);
+  const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   window.__biliPopupPlayerNano = {
     scan,
@@ -410,6 +417,14 @@
       return;
     }
 
+    const mount = document.createElement('div');
+    state.shadowRoot.appendChild(mount);
+    const dispose = render(() => createSettingsPanel(), mount);
+    state.settings = { root: mount, dispose };
+    syncSettings();
+  }
+
+  function createSettingsPanel() {
     const root = document.createElement('div');
     root.className = SETTINGS_CLASS;
 
@@ -425,27 +440,38 @@
 
     menu.append(
       createSettingsLabel('播放模式'),
-      createOption('mode', 'home', '网页内弹窗'),
-      createOption('mode', 'pip', 'Document PiP'),
+      createSettingsOption('mode', 'home', '网页内弹窗'),
+      createSettingsOption('mode', 'pip', 'Document PiP'),
       createSettingsLabel('封面点击'),
-      createOption('direct', 'off', '按钮起播'),
-      createOption('direct', 'on', '封面起播'),
+      createSettingsOption('direct', 'off', '按钮起播'),
+      createSettingsOption('direct', 'on', '封面起播'),
     );
 
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      root.classList.toggle(`${APP}--open`);
+      setSettingsOpen((open) => !open);
     });
 
-    document.addEventListener('click', (event) => {
-      if (!root.contains(event.target)) root.classList.remove(`${APP}--open`);
-    }, true);
+    const closeOnDocumentClick = (event) => {
+      const path = event.composedPath?.() || [];
+      if (!path.includes(root)) setSettingsOpen(false);
+    };
+    document.addEventListener('click', closeOnDocumentClick, true);
+    onCleanup(() => document.removeEventListener('click', closeOnDocumentClick, true));
+
+    createEffect(() => {
+      root.classList.toggle(`${APP}--open`, settingsOpen());
+    });
+
+    createEffect(() => {
+      const mode = modeSignal();
+      const directClick = directClickSignal();
+      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'}`;
+    });
 
     root.append(button, menu);
-    state.shadowRoot.appendChild(root);
-    state.settings = { root, button, menu };
-    syncSettings();
+    return root;
   }
 
   function createSettingsIcon() {
@@ -510,42 +536,50 @@
     return label;
   }
 
-  function createOption(type, value, text) {
+  function createSettingsOption(type, value, text) {
     const option = document.createElement('button');
     option.type = 'button';
     option.className = `${SETTINGS_CLASS}__option`;
     option.dataset.type = type;
     option.dataset.value = value;
-    option.textContent = text;
     option.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
       if (type === 'mode') {
-        state.mode = value;
-        localStorage.setItem(STORAGE_MODE, value);
+        setPlaybackMode(value);
       } else if (type === 'direct') {
-        state.directClick = value === 'on';
-        localStorage.setItem(STORAGE_DIRECT_CLICK, state.directClick ? '1' : '0');
+        setDirectCoverClick(value === 'on');
       }
-      syncSettings();
+    });
+    createEffect(() => {
+      const active = type === 'mode'
+        ? modeSignal() === value
+        : type === 'direct'
+          ? directClickSignal() === (value === 'on')
+          : false;
+      option.classList.toggle(`${APP}--active`, active);
+      option.textContent = active ? `✓ ${text}` : text;
     });
     return option;
   }
 
   function syncSettings() {
-    state.settings?.menu.querySelectorAll(`.${SETTINGS_CLASS}__option`).forEach((option) => {
-      const active = option.dataset.type === 'mode'
-        ? option.dataset.value === state.mode
-        : option.dataset.type === 'direct'
-          ? option.dataset.value === (state.directClick ? 'on' : 'off')
-          : false;
-      option.classList.toggle(`${APP}--active`, active);
-      option.textContent = `${option.textContent.replace(/^✓\s*/, '')}`;
-      if (active) option.textContent = `✓ ${option.textContent}`;
-    });
-    if (state.settings?.button) {
-      state.settings.button.title = `小窗播放设置：${state.mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${state.directClick ? '封面起播' : '按钮起播'}`;
-    }
+    setModeSignal(state.mode);
+    setDirectClickSignal(state.directClick);
+    syncCardButtons();
+  }
+
+  function setPlaybackMode(value) {
+    state.mode = value;
+    localStorage.setItem(STORAGE_MODE, value);
+    setModeSignal(value);
+    syncCardButtons();
+  }
+
+  function setDirectCoverClick(value) {
+    state.directClick = value;
+    localStorage.setItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
+    setDirectClickSignal(value);
     syncCardButtons();
   }
 
@@ -1866,6 +1900,7 @@
     disposeHomeComments();
     disposePipComments();
     if (state.home.overlay) state.home.overlay.remove();
+    state.settings?.dispose?.();
     state.settings?.root?.remove();
     window.removeEventListener('scroll', scheduleOverlaySync, true);
     window.removeEventListener('resize', scheduleOverlaySync, true);
