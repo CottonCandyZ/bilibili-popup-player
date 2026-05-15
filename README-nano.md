@@ -10,7 +10,11 @@
 - 入口页：https://bilibili-popup-player-nano.pages.dev/
 - Userscript 直链：https://bilibili-popup-player-nano.pages.dev/bilibili-popup-player-nano.user.js
 
-安装方式：先安装 Tampermonkey / Violentmonkey / ScriptCat 这类用户脚本管理器，再打开 Userscript 直链。
+安装方式：先安装下面任意一个用户脚本管理器，再打开 Userscript 直链。
+
+- Tampermonkey：https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo
+- Violentmonkey：https://violentmonkey.github.io/get-it/
+- ScriptCat：https://chromewebstore.google.com/detail/scriptcat/ndcooeababalnlpkfedmmbbbgkljhpjf
 
 如果浏览器没有安装用户脚本管理器，点击 `.user.js` 链接通常只会打开或下载 JS 源码；它不会自动安装，也不会在 B 站页面里运行。
 
