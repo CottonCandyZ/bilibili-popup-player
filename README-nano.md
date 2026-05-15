@@ -16,8 +16,6 @@
 - Violentmonkey：https://violentmonkey.github.io/get-it/
 - ScriptCat：https://chromewebstore.google.com/detail/scriptcat/ndcooeababalnlpkfedmmbbbgkljhpjf
 
-如果浏览器没有安装用户脚本管理器，点击 `.user.js` 链接通常只会打开或下载 JS 源码；它不会自动安装，也不会在 B 站页面里运行。
-
 ## 架构
 
 - 共用卡片扫描、封面点击拦截、播放页 SSR 解析、主题 CSS、评论组件、调试入口。
