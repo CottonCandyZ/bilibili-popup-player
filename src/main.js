@@ -1,21 +1,40 @@
-import { createEffect, createSignal, onCleanup } from 'solid-js';
-import { render } from 'solid-js/web';
-
-  const APP = 'bili-popup-player-nano';
-  const STYLE_ID = `${APP}-style`;
-  const DOCUMENT_STYLE_ID = `${APP}-document-style`;
-  const HOST_ID = `${APP}-host`;
-  const BUTTON_CLASS = `${APP}__button`;
-  const BADGE_CLASS = `${APP}__badge`;
-  const SETTINGS_CLASS = `${APP}__settings`;
-  const STORAGE_MODE = `${APP}:mode`;
-  const STORAGE_DIRECT_CLICK = `${APP}:direct-click`;
-  const STORAGE_LAST_PLAYED = `${APP}:last-played`;
-  const ENABLED_URL_RE = /^https?:\/\/www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV)/;
-  const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
-  const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
-  const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
-  const THEME_BASE = 'https://s1.hdslb.com/bfs/seed/jinkela/short/bili-theme';
+import {
+  APP,
+  BADGE_CLASS,
+  BUTTON_CLASS,
+  DOCUMENT_STYLE_ID,
+  ENABLED_URL_RE,
+  HOST_ID,
+  SETTINGS_CLASS,
+  STORAGE_DIRECT_CLICK,
+  STORAGE_LAST_PLAYED,
+  STORAGE_MODE,
+  STYLE_ID,
+} from './constants.js';
+import { disposeCommentInstance, mountComments } from './comments.js';
+import {
+  createExternalLinkIcon,
+  createMaximizeIcon,
+  createMinimizeIcon,
+  externalLinkIconMarkup,
+} from './icons.js';
+import { getPlayerViewInfo } from './player-view-info.js';
+import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
+import { loadScriptOnce } from './script-loader.js';
+import { createSettingsUi } from './settings-ui.js';
+import { escapeHtml } from './text.js';
+import {
+  ensureBiliThemeStylesheets,
+  ensureStylesheetsInWindow,
+  getBiliThemeStylesheets,
+} from './theme.js';
+import {
+  getCardRoot,
+  getCurrentPageBvid,
+  getVideoMetaFromLink,
+  isCoverLink,
+  isPlaybackPage,
+} from './video-meta.js';
 
   if (ENABLED_URL_RE.test(location.href)) {
     bootstrap();
@@ -63,9 +82,11 @@ import { render } from 'solid-js/web';
     },
   };
 
-  const [modeSignal, setModeSignal] = createSignal(state.mode);
-  const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const settingsUi = createSettingsUi({
+    state,
+    getShadowRoot: () => state.shadowRoot,
+    syncCardButtons,
+  });
 
   window.__biliPopupPlayerNano = {
     scan,
@@ -412,107 +433,7 @@ import { render } from 'solid-js/web';
   }
 
   function ensureSettings() {
-    if (state.settings?.root?.isConnected) {
-      syncSettings();
-      return;
-    }
-
-    const mount = document.createElement('div');
-    state.shadowRoot.appendChild(mount);
-    const dispose = render(() => createSettingsPanel(), mount);
-    state.settings = { root: mount, dispose };
-    syncSettings();
-  }
-
-  function createSettingsPanel() {
-    const root = document.createElement('div');
-    root.className = SETTINGS_CLASS;
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `${SETTINGS_CLASS}__button`;
-    button.title = '小窗播放设置';
-    button.setAttribute('aria-label', '小窗播放设置');
-    button.appendChild(createSettingsIcon());
-
-    const menu = document.createElement('div');
-    menu.className = `${SETTINGS_CLASS}__menu`;
-
-    menu.append(
-      createSettingsLabel('播放模式'),
-      createSettingsOption('mode', 'home', '网页内弹窗'),
-      createSettingsOption('mode', 'pip', 'Document PiP'),
-      createSettingsLabel('封面点击'),
-      createSettingsOption('direct', 'off', '按钮起播'),
-      createSettingsOption('direct', 'on', '封面起播'),
-    );
-
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setSettingsOpen((open) => !open);
-    });
-
-    const closeOnDocumentClick = (event) => {
-      const path = event.composedPath?.() || [];
-      if (!path.includes(root)) setSettingsOpen(false);
-    };
-    document.addEventListener('click', closeOnDocumentClick, true);
-    onCleanup(() => document.removeEventListener('click', closeOnDocumentClick, true));
-
-    createEffect(() => {
-      root.classList.toggle(`${APP}--open`, settingsOpen());
-    });
-
-    createEffect(() => {
-      const mode = modeSignal();
-      const directClick = directClickSignal();
-      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'}`;
-    });
-
-    root.append(button, menu);
-    return root;
-  }
-
-  function createSettingsIcon() {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke-width', '2');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    [
-      ['path', { d: 'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915' }],
-      ['circle', { cx: '12', cy: '12', r: '3' }],
-    ].forEach(([name, attrs]) => {
-      const node = document.createElementNS('http://www.w3.org/2000/svg', name);
-      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
-      svg.appendChild(node);
-    });
-    return svg;
-  }
-
-  function createExternalLinkIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = externalLinkIconMarkup();
-    return template.content.firstElementChild;
-  }
-
-  function createMaximizeIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>';
-    return template.content.firstElementChild;
-  }
-
-  function createMinimizeIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3"></path><path d="M21 8h-3a2 2 0 0 1-2-2V3"></path><path d="M3 16h3a2 2 0 0 1 2 2v3"></path><path d="M16 21v-3a2 2 0 0 1 2-2h3"></path></svg>';
-    return template.content.firstElementChild;
-  }
-
-  function externalLinkIconMarkup() {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
+    settingsUi.ensure();
   }
 
   function openOriginalPage(href) {
@@ -529,58 +450,8 @@ import { render } from 'solid-js/web';
     syncVideoBadges();
   }
 
-  function createSettingsLabel(text) {
-    const label = document.createElement('div');
-    label.className = `${SETTINGS_CLASS}__label`;
-    label.textContent = text;
-    return label;
-  }
-
-  function createSettingsOption(type, value, text) {
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.className = `${SETTINGS_CLASS}__option`;
-    option.dataset.type = type;
-    option.dataset.value = value;
-    option.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (type === 'mode') {
-        setPlaybackMode(value);
-      } else if (type === 'direct') {
-        setDirectCoverClick(value === 'on');
-      }
-    });
-    createEffect(() => {
-      const active = type === 'mode'
-        ? modeSignal() === value
-        : type === 'direct'
-          ? directClickSignal() === (value === 'on')
-          : false;
-      option.classList.toggle(`${APP}--active`, active);
-      option.textContent = active ? `✓ ${text}` : text;
-    });
-    return option;
-  }
-
   function syncSettings() {
-    setModeSignal(state.mode);
-    setDirectClickSignal(state.directClick);
-    syncCardButtons();
-  }
-
-  function setPlaybackMode(value) {
-    state.mode = value;
-    localStorage.setItem(STORAGE_MODE, value);
-    setModeSignal(value);
-    syncCardButtons();
-  }
-
-  function setDirectCoverClick(value) {
-    state.directClick = value;
-    localStorage.setItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
-    setDirectClickSignal(value);
-    syncCardButtons();
+    settingsUi.sync();
   }
 
   function bindLink(link, meta = getVideoMetaFromLink(link)) {
@@ -783,38 +654,6 @@ import { render } from 'solid-js/web';
       if (token !== state.switchToken || renderer.isClosed(context)) return;
       renderer.fail(context, error);
     }
-  }
-
-  async function resolvePlaybackBootstrap(meta) {
-    const html = await fetch(meta.href, { credentials: 'include' }).then((res) => res.text());
-    const initialState = JSON.parse(extractAssignedJson(html, 'window.__INITIAL_STATE__'));
-    const playInfoJson = extractAssignedJson(html, 'window.__playinfo__');
-    const playInfo = playInfoJson ? JSON.parse(playInfoJson) : null;
-    const vd = initialState.videoData;
-    const p = Number(initialState.p || 1);
-    const page = vd.pages?.[p - 1] || vd.pages?.[0] || {};
-
-    return {
-      title: vd.title || meta.title,
-      coreScript: extractCoreScriptUrl(html) || CORE_FALLBACK,
-      commentScript: extractCommentScriptUrl(html) || COMMENT_FALLBACK,
-      stylesheets: extractStylesheetUrls(html),
-      initialState,
-      playInfo,
-      playerInfo: {
-        aid: vd.aid || initialState.aid,
-        bvid: vd.bvid || meta.bvid,
-        cid: page.cid || initialState.cid,
-        p,
-        t: 0,
-      },
-      href: meta.href,
-      commentInfo: {
-        params: `1,${vd.aid || initialState.aid}`,
-        spmPrefix: initialState.spmidPrefix || '333.788',
-        cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || '',
-      },
-    };
   }
 
   const homeRenderer = {
@@ -1302,156 +1141,6 @@ import { render } from 'solid-js/web';
     }, bootstrap, token);
   }
 
-  async function mountComments(adapter, bootstrap) {
-    const { slot, mount, targetDocument, getCtor, beforeLoad, getPlayer, getScrollContainer, isActive } = adapter;
-    if (!mount) return;
-    if (!slot.comments) mount.textContent = '评论加载中...';
-
-    try {
-      beforeLoad?.();
-      await loadScriptOnce(targetDocument, bootstrap.commentScript, getCtor);
-      if (!isActive()) return;
-
-      const CommentCtor = getCtor();
-      if (!CommentCtor) throw new Error('BiliComments not available after comment script load');
-
-      const props = buildCommentProps(bootstrap);
-      const scrollContainer = getScrollContainer?.();
-      if (reloadCommentInstance(slot.comments, props)) {
-        applyCommentScrollContainer(slot.comments, scrollContainer);
-        return;
-      }
-
-      mount.textContent = '';
-      slot.comments = mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer);
-      slot.comments.addEventListener?.('seek', (event) => {
-        try {
-          const { time } = event.detail || {};
-          getPlayer()?.seek?.({ value: time, autoplay: true });
-        } catch {
-          // Ignore seek bridge failures.
-        }
-      });
-    } catch (error) {
-      if (!isActive()) return;
-      mount.textContent = `评论加载失败：${error?.message || 'unknown'}`;
-    }
-  }
-
-  function mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer) {
-    const instance = new CommentCtor(props);
-    if (!scrollContainer) return instance.mount(mount);
-
-    const originalCreateElement = targetDocument.createElement;
-    targetDocument.createElement = function createElementWithScrollContainer(name, options) {
-      const element = originalCreateElement.call(this, name, options);
-      if (String(name).toLowerCase() === 'bili-comments') element.scrollContainer = scrollContainer;
-      return element;
-    };
-
-    try {
-      return instance.mount(mount);
-    } finally {
-      targetDocument.createElement = originalCreateElement;
-      applyCommentScrollContainer(instance, scrollContainer);
-    }
-  }
-
-  function applyCommentScrollContainer(instance, scrollContainer) {
-    if (!instance || !scrollContainer) return;
-    const element = instance.el?.current;
-    if (element) element.scrollContainer = scrollContainer;
-  }
-
-  function buildCommentProps(bootstrap) {
-    return {
-      params: bootstrap.commentInfo.params,
-      disableUpActions: true,
-      disableVideoTime: false,
-      lazyLoad: true,
-      cmFromTrackId: bootstrap.commentInfo.cmFromTrackId,
-      spmPrefix: bootstrap.commentInfo.spmPrefix,
-    };
-  }
-
-  function reloadCommentInstance(instance, props) {
-    if (!instance) return false;
-    if (instance.methods?.reload) {
-      instance.methods.reload(props);
-      return true;
-    }
-    if (instance.dispatchAction) {
-      instance.dispatchAction({ type: 'reload', args: [props], callback() {} });
-      return true;
-    }
-    return false;
-  }
-
-  function loadScriptOnce(targetDocument, src, isReady) {
-    if (isReady()) return Promise.resolve();
-
-    const attr = `data-${APP}-script`;
-    const existing = targetDocument.querySelector(`script[${attr}="${cssEscape(src)}"]`);
-    if (existing) {
-      return new Promise((resolve, reject) => {
-        existing.addEventListener('load', resolve, { once: true });
-        existing.addEventListener('error', reject, { once: true });
-      });
-    }
-
-    return new Promise((resolve, reject) => {
-      const script = targetDocument.createElement('script');
-      script.src = src;
-      script.crossOrigin = 'anonymous';
-      script.setAttribute(attr, src);
-      script.addEventListener('load', resolve, { once: true });
-      script.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
-      targetDocument.head.appendChild(script);
-    });
-  }
-
-  function ensureStylesheetsInWindow(targetWindow, stylesheets) {
-    const doc = targetWindow.document;
-    const existing = new Set([...doc.querySelectorAll('link[rel~="stylesheet"][href]')].map((link) => link.href));
-    [...new Set([...stylesheets, ...getBiliThemeStylesheets()])].forEach((href) => {
-      if (existing.has(href)) return;
-      const link = doc.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = href;
-      doc.head.appendChild(link);
-    });
-  }
-
-  function ensureBiliThemeStylesheets(targetDocument) {
-    const existing = new Set([...targetDocument.querySelectorAll('link[rel~="stylesheet"][href]')].map((link) => link.href));
-    getBiliThemeStylesheets().forEach((href) => {
-      if (existing.has(href)) return;
-      const link = targetDocument.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = href;
-      targetDocument.head.appendChild(link);
-    });
-  }
-
-  function getBiliThemeStylesheets() {
-    const themeStyle = getThemeStyle();
-    if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/dark.css`];
-    return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
-  }
-
-  function getThemeStyle() {
-    const value = getCookieValue('theme_style');
-    if (value === 'dark' || value === 'light') return value;
-    const hasDarkTheme = [...document.querySelectorAll('link[rel~="stylesheet"][href]')]
-      .some((link) => String(link.getAttribute('href')).includes('/bili-theme/dark.css'));
-    return hasDarkTheme ? 'dark' : 'light';
-  }
-
-  function getCookieValue(name) {
-    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-    return match ? decodeURIComponent(match[1]) : '';
-  }
-
   function saveLastPlayed(meta, bootstrap) {
     const next = {
       bvid: bootstrap.playerInfo?.bvid || meta.bvid,
@@ -1463,187 +1152,6 @@ import { render } from 'solid-js/web';
     localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
     syncSettings();
     syncVideoBadges();
-  }
-
-  function extractAssignedJson(html, marker) {
-    const start = html.indexOf(`${marker}=`);
-    if (start < 0) {
-      if (marker === 'window.__playinfo__') return null;
-      throw new Error(`${marker} not found`);
-    }
-
-    const jsonStart = start + marker.length + 1;
-    const first = html[jsonStart];
-    if (first !== '{' && first !== '[') throw new Error(`${marker} assignment is not JSON`);
-
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = jsonStart; i < html.length; i += 1) {
-      const char = html[i];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (char === '\\') escaped = true;
-        else if (char === '"') inString = false;
-        continue;
-      }
-      if (char === '"') inString = true;
-      else if (char === '{' || char === '[') depth += 1;
-      else if (char === '}' || char === ']') {
-        depth -= 1;
-        if (depth === 0) return html.slice(jsonStart, i + 1);
-      }
-    }
-    throw new Error(`${marker} JSON end not found`);
-  }
-
-  function extractCoreScriptUrl(html) {
-    const fromScript = html.match(/src="(\/\/s1\.hdslb\.com\/bfs\/static\/player\/main\/core\.[^"]+\.js)"/);
-    if (fromScript) return `https:${fromScript[1]}`;
-    const fromText = html.match(/\/\/s1\.hdslb\.com\/bfs\/static\/player\/main\/core\.[a-zA-Z0-9]+\.js/);
-    return fromText ? `https:${fromText[0]}` : null;
-  }
-
-  function extractCommentScriptUrl(html) {
-    const hash = html.match(/"comment_version_hash":"([^"]+)"/)?.[1];
-    if (hash) return `https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.${hash}.js`;
-    return null;
-  }
-
-  function extractStylesheetUrls(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const urls = [...doc.querySelectorAll('link[rel~="stylesheet"][href]')]
-      .map((link) => normalizeResourceUrl(link.getAttribute('href')))
-      .filter(Boolean);
-    return [...new Set(urls)];
-  }
-
-  function normalizeVideoHref(rawHref) {
-    if (!rawHref) return null;
-    try {
-      return new URL(rawHref, location.href).href;
-    } catch {
-      return null;
-    }
-  }
-
-  function normalizeResourceUrl(rawUrl) {
-    try {
-      return new URL(rawUrl, location.href).href;
-    } catch {
-      return null;
-    }
-  }
-
-  function getVideoMetaFromLink(link) {
-    const href = normalizeVideoHref(link.getAttribute('href') || link.href);
-    const match = href?.match(BV_RE);
-    if (!match) return null;
-    const title = link.getAttribute('title') ||
-      link.getAttribute('aria-label') ||
-      link.querySelector('img')?.getAttribute('alt') ||
-      link.closest('[title]')?.getAttribute('title') ||
-      'Bilibili 视频';
-    return { bvid: match[1], href, title: title.trim() || 'Bilibili 视频' };
-  }
-
-  function getCurrentPageBvid() {
-    return location.href.match(BV_RE)?.[1] || '';
-  }
-
-  function isPlaybackPage() {
-    return /^https?:\/\/www\.bilibili\.com\/video\/BV/.test(location.href);
-  }
-
-  function getCardRoot(link) {
-    return link.closest('.bili-video-card') ||
-      link.closest('.feed-card') ||
-      link.closest('.video-card') ||
-      link.closest('.video-page-card-small') ||
-      link.closest('.card-box') ||
-      link.closest('.recommended-card') ||
-      link.closest('[class*="video-card"]') ||
-      link.closest('[class*="video-page-card"]') ||
-      link.closest('[class*="feed-card"]') ||
-      link.parentElement;
-  }
-
-  function getButtonHost(link, card) {
-    const cover = link.closest('.bili-video-card__image') ||
-      link.closest('.bili-video-card__cover') ||
-      link.closest('.bili-video-card__wrap') ||
-      link.closest('.pic-box') ||
-      link.closest('.pic') ||
-      link.closest('.framepreview-box') ||
-      card.querySelector('.bili-video-card__image, .bili-video-card__cover, .bili-video-card__wrap, .pic-box, .pic, .framepreview-box, .cover, [class*="cover"]');
-    if (!cover) return card;
-    return cover.tagName === 'A' ? cover.parentElement || card : cover;
-  }
-
-  function isCoverLink(link) {
-    const coverSelector = '.bili-video-card__image, .bili-video-card__cover, .bili-video-card__wrap, .pic-box, .pic, .framepreview-box, .video-awesome-img, .cover, [class*="cover"], [class*="pic"], [class*="image"]';
-    return Boolean(
-      link.matches?.(coverSelector) ||
-      link.closest?.(coverSelector) ||
-      link.querySelector?.('img, picture, video, canvas, svg[class*="play"]') ||
-      /cover|pic|image/i.test(String(link.className || ''))
-    );
-  }
-
-  function getTidInfo(channel, tid) {
-    if (!channel || !tid) return null;
-    for (const item of channel) {
-      if (!item?.sub) continue;
-      for (const sub of item.sub) {
-        if (tid === sub.tid) {
-          return {
-            name: item.name,
-            route: item.route,
-            tid: item.tid,
-            url: item.url,
-            subName: sub.name,
-            subRoute: sub.route,
-            subUrl: sub.url,
-            subTid: sub.tid,
-          };
-        }
-      }
-    }
-    return null;
-  }
-
-  function getUpStaffs(staffData) {
-    if (!staffData?.length) return null;
-    return staffData.map((item) => ({ mid: item.mid, name: item.name, face: item.face }));
-  }
-
-  function getPlayerViewInfo(initialState) {
-    if (!initialState?.videoData) return null;
-    const vd = initialState.videoData;
-    const elecInfo = initialState.elecFullInfo;
-    const tidInfo = getTidInfo(initialState.channelKv, vd.tid_v2) || getTidInfo(initialState.channelKv, vd.tid) || { subTid: vd.tid_v2 || vd.tid };
-    return {
-      upInfo: initialState.upData ? {
-        mid: initialState.upData.mid,
-        name: initialState.upData.name,
-        face: initialState.upData.face,
-        fans: initialState.upData.fans,
-        staffs: getUpStaffs(initialState.staffData),
-      } : null,
-      storyInfo: {
-        title: vd.title,
-        tid: tidInfo.tid,
-        subTid: tidInfo.subTid,
-        likeIcon: vd.like_icon,
-        electricStatus: elecInfo?.show_info ? elecInfo.show_info.state : undefined,
-        stats: {
-          like: vd.stat?.like,
-          share: vd.stat?.share,
-          reply: vd.stat?.reply,
-          coin: vd.stat?.coin,
-        },
-      },
-    };
   }
 
   function updateDebug(primarySetting, bootstrap) {
@@ -1872,23 +1380,11 @@ import { render } from 'solid-js/web';
   }
 
   function disposeHomeComments() {
-    disposeCommentInstance('home');
+    disposeCommentInstance(state, 'home');
   }
 
   function disposePipComments() {
-    disposeCommentInstance('pip');
-  }
-
-  function disposeCommentInstance(kind) {
-    const current = state[kind].comments;
-    if (!current) return;
-    try {
-      current.destroy?.();
-      current.unmount?.();
-    } catch {
-      // Ignore comment cleanup failures.
-    }
-    state[kind].comments = null;
+    disposeCommentInstance(state, 'pip');
   }
 
   function destroy() {
@@ -1900,8 +1396,7 @@ import { render } from 'solid-js/web';
     disposeHomeComments();
     disposePipComments();
     if (state.home.overlay) state.home.overlay.remove();
-    state.settings?.dispose?.();
-    state.settings?.root?.remove();
+    settingsUi.destroy();
     window.removeEventListener('scroll', scheduleOverlaySync, true);
     window.removeEventListener('resize', scheduleOverlaySync, true);
     document.removeEventListener('mousemove', onDocumentMouseMove, true);
@@ -1913,16 +1408,4 @@ import { render } from 'solid-js/web';
     delete window.__biliPopupPlayerNano;
   }
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
-
-  function cssEscape(value) {
-    return String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-  }
   }

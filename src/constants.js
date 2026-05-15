@@ -1,0 +1,15 @@
+export const APP = 'bili-popup-player-nano';
+export const STYLE_ID = `${APP}-style`;
+export const DOCUMENT_STYLE_ID = `${APP}-document-style`;
+export const HOST_ID = `${APP}-host`;
+export const BUTTON_CLASS = `${APP}__button`;
+export const BADGE_CLASS = `${APP}__badge`;
+export const SETTINGS_CLASS = `${APP}__settings`;
+export const STORAGE_MODE = `${APP}:mode`;
+export const STORAGE_DIRECT_CLICK = `${APP}:direct-click`;
+export const STORAGE_LAST_PLAYED = `${APP}:last-played`;
+export const ENABLED_URL_RE = /^https?:\/\/www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV)/;
+export const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
+export const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
+export const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
+export const THEME_BASE = 'https://s1.hdslb.com/bfs/seed/jinkela/short/bili-theme';
