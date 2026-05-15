@@ -5,6 +5,15 @@
 - 播放模式：`网页内弹窗` / `Document PiP`
 - 封面点击：`按钮起播` / `封面起播`
 
+## 发布地址
+
+- 入口页：https://bilibili-popup-player-nano.pages.dev/
+- Userscript 直链：https://bilibili-popup-player-nano.pages.dev/bilibili-popup-player-nano.user.js
+
+安装方式：先安装 Tampermonkey / Violentmonkey / ScriptCat 这类用户脚本管理器，再打开 Userscript 直链。
+
+如果浏览器没有安装用户脚本管理器，点击 `.user.js` 链接通常只会打开或下载 JS 源码；它不会自动安装，也不会在 B 站页面里运行。
+
 ## 架构
 
 - 共用卡片扫描、封面点击拦截、播放页 SSR 解析、主题 CSS、评论组件、调试入口。
