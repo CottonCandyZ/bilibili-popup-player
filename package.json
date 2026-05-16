@@ -10,8 +10,11 @@
     "release": "node scripts/release.mjs"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@rollup/plugin-babel": "^7.0.0",
     "@rollup/plugin-node-resolve": "^16.0.3",
     "@rollup/plugin-terser": "^0.4.4",
+    "babel-preset-solid": "^1.9.12",
     "rollup": "^4.40.2",
     "wrangler": "^4.50.0"
   },

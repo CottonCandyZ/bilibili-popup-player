@@ -49,10 +49,19 @@ const CARD_ROOT_SELECTORS = [
   '[class*="feed-card"]',
 ];
 
-export function normalizeVideoHref(rawHref) {
+export const PLAYBACK_VIDEO_LINK_SELECTOR = [
+  '.video-page-card-small a[href*="/video/BV"]',
+  '.video-page-operator-card-small a[href*="/video/BV"]',
+  '.rec-list .video-page-card-small a[href*="/video/BV"]',
+  '.rec-list .video-page-operator-card-small a[href*="/video/BV"]',
+  '.recommend-list .video-page-card-small a[href*="/video/BV"]',
+  '.recommend-list .video-page-operator-card-small a[href*="/video/BV"]',
+].join(',');
+
+export function normalizeVideoHref(rawHref, baseUrl = location.href) {
   if (!rawHref) return '';
   try {
-    const url = new URL(rawHref, location.href);
+    const url = new URL(rawHref, baseUrl);
     if (!url.hostname.endsWith('bilibili.com')) return '';
     return url.href;
   } catch {
@@ -60,25 +69,25 @@ export function normalizeVideoHref(rawHref) {
   }
 }
 
-export function normalizeResourceUrl(rawUrl) {
+export function normalizeResourceUrl(rawUrl, baseUrl = location.href) {
   if (!rawUrl) return '';
   try {
-    return new URL(rawUrl, location.href).href;
+    return new URL(rawUrl, baseUrl).href;
   } catch {
     return '';
   }
 }
 
-export function getVideoMetaFromLink(link) {
-  const href = normalizeVideoHref(link.getAttribute('href') || link.href);
+export function getVideoMetaFromLink(link, baseUrl = location.href) {
+  const href = normalizeVideoHref(link.getAttribute('href') || link.href, baseUrl);
   const match = href?.match(BV_RE);
   if (!match) return null;
   const title = link.getAttribute('title') ||
     link.getAttribute('aria-label') ||
     link.querySelector('img')?.getAttribute('alt') ||
-    link.closest('[title]')?.getAttribute('title') ||
+    link.textContent ||
     'Bilibili 视频';
-  return { bvid: match[1], href, title: title.trim() || 'Bilibili 视频' };
+  return { bvid: match[1], href, title: cleanVideoTitle(title) };
 }
 
 export function getCurrentPageBvid() {
@@ -122,4 +131,10 @@ function countDistinctBvids(root) {
       .map((link) => normalizeVideoHref(link.getAttribute('href') || link.href).match(BV_RE)?.[1])
       .filter(Boolean),
   ).size;
+}
+
+function cleanVideoTitle(value) {
+  const title = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!title || title === '不感兴趣') return 'Bilibili 视频';
+  return title;
 }
