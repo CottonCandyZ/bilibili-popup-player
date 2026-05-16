@@ -2281,6 +2281,7 @@
       getState: () => state
     };
     ensureShadowUi();
+    ensureControlOverlay();
     ensureDocumentStyle();
     ensureSettings();
     scan();
@@ -2312,8 +2313,6 @@
       const root = host.attachShadow({
         mode: 'open'
       });
-      const overlay = document.createElement('div');
-      overlay.className = `${APP}__overlay`;
       const style = document.createElement('style');
       style.id = STYLE_ID;
       style.textContent = `
@@ -2489,10 +2488,23 @@
         background: transparent;
       }
     `;
-      root.append(style, overlay);
+      root.append(style);
       state.shadowHost = host;
       state.shadowRoot = root;
+    }
+    function ensureControlOverlay() {
+      if (state.overlay?.isConnected) return state.overlay;
+      document.getElementById(`${APP}-control-overlay`)?.remove();
+      const overlay = document.createElement('div');
+      overlay.id = `${APP}-control-overlay`;
+      overlay.className = `${APP}__control-overlay`;
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.zIndex = '2147480999';
+      overlay.style.pointerEvents = 'none';
+      document.documentElement.appendChild(overlay);
       state.overlay = overlay;
+      return overlay;
     }
     function ensureDocumentStyle() {
       if (document.getElementById(DOCUMENT_STYLE_ID)) return;
@@ -2578,6 +2590,10 @@
         color: #fff;
         border-color: var(--${APP}-brand);
         background: var(--${APP}-brand);
+      }
+
+      .${APP}__control-overlay.${APP}--playback-web-fullscreen {
+        display: none;
       }
 
       #${APP}-overlay {
@@ -3480,7 +3496,9 @@
       });
     }
     function syncSettingsVisibility() {
-      state.shadowHost?.classList.toggle(`${APP}--playback-web-fullscreen`, isPlaybackPageWebFullscreen());
+      const hidden = isPlaybackPageWebFullscreen();
+      state.shadowHost?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
+      state.overlay?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
     }
     function ensureCardHost(card) {
       const style = getComputedStyle(card);
@@ -3504,6 +3522,7 @@
       return [...(card.querySelectorAll?.('a[href*="/video/BV"]') || [])].find(candidate => getVideoMetaFromLink(candidate)?.bvid === bvid && isCoverLink(candidate)) || null;
     }
     function scan() {
+      ensureControlOverlay();
       [...document.querySelectorAll(getVideoLinkSelector())].sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a))).forEach(link => {
         const meta = getVideoMetaFromLink(link);
         if (!meta || meta.bvid === getCurrentPageBvid()) return;
@@ -5366,6 +5385,7 @@
       window.removeEventListener('scroll', scheduleViewportSync, true);
       window.removeEventListener('resize', scheduleViewportSync, true);
       state.shadowHost?.remove();
+      state.overlay?.remove();
       document.getElementById(DOCUMENT_STYLE_ID)?.remove();
       document.documentElement.style.overflow = '';
       delete window.__biliPopupPlayerNano;
