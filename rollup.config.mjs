@@ -5,7 +5,7 @@ const userscriptBanner = `// ==UserScript==
 // @namespace    https://www.bilibili.com/
 // @version      0.2.0
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
-// @author       Codex
+// @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
 // @run-at       document-idle
 // @grant        none

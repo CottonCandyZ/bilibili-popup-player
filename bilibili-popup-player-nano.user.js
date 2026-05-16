@@ -3,7 +3,7 @@
 // @namespace    https://www.bilibili.com/
 // @version      0.2.0
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
-// @author       Codex
+// @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
 // @run-at       document-idle
 // @grant        none
@@ -935,10 +935,9 @@
     return [node];
   }
 
-  function createSettingsUi({ state, getShadowRoot, syncCardButtons, syncCommentLayout }) {
+  function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
     const [modeSignal, setModeSignal] = createSignal(state.mode);
     const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
-    const [commentLayoutSignal, setCommentLayoutSignal] = createSignal(state.commentLayout);
     const [settingsOpen, setSettingsOpen] = createSignal(false);
 
     function ensure() {
@@ -975,9 +974,6 @@
         createSettingsLabel('封面点击'),
         createSettingsOption('direct', 'off', '按钮起播'),
         createSettingsOption('direct', 'on', '封面起播'),
-        createSettingsLabel('评论区'),
-        createSettingsOption('commentLayout', 'bottom', '评论在下'),
-        createSettingsOption('commentLayout', 'right', '评论在右'),
       );
 
       button.addEventListener('click', (event) => {
@@ -1000,8 +996,7 @@
       createEffect(() => {
         const mode = modeSignal();
         const directClick = directClickSignal();
-        const commentLayout = commentLayoutSignal();
-        button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'} / ${commentLayout === 'right' ? '评论在右' : '评论在下'}`;
+        button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'}`;
       });
 
       root.append(button, menu);
@@ -1026,16 +1021,13 @@
         event.stopPropagation();
         if (type === 'mode') setPlaybackMode(value);
         else if (type === 'direct') setDirectCoverClick(value === 'on');
-        else if (type === 'commentLayout') setCommentLayout(value);
       });
       createEffect(() => {
         const active = type === 'mode'
           ? modeSignal() === value
           : type === 'direct'
             ? directClickSignal() === (value === 'on')
-            : type === 'commentLayout'
-              ? commentLayoutSignal() === value
-              : false;
+            : false;
         option.classList.toggle(`${APP}--active`, active);
         option.textContent = active ? `✓ ${text}` : text;
       });
@@ -1045,9 +1037,7 @@
     function sync() {
       setModeSignal(state.mode);
       setDirectClickSignal(state.directClick);
-      setCommentLayoutSignal(state.commentLayout);
       syncCardButtons();
-      syncCommentLayout();
     }
 
     function setPlaybackMode(value) {
@@ -1055,13 +1045,6 @@
       localStorage.setItem(STORAGE_MODE, value);
       setModeSignal(value);
       syncCardButtons();
-    }
-
-    function setCommentLayout(value) {
-      state.commentLayout = value === 'right' ? 'right' : 'bottom';
-      localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
-      setCommentLayoutSignal(state.commentLayout);
-      syncCommentLayout();
     }
 
     function setDirectCoverClick(value) {
@@ -1130,6 +1113,9 @@
     const COMMENT_WIDTH_DEFAULT = 420;
     const COMMENT_WIDTH_MIN = 300;
     const COMMENT_WIDTH_MAX = 720;
+    const PLAYER_CHROME_HEIGHT = 48;
+    const PLAYER_CHROME_HEIGHT_WIDE = 56;
+    const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
 
     const initialLastPlayed = (() => {
       try {
@@ -1146,6 +1132,8 @@
       return clampCommentWidth(Number.isFinite(value) ? value : COMMENT_WIDTH_DEFAULT);
     })();
 
+    const initialCommentLayout = localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'bottom' ? 'bottom' : 'right';
+
     const state = {
       observer: null,
       scanTimer: 0,
@@ -1153,7 +1141,7 @@
       lastButton: null,
       mode: localStorage.getItem(STORAGE_MODE) === 'pip' ? 'pip' : 'home',
       directClick: localStorage.getItem(STORAGE_DIRECT_CLICK) === '1',
-      commentLayout: localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'right' ? 'right' : 'bottom',
+      commentLayout: initialCommentLayout,
       commentWidth: initialCommentWidth,
       lastPlayed: initialLastPlayed,
       pipPlaying: null,
@@ -1170,12 +1158,14 @@
         player: null,
         comments: null,
         bootstrap: null,
+        screenHandler: null,
       },
       pip: {
         win: null,
         player: null,
         comments: null,
         bootstrap: null,
+        screenHandler: null,
         switchingWindow: false,
       },
     };
@@ -1183,9 +1173,7 @@
     const settingsUi = createSettingsUi({
       state,
       getShadowRoot: () => state.shadowRoot,
-      syncCardButtons,
-      syncCommentLayout,
-    });
+      syncCardButtons});
 
     window.__biliPopupPlayerNano = {
       scan,
@@ -1429,7 +1417,7 @@
 
       #${APP}-header {
         display: grid;
-        grid-template-columns: 1fr auto auto auto auto auto;
+        grid-template-columns: 1fr auto auto auto auto;
         align-items: center;
         gap: 8px;
         min-width: 0;
@@ -1500,9 +1488,8 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-content {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 6px var(--${APP}-comments-width, 420px);
-        overflow-x: hidden;
-        overflow-y: auto;
+        grid-template-columns: minmax(0, 1fr) 10px var(--${APP}-comments-width, 420px);
+        overflow: hidden;
       }
 
       #${APP}-comments-resizer {
@@ -1511,16 +1498,29 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
         display: block;
-        min-width: 6px;
+        position: relative;
+        z-index: 2;
+        min-width: 10px;
         height: 100%;
         cursor: col-resize;
+        background: transparent;
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 4px;
+        width: 2px;
         background: var(--line_regular, #e3e5e7);
       }
 
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover,
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible,
-      #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer {
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover::before,
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible::before,
+      #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer::before {
         background: #fb7299;
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible {
         outline: none;
       }
 
@@ -1538,8 +1538,6 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap,
       #${APP}-overlay.${APP}--fullscreen.${APP}--comments-right #${APP}-player-wrap {
-        position: sticky;
-        top: 0;
         height: 100%;
       }
 
@@ -1558,11 +1556,13 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-comments {
         min-width: 0;
-        min-height: 100%;
-        height: auto;
+        min-height: 0;
+        height: 100%;
         padding: 18px 22px 40px;
-        overflow: visible;
-        border-left: 1px solid var(--line_regular, #e3e5e7);
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border-left: 0;
       }
 
       #${APP}-comments-title {
@@ -1575,6 +1575,11 @@
         min-height: 360px;
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
+      }
+
+      #${APP}-content .bili-comments-bottom-fixed-wrapper,
+      #${APP}-comments .bili-comments-bottom-fixed-wrapper {
+        display: none !important;
       }
 
       @media (max-width: 900px) {
@@ -1869,6 +1874,7 @@
       overlay.id = `${APP}-overlay`;
       overlay.setAttribute('role', 'dialog');
       overlay.setAttribute('aria-modal', 'true');
+      overlay.dataset.backdropPointer = '0';
 
       const dialog = document.createElement('section');
       dialog.id = `${APP}-dialog`;
@@ -1881,11 +1887,6 @@
 
       const status = document.createElement('div');
       status.id = `${APP}-status`;
-
-      const commentsToggle = document.createElement('button');
-      commentsToggle.type = 'button';
-      commentsToggle.className = `${APP}__header-button ${APP}__header-button--text`;
-      commentsToggle.addEventListener('click', toggleCommentLayout);
 
       const openOriginal = document.createElement('button');
       openOriginal.type = 'button';
@@ -1939,13 +1940,23 @@
       playerWrap.append(playerRoot);
       comments.append(commentsTitle, commentsMount);
       content.append(playerWrap, commentsResizer, comments);
-      header.append(title, status, commentsToggle, openOriginal, fullscreen, close);
+      header.append(title, status, openOriginal, fullscreen, close);
       dialog.append(header, content);
       overlay.appendChild(dialog);
       document.body.appendChild(overlay);
 
-      overlay.addEventListener('click', (event) => {
-        if (event.target === overlay) closeHome();
+      overlay.addEventListener('pointerdown', (event) => {
+        overlay.dataset.backdropPointer = event.target === overlay ? '1' : '0';
+      });
+
+      overlay.addEventListener('pointerup', (event) => {
+        const startedOnBackdrop = overlay.dataset.backdropPointer === '1';
+        overlay.dataset.backdropPointer = '0';
+        if (startedOnBackdrop && event.target === overlay) closeHome();
+      });
+
+      overlay.addEventListener('pointercancel', () => {
+        overlay.dataset.backdropPointer = '0';
       });
 
       openOriginal.addEventListener('click', () => {
@@ -1960,7 +1971,7 @@
       });
 
       state.home.overlay = overlay;
-      state.home.ui = { overlay, dialog, title, status, commentsToggle, openOriginal, fullscreen, close, content, playerWrap, playerRoot, commentsResizer, comments, commentsMount };
+      state.home.ui = { overlay, dialog, title, status, openOriginal, fullscreen, close, content, playerWrap, playerRoot, commentsResizer, comments, commentsMount };
       syncHomeCommentLayout();
       return state.home.ui;
     }
@@ -1993,6 +2004,7 @@
         autoplay: true,
         enableHEVC: true,
         enableAV1: true,
+        screenKind: getScreenKind(nano),
         revision: 1,
         viewInfo: getPlayerViewInfo(bootstrap.initialState),
       };
@@ -2011,6 +2023,7 @@
       syncHomeSize();
       await Promise.resolve(state.home.player.reload(setting, bootstrap.initialState?.nanoTheme));
       if (token !== state.switchToken || !state.home.player) return;
+      bindHomeScreenChange(state.home.player);
       state.home.ui.status.textContent = '播放器：已 reload';
       playHomeSoon(token, 300);
     }
@@ -2018,6 +2031,7 @@
     function createHomePlayer(bootstrap, token) {
       const setting = buildHomePrimarySetting(bootstrap);
       state.home.player = nano.createPlayer(setting, bootstrap.initialState?.nanoTheme);
+      bindHomeScreenChange(state.home.player);
       updateDebug(setting, bootstrap);
       state.home.player.connect();
       state.home.ui.status.textContent = '播放器：已 createPlayer';
@@ -2143,25 +2157,41 @@
       }
       body.comments-right #layout {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 6px var(--${APP}-comments-width, 420px);
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
+        grid-template-columns: minmax(0, 1fr) 10px var(--${APP}-comments-width, 420px);
+        overflow: hidden;
+      }
+      body.comments-right #stage {
+        grid-column: 1;
+        grid-row: 1;
       }
       #comments-resizer {
         display: none;
       }
       body.comments-right #comments-resizer {
         display: block;
-        min-width: 6px;
+        position: relative;
+        grid-column: 2;
+        grid-row: 1;
+        z-index: 2;
+        width: 10px;
+        min-width: 10px;
         height: 100vh;
         cursor: col-resize;
+        background: transparent;
+      }
+      body.comments-right #comments-resizer::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 4px;
+        width: 2px;
         background: var(--line_regular, #e3e5e7);
       }
-      body.comments-right #comments-resizer:hover,
-      body.comments-right #comments-resizer:focus-visible,
-      body.resizing-comments #comments-resizer {
+      body.comments-right #comments-resizer:hover::before,
+      body.comments-right #comments-resizer:focus-visible::before,
+      body.resizing-comments #comments-resizer::before {
         background: #fb7299;
+      }
+      body.comments-right #comments-resizer:focus-visible {
         outline: none;
       }
       #stage {
@@ -2172,16 +2202,12 @@
         height: 100vh;
         background: #000;
       }
-      body.comments-right #stage {
-        position: sticky;
-        top: 0;
-      }
       #bilibili-player {
         position: relative;
         width: 100% !important;
         height: 100% !important;
-        min-width: 100%;
-        min-height: 100%;
+        min-width: 0;
+        min-height: 0;
         overflow: hidden;
         background: #000;
       }
@@ -2198,42 +2224,62 @@
         background: var(--bg1, #fff);
       }
       body.comments-right #comments {
+        grid-column: 3;
+        grid-row: 1;
         min-width: 0;
-        min-height: 100vh;
-        height: auto;
+        min-height: 0;
+        height: 100vh;
         padding: 18px 20px 40px;
-        overflow: visible;
-        border-left: 1px solid var(--line_regular, #e3e5e7);
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border-left: 0;
       }
       #${APP}-pip-controls {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        height: 100%;
-        margin-left: 4px;
+        position: static !important;
+        z-index: auto !important;
+        transform: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        height: 100% !important;
+        margin: 0 14px 0 0 !important;
+        padding: 0 !important;
+        vertical-align: middle !important;
+        pointer-events: auto !important;
+        flex: 0 0 auto !important;
       }
-      #${APP}-pip-controls a,
-      #${APP}-pip-controls button {
-        height: 28px;
-        min-width: 34px;
-        padding: 0 8px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border: 0;
-        border-radius: 4px;
-        color: #fff;
-        background: rgba(255, 255, 255, 0.12);
-        text-decoration: none;
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
+      #${APP}-pip-controls a {
+        all: unset;
+        box-sizing: border-box !important;
+        position: relative !important;
+        top: -8px !important;
+        width: auto !important;
+        height: 100% !important;
+        min-width: auto !important;
+        max-width: none !important;
+        padding: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 auto !important;
+        border: 0 !important;
+        color: #fff !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        text-decoration: none !important;
+        white-space: nowrap !important;
+        font: 600 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        letter-spacing: 0 !important;
+        cursor: pointer !important;
+        opacity: 0.92 !important;
+        text-shadow: 0 0 2px rgba(0, 0, 0, 0.6) !important;
       }
       #${APP}-pip-controls a:hover,
-      #${APP}-pip-controls a:focus-visible,
-      #${APP}-pip-controls button:hover,
-      #${APP}-pip-controls button:focus-visible {
-        background: rgba(251, 114, 153, 0.92);
-        outline: none;
+      #${APP}-pip-controls a:focus-visible {
+        color: #fff !important;
+        background: transparent !important;
+        outline: none !important;
+        opacity: 1 !important;
       }
       #comments h2 {
         margin: 0 0 16px;
@@ -2244,6 +2290,10 @@
         min-height: 360px;
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
+      }
+      #layout .bili-comments-bottom-fixed-wrapper,
+      #comments .bili-comments-bottom-fixed-wrapper {
+        display: none !important;
       }
     </style>
   </head>
@@ -2299,6 +2349,7 @@
       await Promise.resolve(state.pip.player.reload(setting, bootstrap.initialState?.nanoTheme));
       if (token !== state.switchToken || targetWindow.closed || targetWindow.player !== state.pip.player) return;
 
+      bindPipScreenChange(targetWindow, state.pip.player);
       syncPipSize(targetWindow);
       mountPipComments(targetWindow, bootstrap, token);
       setPipStatus('已切换');
@@ -2330,6 +2381,7 @@
       targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
       state.pip.player = player;
       player.connect();
+      bindPipScreenChange(targetWindow, player);
       ensurePipPlayerControls(targetWindow, bootstrap.href);
       syncPipSize(targetWindow);
       setPipStatus('已创建播放器');
@@ -2346,6 +2398,7 @@
       }, 800);
 
       targetWindow.addEventListener('pagehide', () => {
+        if (state.pip.player === player) unbindPipScreenChange();
         try {
           player.disconnect?.();
         } catch {
@@ -2374,6 +2427,7 @@
         autoplay: true,
         enableHEVC: true,
         enableAV1: true,
+        screenKind: getScreenKind(targetWindow.nano),
         revision: 1,
         viewInfo: getPlayerViewInfo(bootstrap.initialState),
       };
@@ -2383,7 +2437,7 @@
 
     async function mountPipComments(targetWindow, bootstrap, token) {
       state.pip.bootstrap = bootstrap;
-      return mountComments({
+      const result = await mountComments({
         slot: state.pip,
         mount: targetWindow.document?.getElementById('comments-mount'),
         targetDocument: targetWindow.document,
@@ -2392,17 +2446,18 @@
         getScrollContainer: () => getPipCommentsScrollContainer(targetWindow),
         isActive: () => token === state.switchToken && !targetWindow.closed,
       }, bootstrap);
-    }
-
-    function toggleCommentLayout() {
-      setCommentLayout(state.commentLayout === 'right' ? 'bottom' : 'right');
+      attachPipCommentScrollSync(targetWindow);
+      schedulePipLayoutSync(targetWindow);
+      return result;
     }
 
     function setCommentLayout(value) {
       const next = value === 'right' ? 'right' : 'bottom';
+      if (state.commentLayout === next) return;
       state.commentLayout = next;
-      localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
-      settingsUi.sync();
+      localStorage.setItem(STORAGE_COMMENT_LAYOUT, next);
+      syncCommentLayout();
+      remountCommentsForLayout();
     }
 
     function syncCommentLayout() {
@@ -2435,14 +2490,11 @@
       const ui = state.home.ui;
       if (!ui?.overlay) return;
       ui.overlay.classList.toggle(`${APP}--comments-right`, state.commentLayout === 'right');
-      ui.commentsToggle.textContent = state.commentLayout === 'right' ? '评论在下' : '评论在右';
-      ui.commentsToggle.title = state.commentLayout === 'right' ? '移动评论到下方' : '移动评论到右侧';
-      ui.commentsToggle.setAttribute('aria-label', ui.commentsToggle.title);
       syncCommentWidth();
     }
 
     function getHomeCommentsScrollContainer() {
-      return state.home.ui?.content;
+      return state.commentLayout === 'right' ? state.home.ui?.comments : state.home.ui?.content;
     }
 
     function syncPipCommentLayout(targetWindow, options = {}) {
@@ -2452,20 +2504,85 @@
       const { resize = true } = options;
       body.classList.toggle('comments-right', state.commentLayout === 'right');
       body.classList.toggle('comments-bottom', state.commentLayout !== 'right');
-      const toggle = targetWindow.document.getElementById(`${APP}-pip-comment-toggle`);
-      if (toggle) {
-        toggle.textContent = state.commentLayout === 'right' ? '评论下' : '评论右';
-        toggle.title = state.commentLayout === 'right' ? '移动评论到下方' : '移动评论到右侧';
-        toggle.setAttribute('aria-label', toggle.title);
-      }
       syncCommentWidth();
+      attachPipCommentScrollSync(targetWindow);
       if (resize) syncPipSize(targetWindow);
+    }
+
+    function remountCommentsForLayout() {
+      const token = state.switchToken;
+      if (state.home.bootstrap && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) {
+        disposeHomeComments();
+        if (state.home.ui.commentsMount) state.home.ui.commentsMount.textContent = '评论加载中...';
+        mountHomeComments(state.home.bootstrap, token);
+      }
+      if (state.pip.bootstrap && state.pip.win && !state.pip.win.closed) {
+        disposePipComments();
+        const mount = state.pip.win.document?.getElementById('comments-mount');
+        if (mount) mount.textContent = '评论加载中...';
+        mountPipComments(state.pip.win, state.pip.bootstrap, token);
+      }
     }
 
     function getPipCommentsScrollContainer(targetWindow) {
       if (!targetWindow || targetWindow.closed) return null;
       const doc = targetWindow.document;
-      return doc.getElementById('layout');
+      return state.commentLayout === 'right' ? doc.getElementById('comments') : doc.getElementById('layout');
+    }
+
+    function getScreenKind(runtime) {
+      const key = state.commentLayout === 'bottom' ? 'Wide' : 'Normal';
+      return runtime?.ScreenKind?.[key] ?? (key === 'Wide' ? 1 : 0);
+    }
+
+    function isScreenKind(runtime, value, key) {
+      return value === runtime?.ScreenKind?.[key] || value === (key === 'Wide' ? 1 : 0);
+    }
+
+    function handleScreenChanged(runtime, detail) {
+      if (!detail?.mainTrigger) return;
+      if (isScreenKind(runtime, detail.mainScreen, 'Wide')) setCommentLayout('bottom');
+      else if (isScreenKind(runtime, detail.mainScreen, 'Normal')) setCommentLayout('right');
+    }
+
+    function bindHomeScreenChange(player) {
+      unbindHomeScreenChange();
+      const eventType = window.nano?.EventType?.Player_Statue_Changed;
+      if (!player?.on || !eventType) return;
+      const handler = (event) => handleScreenChanged(window.nano, event?.detail);
+      player.on(eventType, handler);
+      state.home.screenHandler = { player, eventType, handler };
+    }
+
+    function unbindHomeScreenChange() {
+      const binding = state.home.screenHandler;
+      if (!binding) return;
+      try {
+        binding.player?.off?.(binding.eventType, binding.handler);
+      } catch {
+        // Ignore event cleanup failures.
+      }
+      state.home.screenHandler = null;
+    }
+
+    function bindPipScreenChange(targetWindow, player) {
+      unbindPipScreenChange();
+      const eventType = targetWindow.nano?.EventType?.Player_Statue_Changed;
+      if (!player?.on || !eventType) return;
+      const handler = (event) => handleScreenChanged(targetWindow.nano, event?.detail);
+      player.on(eventType, handler);
+      state.pip.screenHandler = { player, eventType, handler };
+    }
+
+    function unbindPipScreenChange() {
+      const binding = state.pip.screenHandler;
+      if (!binding) return;
+      try {
+        binding.player?.off?.(binding.eventType, binding.handler);
+      } catch {
+        // Ignore event cleanup failures.
+      }
+      state.pip.screenHandler = null;
     }
 
     function attachPipCommentResizer(targetWindow) {
@@ -2474,6 +2591,24 @@
       if (!resizer || resizer.__biliPopupPlayerNanoResizeBound) return;
       resizer.__biliPopupPlayerNanoResizeBound = true;
       resizer.addEventListener('pointerdown', (event) => startCommentWidthDrag(event, targetWindow));
+    }
+
+    function attachPipCommentScrollSync(targetWindow) {
+      if (!targetWindow || targetWindow.closed) return;
+      const comments = targetWindow.document?.getElementById('comments');
+      if (!comments || comments.__biliPopupPlayerNanoScrollSyncBound) return;
+      comments.__biliPopupPlayerNanoScrollSyncBound = true;
+      comments.addEventListener('scroll', () => schedulePipLayoutSync(targetWindow), { passive: true });
+    }
+
+    function schedulePipLayoutSync(targetWindow) {
+      if (!targetWindow || targetWindow.closed) return;
+      if (targetWindow.__biliPopupPlayerNanoLayoutSyncFrame) return;
+      targetWindow.__biliPopupPlayerNanoLayoutSyncFrame = targetWindow.requestAnimationFrame(() => {
+        targetWindow.__biliPopupPlayerNanoLayoutSyncFrame = 0;
+        if (targetWindow.closed || state.pip.win !== targetWindow) return;
+        syncPipSize(targetWindow);
+      });
     }
 
     function startCommentWidthDrag(event, targetWindow) {
@@ -2545,9 +2680,11 @@
 
       const attach = () => {
         if (!isCurrentControlsRun() || targetWindow.closed || !doc.body) return false;
-        const bar = findPipControlBar(doc);
-        if (!bar) return false;
-        if (controls.parentNode !== bar) bar.appendChild(controls);
+        const slot = findPipOriginalButtonSlot(doc);
+        if (!slot?.container) return false;
+        if (controls.parentNode !== slot.container || controls.nextSibling !== slot.before) {
+          slot.container.insertBefore(controls, slot.before || null);
+        }
         syncPipCommentLayout(targetWindow);
         return true;
       };
@@ -2599,29 +2736,26 @@
       original.rel = 'noopener noreferrer';
       original.title = '打开原播放页';
       original.setAttribute('aria-label', '打开原播放页');
-      original.textContent = '原片';
+      original.textContent = '原页面';
 
-      const commentToggle = doc.createElement('button');
-      commentToggle.id = `${APP}-pip-comment-toggle`;
-      commentToggle.type = 'button';
-      commentToggle.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleCommentLayout();
-      });
-
-      controls.append(original, commentToggle);
+      controls.append(original);
       return controls;
     }
 
-    function findPipControlBar(doc) {
-      return doc.querySelector([
+    function findPipOriginalButtonSlot(doc) {
+      const container = doc.querySelector([
         '.bpx-player-control-bottom-right',
         '.bpx-player-control-bottom .bpx-player-control-bottom-right',
         '.bpx-player-control-wrap .bpx-player-control-bottom-right',
         '.bpx-player-ctrl-right',
-        '.bpx-player-control-bottom',
       ].join(','));
+      if (!container) return null;
+      const quality = container.querySelector([
+        '.bpx-player-ctrl-quality',
+        '[aria-label="清晰度"]',
+        'button[aria-label="清晰度"]',
+      ].join(','));
+      return { container, before: quality || container.firstElementChild };
     }
 
     function saveLastPlayed(meta, bootstrap) {
@@ -2663,12 +2797,48 @@
 
     function syncHomeSize() {
       if (!state.home.ui?.playerRoot?.isConnected) return;
+      syncHomePlayerFrame();
       try {
         state.home.player?.resize?.();
       } catch {
         // Ignore resize failures.
       }
       window.dispatchEvent(new Event('resize'));
+    }
+
+    function syncHomePlayerFrame() {
+      const ui = state.home.ui;
+      if (!ui?.dialog || !ui.content || !ui.playerWrap) return;
+      if (state.commentLayout === 'right') {
+        ui.dialog.style.height = '';
+        ui.playerWrap.style.height = '';
+        return;
+      }
+
+      const availableWidth = ui.content.clientWidth;
+      if (!availableWidth) return;
+
+      const headerHeight = 46;
+      const desiredHeight = Math.round((availableWidth * 9) / 16 + getHomePlayerChromeHeight());
+      const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
+      if (!fullscreen) {
+        const desiredDialogHeight = desiredHeight + headerHeight;
+        const maxDialogHeight = Math.max(320, window.innerHeight - 32);
+        ui.dialog.style.height = `${Math.min(desiredDialogHeight, maxDialogHeight)}px`;
+      } else {
+        ui.dialog.style.height = '';
+      }
+
+      const availableHeight = fullscreen
+        ? ui.content.clientHeight || window.innerHeight
+        : Math.max(1, Math.min(desiredHeight, window.innerHeight - 32 - headerHeight));
+      ui.playerWrap.style.height = `${Math.min(desiredHeight, availableHeight)}px`;
+    }
+
+    function getHomePlayerChromeHeight() {
+      return window.innerWidth >= PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT
+        ? PLAYER_CHROME_HEIGHT_WIDE
+        : PLAYER_CHROME_HEIGHT;
     }
 
     function syncHomeFullscreenButton() {
@@ -2690,8 +2860,8 @@
       const height = Math.max(1, Math.floor(rect?.height || targetWindow.innerHeight));
       root.style.width = `${width}px`;
       root.style.height = `${height}px`;
-      root.style.minWidth = `${width}px`;
-      root.style.minHeight = `${height}px`;
+      root.style.minWidth = '0px';
+      root.style.minHeight = '0px';
       try {
         state.pip.player?.resize?.();
       } catch {
@@ -2704,8 +2874,8 @@
         const nextHeight = Math.max(1, Math.floor(nextRect?.height || targetWindow.innerHeight));
         root.style.width = `${nextWidth}px`;
         root.style.height = `${nextHeight}px`;
-        root.style.minWidth = `${nextWidth}px`;
-        root.style.minHeight = `${nextHeight}px`;
+        root.style.minWidth = '0px';
+        root.style.minHeight = '0px';
         try {
           state.pip.player?.resize?.();
         } catch {
@@ -2855,6 +3025,7 @@
 
     function disposeHomePlayer() {
       if (!state.home.player) return;
+      unbindHomeScreenChange();
       try {
         state.home.player.disconnect?.();
       } catch {
@@ -2865,6 +3036,7 @@
 
     function disposePipPlayer() {
       if (!state.pip.player) return;
+      unbindPipScreenChange();
       try {
         state.pip.player.disconnect?.();
       } catch {
