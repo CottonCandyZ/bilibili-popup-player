@@ -309,17 +309,17 @@ export function createCommentsTabsUi({
 
     const title = targetDocument.createElement('div');
     title.className = `${APP}__playlist-title`;
+    const titleText = targetDocument.createElement('span');
+    titleText.className = `${APP}__playlist-title-text`;
     if (selected) {
       const playing = targetDocument.createElement('img');
       playing.className = `${APP}__playlist-playing`;
       playing.src = PLAYING_ICON_URL;
       playing.alt = '';
       playing.loading = 'lazy';
-      title.appendChild(playing);
+      titleText.appendChild(playing);
     }
-    const titleText = targetDocument.createElement('span');
-    titleText.className = `${APP}__playlist-title-text`;
-    titleText.textContent = card.title || 'Bilibili 视频';
+    titleText.appendChild(targetDocument.createTextNode(card.title || 'Bilibili 视频'));
     title.appendChild(titleText);
     info.appendChild(title);
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.2.2
+// @version      3.2.3
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -857,17 +857,17 @@
       info.className = `${APP}__playlist-info`;
       const title = targetDocument.createElement('div');
       title.className = `${APP}__playlist-title`;
+      const titleText = targetDocument.createElement('span');
+      titleText.className = `${APP}__playlist-title-text`;
       if (selected) {
         const playing = targetDocument.createElement('img');
         playing.className = `${APP}__playlist-playing`;
         playing.src = PLAYING_ICON_URL;
         playing.alt = '';
         playing.loading = 'lazy';
-        title.appendChild(playing);
+        titleText.appendChild(playing);
       }
-      const titleText = targetDocument.createElement('span');
-      titleText.className = `${APP}__playlist-title-text`;
-      titleText.textContent = card.title || 'Bilibili 视频';
+      titleText.appendChild(targetDocument.createTextNode(card.title || 'Bilibili 视频'));
       title.appendChild(titleText);
       info.appendChild(title);
       if (card.subtitle) {
@@ -2782,9 +2782,9 @@
       .${APP}__playlist-playing {
         width: 16px;
         height: 16px;
-        flex: 0 0 auto;
-        display: block;
-        margin: 2px 4px 0 0;
+        display: inline-block;
+        margin: 0 4px 0 0;
+        vertical-align: -3px;
       }
 
       .${APP}__playlist-cover {
@@ -2836,9 +2836,6 @@
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
-        display: flex;
-        align-items: flex-start;
-        gap: 0;
         color: var(--text1, #18191c);
         font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
@@ -3890,9 +3887,9 @@
       .${APP}__playlist-playing {
         width: 16px;
         height: 16px;
-        flex: 0 0 auto;
-        display: block;
-        margin: 2px 4px 0 0;
+        display: inline-block;
+        margin: 0 4px 0 0;
+        vertical-align: -3px;
       }
       .${APP}__playlist-cover {
         position: relative;
@@ -3939,9 +3936,6 @@
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
-        display: flex;
-        align-items: flex-start;
-        gap: 0;
         color: var(--text1, #18191c);
         font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }

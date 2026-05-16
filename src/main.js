@@ -860,9 +860,9 @@ import {
       .${APP}__playlist-playing {
         width: 16px;
         height: 16px;
-        flex: 0 0 auto;
-        display: block;
-        margin: 2px 4px 0 0;
+        display: inline-block;
+        margin: 0 4px 0 0;
+        vertical-align: -3px;
       }
 
       .${APP}__playlist-cover {
@@ -914,9 +914,6 @@ import {
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
-        display: flex;
-        align-items: flex-start;
-        gap: 0;
         color: var(--text1, #18191c);
         font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
@@ -2027,9 +2024,9 @@ import {
       .${APP}__playlist-playing {
         width: 16px;
         height: 16px;
-        flex: 0 0 auto;
-        display: block;
-        margin: 2px 4px 0 0;
+        display: inline-block;
+        margin: 0 4px 0 0;
+        vertical-align: -3px;
       }
       .${APP}__playlist-cover {
         position: relative;
@@ -2076,9 +2073,6 @@ import {
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
-        display: flex;
-        align-items: flex-start;
-        gap: 0;
         color: var(--text1, #18191c);
         font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
