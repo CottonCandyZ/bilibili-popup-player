@@ -152,9 +152,9 @@ export function createCommentsTabsUi({
     const cards = bootstrap ? getPagePartCards(bootstrap) : [];
     state[kind].pageCards = cards;
     setSelectedPageKey(kind, bootstrap ? getSelectedPageKey(bootstrap) : '');
+    syncPageTabVisibility(kind, Boolean(cards.length));
     const ui = getUi(kind);
     if (!ui?.pagesList || !ui.pagesEmpty) return;
-    syncPageTabVisibility(kind, Boolean(cards.length));
     renderCardList({
       list: ui.pagesList,
       empty: ui.pagesEmpty,
@@ -531,8 +531,7 @@ function getPagePartCards(bootstrap) {
     .filter(Boolean);
   if (pageCards.length > 1) return pageCards;
 
-  const episodes = (Array.isArray(vd.ugc_season?.sections) ? vd.ugc_season.sections : [])
-    .flatMap((section) => Array.isArray(section?.episodes) ? section.episodes : []);
+  const episodes = getSeasonEpisodes(bootstrap);
   if (episodes.length <= 1) return [];
   return episodes
     .map((episode, index) => buildSeasonEpisodeCard({ episode, fallbackBvid: bvid, fallbackHref: href, index }))
@@ -564,15 +563,37 @@ function buildSeasonEpisodeCard({ episode, fallbackBvid, fallbackHref, index }) 
   if (!bvid || !href) return null;
   return {
     bvid,
-    cid: episode.cid,
+    cid: episode.cid || episode.page?.cid,
     cover: normalizeResourceUrl(episode.arc?.pic || episode.cover),
-    duration: formatDuration(episode.duration),
+    duration: formatDuration(episode.duration || episode.page?.duration || episode.arc?.duration),
     href,
     page: pageNo,
     pageKey: `${bvid}:${pageNo}`,
     subtitle: episode.arc?.title || '',
-    title: `${pageNo}. ${cleanText(episode.title || episode.part) || '未命名片段'}`,
+    stats: episode.arc?.stat,
+    title: `${pageNo}. ${cleanText(episode.title || episode.part || episode.page?.part) || '未命名片段'}`,
   };
+}
+
+function getSeasonEpisodes(bootstrap) {
+  const vd = bootstrap?.initialState?.videoData || {};
+  const candidates = [
+    vd.ugc_season,
+    bootstrap?.initialState?.sectionsInfo,
+    bootstrap?.initialState?.ugcSeason,
+  ];
+  for (const season of candidates) {
+    const episodes = extractSeasonEpisodes(season);
+    if (episodes.length > 1) return episodes;
+  }
+  return [];
+}
+
+function extractSeasonEpisodes(season) {
+  if (!season) return [];
+  if (Array.isArray(season.episodes)) return season.episodes;
+  return (Array.isArray(season.sections) ? season.sections : [])
+    .flatMap((section) => Array.isArray(section?.episodes) ? section.episodes : []);
 }
 
 function getSelectedPageKey(bootstrap) {

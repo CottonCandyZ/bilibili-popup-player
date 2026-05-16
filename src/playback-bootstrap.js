@@ -118,6 +118,8 @@ function buildInitialStateFromApis({ meta, p, relatedItems, videoData }) {
     p,
     videoData,
     related: relatedItems,
+    sectionsInfo: videoData.ugc_season || null,
+    sectionsFavState: false,
     spmidPrefix: '333.788',
     upData: {
       mid: owner.mid,

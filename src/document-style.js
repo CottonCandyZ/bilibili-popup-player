@@ -238,11 +238,12 @@ export function installDocumentStyle(targetDocument = document) {
         height: 32px;
         display: inline-grid;
         place-items: center;
-        border: 0;
+        border: 1px solid transparent;
         border-radius: 6px;
         color: var(--${APP}-text-subtle);
         background: transparent;
         cursor: pointer;
+        transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
       }
 
       .${APP}__header-button:disabled {
@@ -255,6 +256,11 @@ export function installDocumentStyle(targetDocument = document) {
         width: 17px;
         height: 17px;
         display: block;
+        stroke: currentColor;
+        transition: stroke 0.16s ease;
+      }
+
+      .${APP}__header-button svg * {
         stroke: currentColor;
       }
 
@@ -269,14 +275,18 @@ export function installDocumentStyle(targetDocument = document) {
       .${APP}__header-button:focus-visible,
       .${APP}__header-button.${APP}__header-button--active {
         color: var(--${APP}-brand);
+        border-color: rgba(251, 114, 153, 0.32);
         background: var(--${APP}-surface-soft);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
         outline: none;
       }
 
       .${APP}__header-button:disabled:hover,
       .${APP}__header-button:disabled:focus-visible {
         color: var(--${APP}-text-muted);
+        border-color: transparent;
         background: transparent;
+        box-shadow: none;
       }
 
       .${APP}__modal-resize-handle {

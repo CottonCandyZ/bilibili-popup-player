@@ -752,9 +752,9 @@ import {
 
   function shouldUseCardOverlayFor(link, card) {
     if (isPlaybackPage() || isSpacePage()) return true;
-    if (card?.tagName === 'A') return true;
+    if (card?.tagName === 'A') return false;
     const host = getCardControlHost(link, card);
-    return host?.tagName === 'A';
+    return host?.tagName === 'A' && !(host.parentElement && card?.contains?.(host.parentElement));
   }
 
   function getCardRect(entry) {

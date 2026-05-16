@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.3.15
+// @version      3.3.17
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -693,9 +693,9 @@
       const cards = bootstrap ? getPagePartCards(bootstrap) : [];
       state[kind].pageCards = cards;
       setSelectedPageKey(kind, bootstrap ? getSelectedPageKey(bootstrap) : '');
+      syncPageTabVisibility(kind, Boolean(cards.length));
       const ui = getUi(kind);
       if (!ui?.pagesList || !ui.pagesEmpty) return;
-      syncPageTabVisibility(kind, Boolean(cards.length));
       renderCardList({
         list: ui.pagesList,
         empty: ui.pagesEmpty,
@@ -1045,7 +1045,7 @@
       cover: vd.pic
     })).filter(Boolean);
     if (pageCards.length > 1) return pageCards;
-    const episodes = (Array.isArray(vd.ugc_season?.sections) ? vd.ugc_season.sections : []).flatMap(section => Array.isArray(section?.episodes) ? section.episodes : []);
+    const episodes = getSeasonEpisodes(bootstrap);
     if (episodes.length <= 1) return [];
     return episodes.map((episode, index) => buildSeasonEpisodeCard({
       episode,
@@ -1089,15 +1089,30 @@
     if (!bvid || !href) return null;
     return {
       bvid,
-      cid: episode.cid,
+      cid: episode.cid || episode.page?.cid,
       cover: normalizeResourceUrl(episode.arc?.pic || episode.cover),
-      duration: formatDuration$2(episode.duration),
+      duration: formatDuration$2(episode.duration || episode.page?.duration || episode.arc?.duration),
       href,
       page: pageNo,
       pageKey: `${bvid}:${pageNo}`,
       subtitle: episode.arc?.title || '',
-      title: `${pageNo}. ${cleanText$1(episode.title || episode.part) || '未命名片段'}`
+      stats: episode.arc?.stat,
+      title: `${pageNo}. ${cleanText$1(episode.title || episode.part || episode.page?.part) || '未命名片段'}`
     };
+  }
+  function getSeasonEpisodes(bootstrap) {
+    const vd = bootstrap?.initialState?.videoData || {};
+    const candidates = [vd.ugc_season, bootstrap?.initialState?.sectionsInfo, bootstrap?.initialState?.ugcSeason];
+    for (const season of candidates) {
+      const episodes = extractSeasonEpisodes(season);
+      if (episodes.length > 1) return episodes;
+    }
+    return [];
+  }
+  function extractSeasonEpisodes(season) {
+    if (!season) return [];
+    if (Array.isArray(season.episodes)) return season.episodes;
+    return (Array.isArray(season.sections) ? season.sections : []).flatMap(section => Array.isArray(section?.episodes) ? section.episodes : []);
   }
   function getSelectedPageKey(bootstrap) {
     const info = bootstrap?.playerInfo;
@@ -1917,11 +1932,12 @@
         height: 32px;
         display: inline-grid;
         place-items: center;
-        border: 0;
+        border: 1px solid transparent;
         border-radius: 6px;
         color: var(--${APP}-text-subtle);
         background: transparent;
         cursor: pointer;
+        transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
       }
 
       .${APP}__header-button:disabled {
@@ -1934,6 +1950,11 @@
         width: 17px;
         height: 17px;
         display: block;
+        stroke: currentColor;
+        transition: stroke 0.16s ease;
+      }
+
+      .${APP}__header-button svg * {
         stroke: currentColor;
       }
 
@@ -1948,14 +1969,18 @@
       .${APP}__header-button:focus-visible,
       .${APP}__header-button.${APP}__header-button--active {
         color: var(--${APP}-brand);
+        border-color: rgba(251, 114, 153, 0.32);
         background: var(--${APP}-surface-soft);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
         outline: none;
       }
 
       .${APP}__header-button:disabled:hover,
       .${APP}__header-button:disabled:focus-visible {
         color: var(--${APP}-text-muted);
+        border-color: transparent;
         background: transparent;
+        box-shadow: none;
       }
 
       .${APP}__modal-resize-handle {
@@ -2771,6 +2796,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     }), mount);
     return {
       ...refs,
+      commentsTabs,
       mount,
       dispose: () => {
         disposeSolid();
@@ -3832,6 +3858,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       p,
       videoData,
       related: relatedItems,
+      sectionsInfo: videoData.ugc_season || null,
+      sectionsFavState: false,
       spmidPrefix: '333.788',
       upData: {
         mid: owner.mid,
@@ -4762,9 +4790,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function shouldUseCardOverlayFor(link, card) {
       if (isPlaybackPage() || isSpacePage()) return true;
-      if (card?.tagName === 'A') return true;
+      if (card?.tagName === 'A') return false;
       const host = getCardControlHost(link, card);
-      return host?.tagName === 'A';
+      return host?.tagName === 'A' && !(host.parentElement && card?.contains?.(host.parentElement));
     }
     function getCardRect(entry) {
       const cardRect = entry.card.getBoundingClientRect();

@@ -57,6 +57,7 @@ export function mountHomePlayerPage({
 
   return {
     ...refs,
+    commentsTabs,
     mount,
     dispose: () => {
       disposeSolid();
