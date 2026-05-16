@@ -1,6 +1,6 @@
 # Bilibili Popup Player - Nano
 
-合并版 userscript，支持首页视频卡片和播放页推荐视频卡片。只保留一个右下角设置入口，dropdown 里切换：
+合并版 userscript，支持首页、播放页推荐、UP 主空间页、历史记录和搜索页的视频卡片。只保留一个右下角设置入口，dropdown 里切换：
 
 - 播放模式：`网页内弹窗` / `Document PiP`
 - 封面点击：`按钮起播` / `封面起播`
@@ -20,7 +20,7 @@
 
 - 共用卡片扫描、封面点击拦截、播放页 SSR 解析、主题 CSS、评论组件、调试入口。
 - 宿主页上的设置按钮、卡片按钮、状态 badge 都渲染在一个 shadow overlay 里，不改动 B 站卡片 DOM。
-- 播放页会跳过当前主视频的 BV，只扫描推荐视频卡片，避免改动播放页 header/主应用 DOM。
+- 播放页会跳过当前主视频的 BV，只扫描推荐视频卡片；首页、空间页、历史记录和搜索页会扫描页面内视频卡片。
 - 评论组件保留在我们自己的 modal/PiP 容器内。
 - 播放容器通过 renderer adapter 区分：
   - `homeRenderer`：当前网页内 modal。

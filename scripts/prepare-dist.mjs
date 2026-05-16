@@ -1,9 +1,10 @@
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, writeFile } from 'node:fs/promises';
 
 const fileName = 'bilibili-popup-player-nano.user.js';
 
 await mkdir('dist', { recursive: true });
 await copyFile(fileName, `dist/${fileName}`);
+await cp('assets', 'dist/assets', { recursive: true, force: true });
 await writeFile(
   'dist/index.html',
   `<!doctype html>

@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      0.2.1
+// @version      0.2.2
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
+// @match        https://space.bilibili.com/*
+// @match        https://search.bilibili.com/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -23,7 +25,7 @@
   const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
   const STORAGE_COMMENT_WIDTH = `${APP}:comment-width`;
   const STORAGE_LAST_PLAYED = `${APP}:last-played`;
-  const ENABLED_URL_RE = /^https?:\/\/www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV)/;
+  const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/)/;
   const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
   const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
   const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
@@ -327,18 +329,33 @@
   function getCardRoot(link) {
     return link.closest('.bili-video-card') ||
       link.closest('.feed-card') ||
+      link.closest('.bili-video-card__wrap') ||
+      link.closest('.small-item') ||
+      link.closest('.history-card') ||
+      link.closest('.history-record') ||
+      link.closest('.bili-history-card') ||
+      link.closest('.video-item') ||
+      link.closest('.video-list-item') ||
+      link.closest('.search-card') ||
+      link.closest('.search-item') ||
+      link.closest('.list-item') ||
+      link.closest('.section-item') ||
       link.closest('.video-card') ||
       link.closest('.video-page-card-small') ||
       link.closest('.card-box') ||
       link.closest('.recommended-card') ||
       link.closest('[class*="video-card"]') ||
       link.closest('[class*="video-page-card"]') ||
+      link.closest('[class*="history"]') ||
+      link.closest('[class*="search"]') ||
+      link.closest('[class*="list-item"]') ||
+      link.closest('[class*="small-item"]') ||
       link.closest('[class*="feed-card"]') ||
       link.parentElement;
   }
 
   function isCoverLink(link) {
-    const coverSelector = '.bili-video-card__image, .bili-video-card__cover, .bili-video-card__wrap, .pic-box, .pic, .framepreview-box, .video-awesome-img, .cover, [class*="cover"], [class*="pic"], [class*="image"]';
+    const coverSelector = '.bili-video-card__image, .bili-video-card__cover, .bili-video-card__wrap, .pic-box, .pic, .framepreview-box, .video-awesome-img, .cover, .cover-contain, .history-card__cover, .bili-history-card__cover, [class*="cover"], [class*="pic"], [class*="image"], [class*="poster"], [class*="thumbnail"]';
     return Boolean(
       link.matches?.(coverSelector) ||
       link.closest?.(coverSelector) ||
