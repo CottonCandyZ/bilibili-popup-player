@@ -25,11 +25,11 @@ export function ensureBiliThemeStylesheets(targetDocument) {
 
 export function getBiliThemeStylesheets() {
   const themeStyle = getThemeStyle();
-  if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/dark.css`];
+  if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/dark.css`];
   return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
 }
 
-function getThemeStyle() {
+export function getThemeStyle() {
   const value = getCookieValue('theme_style');
   if (value === 'dark' || value === 'light') return value;
   const hasDarkTheme = [...document.querySelectorAll('link[rel~="stylesheet"][href]')]

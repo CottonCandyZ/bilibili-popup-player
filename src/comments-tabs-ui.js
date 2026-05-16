@@ -1,8 +1,8 @@
 import { APP } from './constants.js';
-import { getVideoMetaFromLink, isCoverLink, normalizeResourceUrl } from './video-meta.js';
+import { getVideoMetaFromLink, isCoverLink, normalizeResourceUrl, normalizeVideoHref } from './video-meta.js';
 import { createEffect, createRoot, createSignal } from 'solid-js';
 
-const TAB_KEYS = ['comments', 'playlist', 'recommend'];
+const TAB_KEYS = ['comments', 'pages', 'playlist', 'recommend'];
 const PLAYING_ICON_URL = 'https://i0.hdslb.com/bfs/static/jinkela/playlist-video/asserts/playing.gif';
 
 export function createCommentsTabsUi({
@@ -16,6 +16,7 @@ export function createCommentsTabsUi({
   schedulePipLayoutSync,
 }) {
   const activeSignals = new Map();
+  const selectedPageSignals = new Map();
   const selectedSignals = new Map();
   const listViews = new Map();
 
@@ -27,6 +28,7 @@ export function createCommentsTabsUi({
 
     tabs.append(
       createTab(targetDocument, kind, 'comments', '评论'),
+      createTab(targetDocument, kind, 'pages', '合集'),
       createTab(targetDocument, kind, 'playlist', '播放列表'),
       createTab(targetDocument, kind, 'recommend', '推荐列表'),
     );
@@ -52,14 +54,16 @@ export function createCommentsTabsUi({
     button.setAttribute('role', 'tab');
     button.textContent = label;
     button.addEventListener('click', () => setTab(kind, tab));
+    if (tab === 'pages') button.hidden = !state[kind].pageCards?.length;
     return button;
   }
 
   function setTab(kind, tab) {
-    state[kind].activeCommentsTab = tab === 'playlist' || tab === 'recommend' ? tab : 'comments';
+    state[kind].activeCommentsTab = TAB_KEYS.includes(tab) ? tab : 'comments';
     getActiveSignal(kind)[1](state[kind].activeCommentsTab);
     syncTabs(kind);
     if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind);
+    if (state[kind].activeCommentsTab === 'pages') scrollSelectedPageIntoView(kind);
     onTabChange?.(kind, state[kind].activeCommentsTab);
     if (kind === 'home') syncHomeSize();
     else if (state.pip.win && !state.pip.win.closed) schedulePipLayoutSync(state.pip.win);
@@ -70,9 +74,10 @@ export function createCommentsTabsUi({
     if (!ui) return;
     const activeTab = TAB_KEYS.includes(state[kind].activeCommentsTab) ? state[kind].activeCommentsTab : 'comments';
     getActiveSignal(kind)[1](activeTab);
-    syncTabButtonSet([ui.commentsTab, ui.playlistTab, ui.recommendTab], activeTab);
+    syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.recommendTab], activeTab);
 
     ui.commentsPanel.hidden = activeTab !== 'comments';
+    ui.pagesPanel.hidden = activeTab !== 'pages';
     ui.playlistPanel.hidden = activeTab !== 'playlist';
     ui.recommendPanel.hidden = activeTab !== 'recommend';
   }
@@ -96,9 +101,13 @@ export function createCommentsTabsUi({
       if (!ui?.commentsPanel || !ui.playlistPanel || !ui.recommendPanel) return null;
       return {
         commentsTab: ui.commentsTabs?.querySelector?.('[data-tab="comments"]'),
+        pagesTab: ui.commentsTabs?.querySelector?.('[data-tab="pages"]'),
         playlistTab: ui.commentsTabs?.querySelector?.('[data-tab="playlist"]'),
         recommendTab: ui.commentsTabs?.querySelector?.('[data-tab="recommend"]'),
         commentsPanel: ui.commentsPanel,
+        pagesPanel: ui.pagesPanel,
+        pagesList: ui.pagesList,
+        pagesEmpty: ui.pagesEmpty,
         playlistPanel: ui.playlistPanel,
         playlistList: ui.playlistList,
         playlistEmpty: ui.playlistEmpty,
@@ -111,14 +120,19 @@ export function createCommentsTabsUi({
     const doc = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
     if (!doc) return null;
     const commentsPanel = doc.getElementById('comments-panel');
+    const pagesPanel = doc.getElementById('pages-panel');
     const playlistPanel = doc.getElementById('playlist-panel');
     const recommendPanel = doc.getElementById('recommend-panel');
-    if (!commentsPanel || !playlistPanel || !recommendPanel) return null;
+    if (!commentsPanel || !pagesPanel || !playlistPanel || !recommendPanel) return null;
     return {
       commentsTab: doc.getElementById('tab-comments'),
+      pagesTab: doc.getElementById('tab-pages'),
       playlistTab: doc.getElementById('tab-playlist'),
       recommendTab: doc.getElementById('tab-recommend'),
       commentsPanel,
+      pagesPanel,
+      pagesList: doc.getElementById('pages-list'),
+      pagesEmpty: doc.getElementById('pages-empty'),
       playlistPanel,
       playlistList: doc.getElementById('playlist-list'),
       playlistEmpty: doc.getElementById('playlist-empty'),
@@ -134,10 +148,41 @@ export function createCommentsTabsUi({
     renderPlaylist(kind);
   }
 
+  function renderPageParts(kind, bootstrap, statusText = '合集加载中...') {
+    const cards = bootstrap ? getPagePartCards(bootstrap) : [];
+    state[kind].pageCards = cards;
+    setSelectedPageKey(kind, bootstrap ? getSelectedPageKey(bootstrap) : '');
+    const ui = getUi(kind);
+    if (!ui?.pagesList || !ui.pagesEmpty) return;
+    syncPageTabVisibility(kind, Boolean(cards.length));
+    renderCardList({
+      list: ui.pagesList,
+      empty: ui.pagesEmpty,
+      cards,
+      emptyText: bootstrap ? '当前视频没有合集' : statusText,
+      kind,
+      source: 'pages',
+      loading: !bootstrap,
+    });
+  }
+
+  function syncPageTabVisibility(kind, visible) {
+    const ui = getUi(kind);
+    if (!ui?.pagesTab) return;
+    ui.pagesTab.hidden = !visible;
+    if (!visible && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
+  }
+
   function setSelectedPlaylistBvid(kind, bvid) {
     state[kind].selectedPlaylistBvid = bvid || '';
     getSelectedSignal(kind)[1](state[kind].selectedPlaylistBvid);
     scrollSelectedPlaylistIntoView(kind);
+  }
+
+  function setSelectedPageKey(kind, key) {
+    state[kind].selectedPageKey = key || '';
+    getSelectedPageSignal(kind)[1](state[kind].selectedPageKey);
+    scrollSelectedPageIntoView(kind);
   }
 
   function getScannedPlaylistCards() {
@@ -236,7 +281,11 @@ export function createCommentsTabsUi({
         const currentCards = cards();
         const currentLoading = loading();
         const currentAppendLoading = appendLoading();
-        const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : '';
+        const selected = source === 'playlist'
+          ? getSelectedSignal(kind)[0]()
+          : source === 'pages'
+            ? getSelectedPageSignal(kind)[0]()
+            : '';
         list.textContent = '';
         empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
         empty.textContent = currentLoading || currentAppendLoading || currentCards.length ? '' : emptyText();
@@ -249,6 +298,7 @@ export function createCommentsTabsUi({
         });
         if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
         if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
+        if (source === 'pages' && autoScrollSelected()) scrollSelectedPageIntoView(kind);
       });
       return disposeRoot;
     });
@@ -295,10 +345,13 @@ export function createCommentsTabsUi({
   }
 
   function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '') {
-    const selected = source === 'playlist' && selectedBvid === card.bvid;
+    const selected = source === 'playlist'
+      ? selectedBvid === card.bvid
+      : source === 'pages' && selectedBvid === card.pageKey;
     const button = targetDocument.createElement('div');
     button.className = `${APP}__playlist-card`;
     button.dataset.bvid = card.bvid || '';
+    button.dataset.pageKey = card.pageKey || '';
     button.dataset.source = source;
     button.tabIndex = 0;
     button.setAttribute('role', 'button');
@@ -311,8 +364,13 @@ export function createCommentsTabsUi({
     button.addEventListener('click', () => {
       state.lastButton = null;
       if (source === 'playlist') setSelectedPlaylistBvid(kind, card.bvid);
+      if (source === 'pages') setSelectedPageKey(kind, card.pageKey);
       const renderer = kind === 'pip' ? getPipRenderer() : getHomeRenderer();
-      openWithRenderer(renderer, source === 'playlist' ? { ...card, fromPlaylist: true } : card);
+      openWithRenderer(renderer, source === 'playlist'
+        ? { ...card, fromPlaylist: true }
+        : source === 'pages'
+          ? { ...card, fromPagePart: true }
+          : card);
     });
     button.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -403,6 +461,15 @@ export function createCommentsTabsUi({
     return signal;
   }
 
+  function getSelectedPageSignal(kind) {
+    let signal = selectedPageSignals.get(kind);
+    if (!signal) {
+      signal = createSignal(state[kind].selectedPageKey || '');
+      selectedPageSignals.set(kind, signal);
+    }
+    return signal;
+  }
+
   function scrollSelectedPlaylistIntoView(kind) {
     if (getCommentLayout?.() !== 'right') return;
     const bvid = state[kind].selectedPlaylistBvid;
@@ -412,19 +479,116 @@ export function createCommentsTabsUi({
     if (!list || ui.playlistPanel?.hidden) return;
     const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])]
       .find((card) => card.dataset.bvid === bvid);
-    item?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    scrollItemWithinPanel(ui.playlistPanel, item);
+  }
+
+  function scrollSelectedPageIntoView(kind) {
+    if (getCommentLayout?.() !== 'right') return;
+    const pageKey = state[kind].selectedPageKey;
+    if (!pageKey) return;
+    const ui = getUi(kind);
+    const list = ui?.pagesList;
+    if (!list || ui.pagesPanel?.hidden) return;
+    const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])]
+      .find((card) => card.dataset.pageKey === pageKey);
+    scrollItemWithinPanel(ui.pagesPanel, item);
+  }
+
+  function scrollItemWithinPanel(panel, item) {
+    if (!panel || !item) return;
+    const panelRect = panel.getBoundingClientRect?.();
+    const itemRect = item.getBoundingClientRect?.();
+    if (!panelRect || !itemRect) return;
+
+    const targetTop = panel.scrollTop +
+      (itemRect.top - panelRect.top) -
+      Math.max(0, (panel.clientHeight - itemRect.height) / 2);
+    const maxTop = Math.max(0, panel.scrollHeight - panel.clientHeight);
+    const top = Math.min(maxTop, Math.max(0, targetTop));
+    panel.scrollTo?.({ top, behavior: 'smooth' });
   }
 
   return {
     attachPipTabs,
     capturePagePlaylist,
     createTabs,
+    renderPageParts,
     renderPlaylist,
     renderRecommendations,
     scrollSelectedPlaylistIntoView,
+    setSelectedPageKey,
     setSelectedPlaylistBvid,
     syncTabs,
   };
+}
+
+function getPagePartCards(bootstrap) {
+  const vd = bootstrap?.initialState?.videoData || {};
+  const bvid = bootstrap?.playerInfo?.bvid || vd.bvid;
+  const href = bootstrap?.href || (bvid ? `https://www.bilibili.com/video/${bvid}` : '');
+  const pageCards = (Array.isArray(vd.pages) ? vd.pages : [])
+    .map((page, index) => buildPagePartCard({ bvid, href, index, page, title: vd.title, cover: vd.pic }))
+    .filter(Boolean);
+  if (pageCards.length > 1) return pageCards;
+
+  const episodes = (Array.isArray(vd.ugc_season?.sections) ? vd.ugc_season.sections : [])
+    .flatMap((section) => Array.isArray(section?.episodes) ? section.episodes : []);
+  if (episodes.length <= 1) return [];
+  return episodes
+    .map((episode, index) => buildSeasonEpisodeCard({ episode, fallbackBvid: bvid, fallbackHref: href, index }))
+    .filter(Boolean);
+}
+
+function buildPagePartCard({ bvid, href, index, page, title, cover }) {
+  if (!bvid || !page?.cid) return null;
+  const pageNo = Number(page.page || index + 1);
+  const pageHref = setVideoPageParam(href || `/video/${bvid}`, pageNo);
+  return {
+    bvid,
+    cid: page.cid,
+    cover: normalizeResourceUrl(page.first_frame || cover),
+    duration: formatDuration(page.duration),
+    href: pageHref,
+    page: pageNo,
+    pageKey: `${bvid}:${pageNo}`,
+    subtitle: title || '',
+    title: `${pageNo}. ${cleanText(page.part) || '未命名片段'}`,
+  };
+}
+
+function buildSeasonEpisodeCard({ episode, fallbackBvid, fallbackHref, index }) {
+  const bvid = episode?.bvid || fallbackBvid;
+  const pageNo = Number(episode?.p || index + 1);
+  const href = normalizeVideoHref(episode?.link || episode?.uri || `/video/${bvid}`, fallbackHref) ||
+    setVideoPageParam(`/video/${bvid}`, pageNo);
+  if (!bvid || !href) return null;
+  return {
+    bvid,
+    cid: episode.cid,
+    cover: normalizeResourceUrl(episode.arc?.pic || episode.cover),
+    duration: formatDuration(episode.duration),
+    href,
+    page: pageNo,
+    pageKey: `${bvid}:${pageNo}`,
+    subtitle: episode.arc?.title || '',
+    title: `${pageNo}. ${cleanText(episode.title || episode.part) || '未命名片段'}`,
+  };
+}
+
+function getSelectedPageKey(bootstrap) {
+  const info = bootstrap?.playerInfo;
+  if (!info?.bvid) return '';
+  return `${info.bvid}:${Number(info.p || 1)}`;
+}
+
+function setVideoPageParam(rawHref, page) {
+  try {
+    const url = new URL(rawHref, location.href);
+    url.searchParams.set('p', String(page));
+    return normalizeVideoHref(url.href) || url.href;
+  } catch {
+    return '';
+  }
 }
 
 function appendStats(targetDocument, container, stats) {
@@ -466,6 +630,17 @@ function normalizeStats(stats) {
     view: parts[0] || '',
     danmaku: parts[1] || '',
   };
+}
+
+function formatDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function viewIconMarkup() {

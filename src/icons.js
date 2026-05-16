@@ -64,6 +64,14 @@ export function createMinimizeIcon() {
   ]));
 }
 
+export function createPictureInPictureIcon() {
+  return createIconFromMarkup(lucideIconMarkup([
+    'M21 9V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4',
+    'M21 13v5a2 2 0 0 1-2 2h-5',
+    'M15 15h6v5h-6z',
+  ]));
+}
+
 export function createCloseIcon() {
   return createIconFromMarkup(lucideIconMarkup([
     'M18 6 6 18',

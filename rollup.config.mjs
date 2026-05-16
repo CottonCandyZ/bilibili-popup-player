@@ -4,12 +4,13 @@ import { babel } from '@rollup/plugin-babel';
 const userscriptBanner = `// ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.3.1
+// @version      3.3.10
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
 // @match        https://space.bilibili.com/*
 // @match        https://search.bilibili.com/*
+// @match        https://live.bilibili.com/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==`;

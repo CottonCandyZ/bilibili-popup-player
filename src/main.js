@@ -23,18 +23,38 @@ import {
 import {
   createMaximizeIcon,
   createMinimizeIcon,
-  externalLinkIconMarkup,
+  createPictureInPictureIcon,
 } from './icons.js';
+import {
+  getCurrentLiveMeta,
+  isLiveBootstrap,
+  isLiveMeta,
+  isLivePage,
+  resolveLiveBootstrap,
+} from './live-bootstrap.js';
+import {
+  buildLivePipPlayerOptions,
+  createLivePipPlayerAdapter,
+  installLivePipGlobals,
+} from './live-pip-player.js';
+import { installDocumentStyle } from './document-style.js';
 import { mountHomePlayerPage, mountPipPlayerPage } from './player-shell-ui.jsx';
+import {
+  renderLivePipDocument,
+  renderPipErrorDocument,
+  renderPipLoadingDocument,
+  renderPipPlayerDocument,
+} from './pip-document.js';
 import { getPlayerViewInfo } from './player-view-info.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
+import { createRendererOrchestrator } from './renderer-orchestrator.js';
 import { loadScriptOnce } from './script-loader.js';
 import { createSettingsUi } from './settings-ui.js';
-import { escapeHtml } from './text.js';
 import {
   ensureBiliThemeStylesheets,
   ensureStylesheetsInWindow,
   getBiliThemeStylesheets,
+  getThemeStyle,
 } from './theme.js';
 import {
   COVER_HOST_SELECTOR,
@@ -63,7 +83,7 @@ import {
   const initialLastPlayed = (() => {
     try {
       const value = JSON.parse(localStorage.getItem(STORAGE_LAST_PLAYED) || 'null');
-      if (!value?.href || !value?.bvid) return null;
+      if (!value?.href || (!value?.bvid && !value?.roomId && !value?.id)) return null;
       return value;
     } catch {
       return null;
@@ -83,6 +103,7 @@ import {
     scanWarmupTimer: 0,
     settingsVisibilityFrame: 0,
     bottomFixedFrame: 0,
+    homeSizeFrame: 0,
     viewportFrame: 0,
     lastFocus: null,
     lastButton: null,
@@ -104,6 +125,13 @@ import {
     shadowRoot: null,
     overlay: null,
     cardEntries: [],
+    live: {
+      button: null,
+      buttonFrame: 0,
+    },
+    playback: {
+      button: null,
+    },
     home: {
       overlay: null,
       ui: null,
@@ -121,8 +149,10 @@ import {
         session: null,
       },
       playlistRefreshFrame: 0,
+      pageCards: [],
       playlistCards: [],
       recommendationCards: [],
+      selectedPageKey: '',
       selectedPlaylistBvid: '',
     },
     pip: {
@@ -133,8 +163,18 @@ import {
       screenHandler: null,
       switchingWindow: false,
       activeCommentsTab: 'comments',
+      feed: {
+        error: '',
+        exhausted: false,
+        loading: false,
+        requestId: 0,
+        session: null,
+      },
+      playlistRefreshFrame: 0,
+      pageCards: [],
       playlistCards: [],
       recommendationCards: [],
+      selectedPageKey: '',
       selectedPlaylistBvid: '',
     },
   };
@@ -159,12 +199,15 @@ import {
     attachPipTabs: attachPipCommentsTabs,
     capturePagePlaylist,
     createTabs: createCommentsTabs,
+    renderPageParts,
     renderPlaylist,
     renderRecommendations,
     scrollSelectedPlaylistIntoView,
+    setSelectedPageKey,
     setSelectedPlaylistBvid,
     syncTabs: syncCommentsTabs,
   } = commentsTabsUi;
+  let rendererOrchestrator = null;
 
   window.__biliPopupPlayerNano = {
     scan,
@@ -405,712 +448,7 @@ import {
   }
 
   function ensureDocumentStyle() {
-    if (document.getElementById(DOCUMENT_STYLE_ID)) return;
-
-    const style = document.createElement('style');
-    style.id = DOCUMENT_STYLE_ID;
-    style.textContent = `
-      :root {
-        --${APP}-surface: var(--bg1, #fff);
-        --${APP}-surface-soft: var(--bg2, #f6f7f8);
-        --${APP}-surface-elevated: var(--bg1_float, var(--bg1, #fff));
-        --${APP}-text: var(--text1, #18191c);
-        --${APP}-text-subtle: var(--text2, #61666d);
-        --${APP}-text-muted: var(--text3, #9499a0);
-        --${APP}-border: var(--line_regular, #e3e5e7);
-        --${APP}-brand: var(--brand_pink, #fb7299);
-        --${APP}-brand-soft: var(--Pi5, rgba(251, 114, 153, 0.14));
-      }
-
-      .${BUTTON_CLASS} {
-        position: absolute !important;
-        z-index: 20;
-        right: 8px;
-        bottom: 8px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 72px;
-        height: 28px;
-        padding: 0 10px;
-        border: 1px solid var(--${APP}-border);
-        border-radius: 6px;
-        color: var(--${APP}-text);
-        background: var(--${APP}-surface-soft);
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-        opacity: 0.96;
-        pointer-events: auto;
-        transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
-      }
-
-      .${BUTTON_CLASS}:disabled {
-        color: var(--${APP}-text-muted);
-        background: var(--${APP}-surface-soft);
-        box-shadow: none;
-        cursor: default;
-      }
-
-      .${BUTTON_CLASS}:hover,
-      .${BUTTON_CLASS}:focus-visible {
-        color: #fff;
-        border-color: var(--${APP}-brand);
-        background: var(--${APP}-brand);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-        opacity: 1;
-        outline: none;
-      }
-
-      .${BADGE_CLASS} {
-        position: absolute !important;
-        z-index: 21;
-        top: 8px;
-        left: 8px;
-        display: none;
-        align-items: center;
-        height: 24px;
-        padding: 0 8px;
-        border-radius: 6px;
-        color: var(--${APP}-text-subtle);
-        border: 1px solid var(--${APP}-border);
-        background: var(--${APP}-surface-elevated);
-        backdrop-filter: blur(8px);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        pointer-events: none;
-      }
-
-      .${BADGE_CLASS}.${APP}--active {
-        display: inline-flex;
-      }
-
-      .${BADGE_CLASS}.${APP}--playing {
-        color: #fff;
-        border-color: var(--${APP}-brand);
-        background: var(--${APP}-brand);
-      }
-
-      .${APP}__control-overlay.${APP}--playback-web-fullscreen {
-        display: none;
-      }
-
-      #${APP}-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 2147483000;
-        display: grid;
-        place-items: center;
-        padding: 16px;
-        background: rgba(15, 18, 24, 0.68);
-      }
-
-      body.${APP}--modal-open > bili-photoswipe,
-      body.${APP}--modal-open > bili-modal,
-      body.${APP}--modal-open > .pswp,
-      body.${APP}--modal-open > .bili-modal,
-      body.${APP}--modal-open > .bili-photoswipe,
-      body.${APP}--modal-open > [class*="pswp"],
-      body.${APP}--modal-open > [class*="photoswipe"],
-      body.${APP}--modal-open > [class*="photo-swipe"],
-      body.${APP}--modal-open > [class*="image-preview"],
-      body.${APP}--modal-open > [class*="picture-preview"],
-      body.${APP}--modal-open > [class*="preview"][class*="modal"],
-      body.${APP}--modal-open > [class*="preview"][class*="popup"],
-      #${APP}-overlay bili-photoswipe,
-      #${APP}-overlay bili-modal,
-      #${APP}-overlay .pswp,
-      #${APP}-overlay .bili-modal,
-      #${APP}-overlay .bili-photoswipe,
-      #${APP}-overlay [class*="pswp"],
-      #${APP}-overlay [class*="photoswipe"],
-      #${APP}-overlay [class*="photo-swipe"],
-      #${APP}-overlay [class*="image-preview"],
-      #${APP}-overlay [class*="picture-preview"],
-      #${APP}-overlay [class*="preview"][class*="modal"],
-      #${APP}-overlay [class*="preview"][class*="popup"] {
-        position: fixed !important;
-        inset: 0 !important;
-        z-index: 2147483647 !important;
-      }
-
-      #${APP}-overlay.${APP}--hidden {
-        display: none;
-      }
-
-      #${APP}-dialog {
-        position: relative;
-        width: min(1360px, calc(100vw - 32px));
-        height: min(860px, calc(100vh - 32px));
-        display: grid;
-        grid-template-rows: 46px 1fr;
-        overflow: hidden;
-        border-radius: 8px;
-        background: var(--${APP}-surface);
-        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
-      }
-
-      #${APP}-overlay.${APP}--fullscreen {
-        padding: 0;
-        background: #000;
-      }
-
-      #${APP}-overlay.${APP}--fullscreen #${APP}-dialog {
-        width: 100vw;
-        height: 100vh;
-        border-radius: 0;
-        box-shadow: none;
-      }
-
-      #${APP}-header {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        padding: 0 10px 0 16px;
-        color: var(--${APP}-text);
-        background: var(--${APP}-surface-elevated);
-        border-bottom: 1px solid var(--${APP}-border);
-      }
-
-      .${APP}__header-history {
-        display: inline-grid;
-        grid-template-columns: repeat(2, 32px);
-        gap: 2px;
-        align-items: center;
-      }
-
-      #${APP}-title {
-        min-width: 0;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      #${APP}-status {
-        display: none;
-      }
-
-      .${APP}__header-button {
-        width: 32px;
-        height: 32px;
-        display: inline-grid;
-        place-items: center;
-        border: 0;
-        border-radius: 6px;
-        color: var(--${APP}-text-subtle);
-        background: transparent;
-        cursor: pointer;
-      }
-
-      .${APP}__header-button:disabled {
-        color: var(--${APP}-text-muted);
-        cursor: default;
-        opacity: 0.45;
-      }
-
-      .${APP}__header-button svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
-      }
-
-      .${APP}__header-button--text {
-        width: auto;
-        min-width: 72px;
-        padding: 0 10px;
-        font-size: 12px;
-      }
-
-      .${APP}__header-button:hover,
-      .${APP}__header-button:focus-visible,
-      .${APP}__header-button.${APP}__header-button--active {
-        color: var(--${APP}-brand);
-        background: var(--${APP}-surface-soft);
-        outline: none;
-      }
-
-      .${APP}__header-button:disabled:hover,
-      .${APP}__header-button:disabled:focus-visible {
-        color: var(--${APP}-text-muted);
-        background: transparent;
-      }
-
-      #${APP}-content {
-        position: relative;
-        min-width: 0;
-        min-height: 0;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        background: var(--${APP}-surface);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-content {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
-        overflow: hidden;
-      }
-
-      .${APP}__back-to-top {
-        position: absolute;
-        right: 34px;
-        bottom: 30px;
-        z-index: 6;
-        width: 38px;
-        height: 38px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 999px;
-        color: var(--text2, #61666d);
-        background: var(--bg1, #fff);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-        cursor: pointer;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(6px);
-        transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__back-to-top {
-        right: 24px;
-        bottom: 24px;
-      }
-
-      .${APP}__back-to-top.${APP}--visible {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-
-      .${APP}__back-to-top:hover,
-      .${APP}__back-to-top:focus-visible {
-        color: var(--${APP}-brand);
-        border-color: var(--${APP}-brand);
-        outline: none;
-      }
-
-      .${APP}__back-to-top svg {
-        width: 18px;
-        height: 18px;
-        display: block;
-        stroke: currentColor;
-      }
-
-      #${APP}-comments-resizer {
-        display: none;
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
-        display: block;
-        position: relative;
-        z-index: 2;
-        width: 8px;
-        min-width: 8px;
-        height: 100%;
-        cursor: col-resize;
-        background: transparent;
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer::before {
-        content: "";
-        position: absolute;
-        inset: 0 auto 0 50%;
-        width: 1px;
-        transform: translateX(-50%);
-        background: rgba(148, 153, 160, 0.36);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover::before,
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible::before,
-      #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer::before {
-        background: var(--${APP}-brand);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible {
-        outline: none;
-      }
-
-      #${APP}-player-wrap {
-        position: relative;
-        height: calc(min(860px, calc(100vh - 32px)) - 46px);
-        min-width: 0;
-        min-height: 0;
-        background: #000;
-      }
-
-      #${APP}-overlay.${APP}--fullscreen #${APP}-player-wrap {
-        height: calc(100vh - 46px);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap,
-      #${APP}-overlay.${APP}--fullscreen.${APP}--comments-right #${APP}-player-wrap {
-        height: 100%;
-      }
-
-      #${APP}-player,
-      #${APP}-player .bpx-player-container {
-        width: 100% !important;
-        height: 100% !important;
-      }
-
-      #${APP}-player .bpx-player-ctrl-web,
-      #${APP}-player .bpx-player-ctrl-web-enter,
-      #${APP}-player .bpx-player-ctrl-web-leave,
-      #${APP}-player .bilibili-player-video-btn-web-fullscreen {
-        display: none !important;
-      }
-
-      #${APP}-player.bpx-player-web-full,
-      #${APP}-player .bpx-player-web-full,
-      #${APP}-player.bilibili-player-video-web-fullscreen,
-      #${APP}-player .bilibili-player-video-web-fullscreen {
-        position: absolute !important;
-        inset: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        min-width: 0 !important;
-        min-height: 0 !important;
-        z-index: 1 !important;
-      }
-
-      #${APP}-comments {
-        display: flex;
-        flex-direction: column;
-        min-height: 520px;
-        padding: 0;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments {
-        min-width: 0;
-        min-height: 0;
-        height: 100%;
-        padding: 0;
-        overflow: hidden;
-        border-left: 0;
-      }
-
-      .${APP}__comments-tabs {
-        flex: 0 0 auto;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        background: var(--bg1, #fff);
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__comments-tabs {
-        margin: 0;
-        padding: 0;
-      }
-
-      .${APP}__comments-tab {
-        height: 34px;
-        padding: 0 4px;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--text2, #61666d);
-        background: transparent;
-        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-      }
-
-      .${APP}__comments-tab:hover,
-      .${APP}__comments-tab:focus-visible,
-      .${APP}__comments-tab.${APP}--active {
-        color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-
-      .${APP}__comments-tab.${APP}--active {
-        border-bottom-color: var(--brand_pink, #fb7299);
-      }
-
-      .${APP}__comments-panel[hidden] {
-        display: none !important;
-      }
-
-      .${APP}__comments-panel:not([hidden]) {
-        min-width: 0;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: visible;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__comments-panel:not([hidden]) {
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-
-      #${APP}-comments-mount {
-        box-sizing: border-box;
-        min-height: 360px;
-        padding-right: 18px;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-mount {
-        padding-right: 16px;
-      }
-
-      .${APP}__playlist {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 0 28px;
-        padding: 12px 0 24px;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__playlist {
-        grid-template-columns: 1fr;
-      }
-
-      .${APP}__playlist-card {
-        appearance: none;
-        box-sizing: border-box;
-        width: 100%;
-        min-width: 0;
-        display: grid;
-        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr);
-        column-gap: 12px;
-        align-items: start;
-        padding: 12px 16px;
-        border: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 0;
-        color: var(--text1, #18191c);
-        background: transparent;
-        text-align: left;
-        text-indent: 0;
-        font: inherit;
-        cursor: pointer;
-      }
-
-      .${APP}__playlist-card:hover,
-      .${APP}__playlist-card:focus-visible,
-      .${APP}__playlist-card.${APP}--selected {
-        outline: none;
-      }
-
-      .${APP}__playlist-card:last-child {
-        border-bottom: 0;
-      }
-
-      .${APP}__playlist-card.${APP}--selected {
-        color: var(--brand_blue, #00aeec);
-        background: transparent;
-      }
-
-      .${APP}__playlist-card:hover .${APP}__playlist-title,
-      .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
-        color: var(--brand_blue, #00aeec);
-      }
-
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-stats {
-        color: var(--text2, #61666d);
-      }
-
-      .${APP}__playlist-playing {
-        width: 16px;
-        height: 16px;
-        display: inline-block;
-        margin: 0 4px 0 0;
-        vertical-align: -3px;
-      }
-
-      .${APP}__playlist-cover {
-        position: relative;
-        z-index: 0;
-        min-width: 0;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--bg2, #f6f7f8);
-      }
-
-      .${APP}__playlist-cover img {
-        width: 100%;
-        height: 100%;
-        display: block;
-        object-fit: cover;
-      }
-
-      .${APP}__playlist-duration {
-        position: absolute;
-        right: 4px;
-        bottom: 4px;
-        height: 18px;
-        padding: 0 5px;
-        border-radius: 3px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.72);
-        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .${APP}__playlist-info {
-        position: relative;
-        z-index: 1;
-        width: 100%;
-        min-width: 0;
-        max-width: 100%;
-        overflow: visible;
-        padding: 1px 2px 0 1px;
-        display: grid;
-        align-content: start;
-        gap: 6px;
-      }
-
-      .${APP}__playlist-title {
-        width: 100%;
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        color: var(--text1, #18191c);
-        font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .${APP}__playlist-title-text {
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-      }
-
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats,
-      .${APP}__playlist-empty {
-        color: var(--text3, #9499a0);
-        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats {
-        max-width: 100%;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-      }
-
-      .${APP}__playlist-stats {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .${APP}__playlist-stat {
-        min-width: 0;
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-      }
-
-      .${APP}__playlist-stat-icon {
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-        color: currentColor;
-      }
-
-      .${APP}__playlist-card--skeleton {
-        cursor: default;
-        pointer-events: none;
-      }
-
-      .${APP}__playlist-skeleton-cover,
-      .${APP}__playlist-skeleton-line {
-        position: relative;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--graph_bg_regular, var(--bg2, #f1f2f3));
-      }
-
-      .${APP}__playlist-skeleton-cover {
-        width: 100%;
-        aspect-ratio: 16 / 9;
-      }
-
-      .${APP}__playlist-skeleton-info {
-        min-width: 0;
-        display: grid;
-        align-content: start;
-        gap: 9px;
-        padding-top: 2px;
-      }
-
-      .${APP}__playlist-skeleton-line {
-        height: 12px;
-      }
-
-      .${APP}__playlist-skeleton-line--title {
-        height: 16px;
-      }
-
-      .${APP}__playlist-skeleton-cover::after,
-      .${APP}__playlist-skeleton-line::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        transform: translateX(-100%);
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
-        animation: ${APP}-skeleton-shimmer 1.25s ease-in-out infinite;
-      }
-
-      @keyframes ${APP}-skeleton-shimmer {
-        100% {
-          transform: translateX(100%);
-        }
-      }
-
-      body.${APP}--modal-open .bili-comments-bottom-fixed-wrapper,
-      body.${APP}--modal-open [class*="bottom-fixed"],
-      body.${APP}--modal-open [class*="fixed-wrapper"],
-      #${APP}-overlay .bili-comments-bottom-fixed-wrapper,
-      #${APP}-overlay [class*="bottom-fixed"],
-      #${APP}-overlay [class*="fixed-wrapper"],
-      .${APP}__bottom-fixed-hidden {
-        display: none !important;
-      }
-
-      @media (max-width: 900px) {
-        #${APP}-overlay.${APP}--comments-right #${APP}-content {
-          display: block;
-          overflow-x: hidden;
-          overflow-y: auto;
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
-          display: none;
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
-          height: calc(min(860px, calc(100vh - 32px)) - 46px);
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-comments {
-          height: auto;
-          overflow: visible;
-          border-left: 0;
-        }
-      }
-    `;
-    document.head.appendChild(style);
+    installDocumentStyle(document);
   }
 
   function ensureSettings() {
@@ -1229,8 +567,10 @@ import {
   function setPipPlaying(bootstrap) {
     state.pipPlaying = bootstrap ? {
       title: bootstrap.title,
+      kind: bootstrap.kind || 'video',
       bvid: bootstrap.playerInfo?.bvid,
       aid: bootstrap.playerInfo?.aid,
+      roomId: bootstrap.playerInfo?.roomId,
     } : null;
     syncVideoBadges();
   }
@@ -1416,7 +756,20 @@ import {
       state.viewportFrame = 0;
       syncOverlayPositions();
       state.cardEntries.forEach(positionCardEntry);
+      syncLivePageButton();
+      syncPlaybackPagePipButton();
       syncSettingsVisibility();
+      scheduleHomeSizeSync();
+    });
+  }
+
+  function scheduleHomeSizeSync() {
+    if (!state.home.ui || state.home.overlay?.classList.contains(`${APP}--hidden`)) return;
+    if (state.homeSizeFrame) return;
+    state.homeSizeFrame = requestAnimationFrame(() => {
+      state.homeSizeFrame = 0;
+      if (!state.home.ui || state.home.overlay?.classList.contains(`${APP}--hidden`)) return;
+      syncHomeSize();
     });
   }
 
@@ -1429,7 +782,7 @@ import {
   }
 
   function syncSettingsVisibility() {
-    const hidden = isPlaybackPageWebFullscreen();
+    const hidden = isPlaybackPageWebFullscreen() || isLivePageWebFullscreen();
     state.shadowHost?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
     state.overlay?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
   }
@@ -1461,6 +814,185 @@ import {
       .find((candidate) => getVideoMetaFromLink(candidate)?.bvid === bvid && isCoverLink(candidate)) || null;
   }
 
+  function syncLivePageButton() {
+    if (!isLivePage()) {
+      removeLivePageButton();
+      return;
+    }
+
+    const meta = getCurrentLiveMeta();
+    if (!meta) {
+      removeLivePageButton();
+      return;
+    }
+
+    const overlay = ensureControlOverlay();
+    let button = state.live.button;
+    if (!button?.isConnected) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = `${BUTTON_CLASS} ${APP}__fixed-pip-button ${APP}__live-button`;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        state.lastFocus = button;
+        state.lastButton = button;
+        const nextMeta = getCurrentLiveMeta();
+        if (nextMeta) {
+          pauseLivePagePlayer();
+          openWithRenderer(pipRenderer, nextMeta);
+        }
+      });
+      state.live.button = button;
+      overlay.appendChild(button);
+    }
+
+    button.dataset.roomId = meta.roomId;
+    button.dataset.href = meta.href;
+    button.dataset.title = meta.title;
+    button.title = `Document PiP：${meta.title}`;
+    button.setAttribute('aria-label', button.title);
+    if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
+  }
+
+  function syncPlaybackPagePipButton() {
+    if (!isPlaybackPage()) {
+      removePlaybackPagePipButton();
+      return;
+    }
+
+    const meta = getCurrentPlaybackPageMeta();
+    if (!meta) {
+      removePlaybackPagePipButton();
+      return;
+    }
+
+    const overlay = ensureControlOverlay();
+    let button = state.playback.button;
+    if (!button?.isConnected) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = `${BUTTON_CLASS} ${APP}__fixed-pip-button ${APP}__playback-pip-button`;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        state.lastFocus = button;
+        state.lastButton = button;
+        const nextMeta = getCurrentPlaybackPageMeta();
+        if (nextMeta) {
+          pausePlaybackPagePlayer();
+          openWithRenderer(pipRenderer, nextMeta);
+        }
+      });
+      state.playback.button = button;
+      overlay.appendChild(button);
+    }
+
+    button.dataset.bvid = meta.bvid;
+    button.dataset.href = meta.href;
+    button.dataset.title = meta.title;
+    button.title = `Document PiP：${meta.title}`;
+    button.setAttribute('aria-label', button.title);
+    if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
+  }
+
+  function removeLivePageButton() {
+    state.live.button?.remove();
+    state.live.button = null;
+  }
+
+  function removePlaybackPagePipButton() {
+    state.playback.button?.remove();
+    state.playback.button = null;
+  }
+
+  function getCurrentPlaybackPageMeta() {
+    const bvid = getCurrentPageBvid();
+    if (!bvid) return null;
+    const href = location.href;
+    const title = cleanCurrentPageTitle(
+      document.querySelector('meta[property="og:title"]')?.getAttribute('content') ||
+      document.querySelector('h1[title]')?.getAttribute('title') ||
+      document.querySelector('h1')?.textContent ||
+      document.title ||
+      bvid,
+    );
+    return { bvid, href, title };
+  }
+
+  function cleanCurrentPageTitle(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .replace(/_哔哩哔哩_bilibili$/u, '')
+      .replace(/- 哔哩哔哩.*$/u, '')
+      .trim() || 'Bilibili 视频';
+  }
+
+  function getLivePlayerAnchor() {
+    return document.getElementById('live-player') ||
+      document.getElementById('player-ctnr') ||
+      document.querySelector('.live-player-ctnr, .player-section, [class*="player"]');
+  }
+
+  function pauseLivePagePlayer() {
+    const candidates = [
+      window.__PLAYER_GLOBAL_INSTANCE__,
+      window.EmbedPlayer?.instance,
+      window.Player?.instance,
+    ];
+    for (const player of candidates) {
+      if (tryPauseLivePlayer(player)) return true;
+    }
+
+    return [...document.querySelectorAll('video')]
+      .some((video) => {
+        try {
+          video.pause();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+  }
+
+  function pausePlaybackPagePlayer() {
+    const candidates = [
+      ...PLAYER_GLOBAL_KEYS.map((key) => window[key]),
+      window.playerAgent?.player,
+      window.bilibili?.player,
+      window.__PLAYER_GLOBAL_INSTANCE__,
+      window.EmbedPlayer?.instance,
+    ];
+    for (const player of candidates) {
+      if (tryPauseLivePlayer(player)) return true;
+    }
+
+    return [...document.querySelectorAll('video')]
+      .some((video) => {
+        try {
+          video.pause();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+  }
+
+  function tryPauseLivePlayer(player) {
+    if (!player) return false;
+    const methods = ['pause', 'stop', 'destroyPause'];
+    for (const method of methods) {
+      if (typeof player[method] !== 'function') continue;
+      try {
+        player[method]();
+        return true;
+      } catch {
+        // Try the next known pause surface.
+      }
+    }
+    return false;
+  }
+
   function scan() {
     ensureControlOverlay();
     [...document.querySelectorAll(getVideoLinkSelector())]
@@ -1471,6 +1003,8 @@ import {
         bindLink(link, meta);
       });
     ensureSettings();
+    syncLivePageButton();
+    syncPlaybackPagePipButton();
     syncSettingsVisibility();
     syncVideoBadges();
     syncOverlayPositions();
@@ -1484,13 +1018,13 @@ import {
   }
 
   function shouldSyncSettingsVisibilityMutation(mutation) {
-    if (!isPlaybackPage()) return false;
+    if (!isPlaybackPage() && !isLivePage()) return false;
     if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
     if (!(target instanceof Element)) return false;
     if (target === document.documentElement || target === document.body) return true;
-    return Boolean(target.closest?.(getPlaybackPlayerSelector()));
+    return Boolean(target.closest?.(isLivePage() ? '#live-player, #player-ctnr, .live-player-ctnr, .player-section' : getPlaybackPlayerSelector()));
   }
 
   function shouldRescanMutation(mutation) {
@@ -1525,6 +1059,34 @@ import {
     }
     const rootClassName = `${document.documentElement.className || ''} ${document.body.className || ''}`;
     return /\b(?:bpx-player-(?:web-full|mode-webscreen|webscreen)|player-mode-webfullscreen|web-fullscreen|webscreen)\b/.test(rootClassName);
+  }
+
+  function isLivePageWebFullscreen() {
+    if (!isLivePage()) return false;
+    if (document.body.classList.contains(`${APP}--modal-open`)) return false;
+    const player = getLivePlayerAnchor();
+    if (!player) return false;
+
+    const fullscreen = document.fullscreenElement;
+    if (fullscreen && (fullscreen === player || player.contains(fullscreen) || fullscreen.contains(player))) return true;
+
+    const rect = player.getBoundingClientRect();
+    const coversViewport = rect.width >= innerWidth * 0.9 &&
+      rect.height >= innerHeight * 0.9 &&
+      rect.top <= 2 &&
+      rect.left <= 2;
+    if (!coversViewport) return false;
+
+    for (let current = player; current && current !== document.documentElement; current = current.parentElement) {
+      const marker = [
+        current.className || '',
+        current.getAttribute?.('data-screen') || '',
+        current.getAttribute?.('data-mode') || '',
+      ].join(' ');
+      if (/(?:web.*full|full.*web|full-?screen|fullscreen|player-full|webscreen)/i.test(marker)) return true;
+    }
+    const pageMarker = `${document.documentElement.className || ''} ${document.body.className || ''}`;
+    return /(?:web.*full|full.*web|full-?screen|fullscreen|player-full|webscreen)/i.test(pageMarker);
   }
 
   function getPlaybackPlayerSelector() {
@@ -1578,37 +1140,19 @@ import {
   }
 
   function openByMode(meta) {
-    openWithRenderer(getActiveRenderer(), meta);
+    rendererOrchestrator.openByMode(meta);
   }
 
   function getActiveRenderer() {
     return state.mode === 'pip' ? pipRenderer : homeRenderer;
   }
 
-  async function openWithRenderer(renderer, meta) {
-    const reusable = renderer.getReusable?.(meta);
-    if (reusable) {
-      const token = ++state.switchToken;
-      renderer.reuse(reusable, meta, token);
-      return;
-    }
+  function openWithRenderer(renderer, meta) {
+    return rendererOrchestrator.openWithRenderer(renderer, meta);
+  }
 
-    const token = ++state.switchToken;
-    const context = await renderer.prepare(meta, token);
-    if (!context || token !== state.switchToken) return;
-
-    try {
-      const bootstrap = await resolvePlaybackBootstrap(meta);
-      if (token !== state.switchToken || renderer.isClosed(context)) return;
-      saveLastPlayed(meta, bootstrap);
-      await renderer.play(context, bootstrap, token);
-      if (token !== state.switchToken || renderer.isClosed(context)) return;
-      recordPlaybackHistory(meta, bootstrap);
-      renderer.done?.(context, bootstrap);
-    } catch (error) {
-      if (token !== state.switchToken || renderer.isClosed(context)) return;
-      renderer.fail(context, error);
-    }
+  function resolveBootstrap(meta) {
+    return isLiveMeta(meta) ? resolveLiveBootstrap(meta) : resolvePlaybackBootstrap(meta);
   }
 
   const homeRenderer = {
@@ -1635,6 +1179,7 @@ import {
     recordPlaybackHistory(meta, bootstrap);
     setSelectedPlaylistBvid('home', meta.bvid || bootstrap.playerInfo?.bvid);
     renderPlaylist('home');
+    renderPageParts('home', bootstrap);
     renderRecommendations('home', bootstrap);
     bindHomeScreenChange(state.home.player);
     syncHomeSize();
@@ -1644,15 +1189,20 @@ import {
 
   async function prepareHome(meta) {
     const ui = ensureHomeShell();
-    showHomeShell(meta.title || meta.bvid);
+    showHomeShell(meta.title || meta.bvid, { preserveScroll: Boolean(meta.fromPagePart) });
     ui.openOriginal.dataset.href = meta.href;
     ui.status.textContent = state.home.player ? '播放页参数：解析中，准备 reload' : '播放页参数：解析中';
     if (meta.fromPlaylist && state.home.playlistCards.length) {
       setSelectedPlaylistBvid('home', meta.bvid);
       renderPlaylist('home');
     } else {
-      resetHomePlaylistFeed();
+      resetPlaylistFeed('home');
       capturePagePlaylist('home', meta.bvid);
+    }
+    if (meta.fromPagePart && state.home.pageCards.length) {
+      setSelectedPageKey('home', meta.pageKey);
+    } else {
+      renderPageParts('home', null);
     }
     renderRecommendations('home', null);
     return { ui };
@@ -1666,6 +1216,7 @@ import {
     ui.status.textContent = `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
     setSelectedPlaylistBvid('home', bootstrap.playerInfo?.bvid);
     renderPlaylist('home');
+    renderPageParts('home', bootstrap);
     renderRecommendations('home', bootstrap);
     await loadScriptOnce(document, bootstrap.coreScript, () => window.nano);
     if (token !== state.switchToken || !window.nano || homeRenderer.isClosed()) return;
@@ -1695,6 +1246,7 @@ import {
       onHistoryNext: () => openPlaybackHistoryOffset(1),
       onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
       onOpenOriginal: (href) => openOriginalPlaybackPage(href, state.home.player),
+      onOpenPip: openCurrentHomeInPip,
       onPlayerControlClick: onHomePlayerControlClick,
       onResizeStart: (event) => startCommentWidthDrag(event, window),
     });
@@ -1706,7 +1258,7 @@ import {
     return state.home.ui;
   }
 
-  function showHomeShell(title) {
+  function showHomeShell(title, { preserveScroll = false } = {}) {
     const ui = state.home.ui;
     state.home.overlay.classList.remove(`${APP}--hidden`);
     state.home.overlay.removeAttribute('aria-hidden');
@@ -1715,19 +1267,36 @@ import {
     setHomePlayerFeatureBlocked(false);
     ui.title.textContent = title;
     syncPlaybackHistoryButtons();
-    ui.content.scrollTop = 0;
+    if (!preserveScroll) ui.content.scrollTop = 0;
     syncHomeCommentLayout();
     syncCommentsTabs('home');
     document.documentElement.style.overflow = 'hidden';
     document.addEventListener('keydown', onKeydown, true);
     ui.close.focus();
     syncHomeSize();
-    scheduleHomePlaylistAutoRefreshCheck();
+    schedulePlaylistAutoRefreshCheck('home');
   }
 
   function onCommentsTabChange(kind, tab) {
-    if (kind !== 'home' || tab !== 'playlist') return;
-    scheduleHomePlaylistAutoRefreshCheck();
+    if (tab !== 'playlist') return;
+    schedulePlaylistAutoRefreshCheck(kind);
+  }
+
+  function openCurrentHomeInPip() {
+    const bootstrap = state.home.bootstrap;
+    const ui = state.home.ui;
+    const info = bootstrap?.playerInfo;
+    const href = bootstrap?.href || ui?.openOriginal?.dataset.href || '';
+    const bvid = info?.bvid || getCurrentPageBvid();
+    if (!bootstrap || !href || !bvid) return;
+
+    pausePlayer(state.home.player);
+    if (ui?.status) ui.status.textContent = '已暂停，正在打开 PiP';
+    openWithRenderer(pipRenderer, {
+      bvid,
+      href,
+      title: bootstrap.title || ui?.title?.textContent || bvid,
+    });
   }
 
   function onHomePlayerControlClick(event) {
@@ -1758,6 +1327,9 @@ import {
       bvid: info.bvid,
       p: info.p,
       t: info.t,
+      hasPrev: Boolean(info.hasPrev),
+      hasNext: Boolean(info.hasNext),
+      seasonId: info.seasonId,
       kind: nano.GroupKind.Ugc,
       featureList: new Set(['blackGap']),
       stats: { spmId: '333.788.0.0', spmIdFrom: '333.788.0.0', trackId: '' },
@@ -1829,6 +1401,14 @@ import {
     },
     isClosed: (context) => !context?.pipWindow || context.pipWindow.closed,
   };
+  rendererOrchestrator = createRendererOrchestrator({
+    getActiveRenderer,
+    nextToken: () => ++state.switchToken,
+    isCurrentToken: (token) => token === state.switchToken,
+    resolveBootstrap,
+    saveLastPlayed,
+    recordPlaybackHistory,
+  });
 
   function getReusablePip(meta) {
     if (!state.pip.win || state.pip.win.closed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
@@ -1843,6 +1423,7 @@ import {
     attachPipCommentsTabs(context.pipWindow);
     setSelectedPlaylistBvid('pip', meta.bvid || bootstrap.playerInfo?.bvid);
     renderPlaylist('pip');
+    renderPageParts('pip', bootstrap);
     renderRecommendations('pip', bootstrap);
     syncPipCommentLayout(context.pipWindow);
     syncPipSize(context.pipWindow);
@@ -1880,15 +1461,26 @@ import {
       state.pip.win = pipWindow;
     }
 
-    if (meta.fromPlaylist && state.pip.playlistCards.length) {
+    if (isLiveMeta(meta)) {
+      state.pip.pageCards = [];
+      state.pip.playlistCards = [];
+      state.pip.recommendationCards = [];
+      state.pip.selectedPageKey = '';
+      state.pip.selectedPlaylistBvid = '';
+    } else if (meta.fromPlaylist && state.pip.playlistCards.length) {
       setSelectedPlaylistBvid('pip', meta.bvid);
       renderPlaylist('pip');
     } else {
+      resetPlaylistFeed('pip');
       capturePagePlaylist('pip', meta.bvid);
     }
-    if (state.pip.win && !state.pip.win.closed) renderRecommendations('pip', null);
+    if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) {
+      if (meta.fromPagePart && state.pip.pageCards.length) setSelectedPageKey('pip', meta.pageKey);
+      else renderPageParts('pip', null);
+    }
+    if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) renderRecommendations('pip', null);
 
-    if (canReloadPip(pipWindow)) setPipStatus('换源中');
+    if (!isLiveMeta(meta) && canReloadPip(pipWindow)) setPipStatus('换源中');
     else {
       disposePipPlayer();
       disposePipComments();
@@ -1909,6 +1501,10 @@ import {
 
   async function bootPipWindow(pipWindow, bootstrap, token) {
     state.pip.bootstrap = bootstrap;
+    if (isLiveBootstrap(bootstrap)) {
+      await bootLivePipWindow(pipWindow, bootstrap, token);
+      return;
+    }
     if (canReloadPip(pipWindow)) {
       await reloadPipPlayer(pipWindow, bootstrap, token);
       return;
@@ -1917,465 +1513,14 @@ import {
     disposePipPlayer();
     disposePipComments();
 
-    const stylesheetLinks = [...new Set([...bootstrap.stylesheets, ...getBiliThemeStylesheets()])]
-      .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
-      .join('\n');
     const commentLayoutClass = state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom';
 
-    writePipDocument(pipWindow, `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>${escapeHtml(bootstrap.title || 'Bilibili 小窗播放')}</title>
-    ${stylesheetLinks}
-    <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        background: #000;
-      }
-      body {
-        overflow: hidden;
-        color: var(--text1, #18191c);
-      }
-      #shell {
-        width: 100vw;
-        height: 100vh;
-        background: #000;
-      }
-      #layout {
-        position: relative;
-        min-width: 0;
-        min-height: 0;
-        height: 100vh;
-      }
-      body.comments-bottom #layout {
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-      body.comments-right #layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
-        overflow: hidden;
-      }
-      body.comments-right #stage {
-        grid-column: 1;
-        grid-row: 1;
-        overflow: hidden;
-      }
-      #comments-resizer {
-        display: none;
-      }
-      body.comments-right #comments-resizer {
-        display: block;
-        position: relative;
-        grid-column: 2;
-        grid-row: 1;
-        z-index: 4;
-        width: 8px;
-        min-width: 8px;
-        height: 100vh;
-        cursor: col-resize;
-        background: var(--bg1, #fff);
-      }
-      body.comments-right #comments-resizer::before {
-        content: "";
-        position: absolute;
-        inset: 0 auto 0 50%;
-        width: 1px;
-        transform: translateX(-50%);
-        background: var(--line_regular, rgba(148, 153, 160, 0.36));
-      }
-      body.comments-right #comments-resizer:hover::before,
-      body.comments-right #comments-resizer:focus-visible::before,
-      body.resizing-comments #comments-resizer::before {
-        background: var(--brand_pink, #fb7299);
-      }
-      body.comments-right #comments-resizer:focus-visible {
-        outline: none;
-      }
-      #stage {
-        position: relative;
-        min-width: 0;
-        min-height: 0;
-        width: 100%;
-        height: 100vh;
-        background: #000;
-      }
-      #bilibili-player {
-        position: relative;
-        width: 100% !important;
-        height: 100% !important;
-        min-width: 0;
-        min-height: 0;
-        overflow: hidden;
-        background: #000;
-      }
-      #bilibili-player,
-      #bilibili-player > *,
-      #bilibili-player .bpx-player-container {
-        width: 100% !important;
-        height: 100% !important;
-      }
-      #comments {
-        display: flex;
-        flex-direction: column;
-        min-height: 520px;
-        padding: 0;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-      body.comments-right #comments {
-        grid-column: 3;
-        grid-row: 1;
-        min-width: 0;
-        min-height: 0;
-        height: 100vh;
-        padding: 0 0 0 8px;
-        overflow: hidden;
-        border-left: 0;
-      }
-      .${APP}__back-to-top {
-        position: fixed;
-        right: 28px;
-        bottom: 26px;
-        z-index: 12;
-        width: 38px;
-        height: 38px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 999px;
-        color: var(--text2, #61666d);
-        background: var(--bg1, #fff);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-        cursor: pointer;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(6px);
-        transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-      }
-      body.comments-right .${APP}__back-to-top {
-        right: 22px;
-        bottom: 22px;
-      }
-      .${APP}__back-to-top.${APP}--visible {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .${APP}__back-to-top:hover,
-      .${APP}__back-to-top:focus-visible {
-        color: var(--brand_pink, #fb7299);
-        border-color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-      .${APP}__back-to-top svg {
-        width: 18px;
-        height: 18px;
-        display: block;
-        stroke: currentColor;
-      }
-      #${APP}-pip-controls {
-        position: static !important;
-        z-index: auto !important;
-        transform: none !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        height: 100% !important;
-        margin: 0 14px 0 0 !important;
-        padding: 0 !important;
-        vertical-align: middle !important;
-        pointer-events: auto !important;
-        flex: 0 0 auto !important;
-      }
-      #${APP}-pip-controls a {
-        all: unset;
-        box-sizing: border-box !important;
-        position: relative !important;
-        top: -8px !important;
-        width: auto !important;
-        height: 100% !important;
-        min-width: auto !important;
-        max-width: none !important;
-        padding: 0 !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        flex: 0 0 auto !important;
-        border: 0 !important;
-        color: #fff !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        text-decoration: none !important;
-        white-space: nowrap !important;
-        font: 600 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-        letter-spacing: 0 !important;
-        cursor: pointer !important;
-        opacity: 0.92 !important;
-        text-shadow: 0 0 2px rgba(0, 0, 0, 0.6) !important;
-      }
-      #${APP}-pip-controls a:hover,
-      #${APP}-pip-controls a:focus-visible {
-        color: #fff !important;
-        background: transparent !important;
-        outline: none !important;
-        opacity: 1 !important;
-      }
-      .${APP}__comments-tabs {
-        flex: 0 0 auto;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        background: var(--bg1, #fff);
-      }
-      body.comments-right .${APP}__comments-tabs {
-        margin: 0;
-        padding: 0;
-      }
-      .${APP}__comments-tab {
-        height: 34px;
-        padding: 0 4px;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--text2, #61666d);
-        background: transparent;
-        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-      }
-      .${APP}__comments-tab:hover,
-      .${APP}__comments-tab:focus-visible,
-      .${APP}__comments-tab.${APP}--active {
-        color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-      .${APP}__comments-tab.${APP}--active {
-        border-bottom-color: var(--brand_pink, #fb7299);
-      }
-      .${APP}__comments-panel[hidden] {
-        display: none !important;
-      }
-      .${APP}__comments-panel:not([hidden]) {
-        min-width: 0;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: visible;
-      }
-      body.comments-right .${APP}__comments-panel:not([hidden]) {
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-      #comments-mount {
-        box-sizing: border-box;
-        min-height: 360px;
-        padding-right: 18px;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-      body.comments-right #comments-mount {
-        padding-right: 16px;
-      }
-      .${APP}__playlist {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 0 28px;
-        padding: 12px 0 24px;
-      }
-      body.comments-right .${APP}__playlist {
-        grid-template-columns: 1fr;
-      }
-      .${APP}__playlist-card {
-        appearance: none;
-        box-sizing: border-box;
-        width: 100%;
-        min-width: 0;
-        display: grid;
-        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr);
-        column-gap: 12px;
-        align-items: start;
-        padding: 12px 14px;
-        border: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 0;
-        color: var(--text1, #18191c);
-        background: transparent;
-        text-align: left;
-        text-indent: 0;
-        font: inherit;
-        cursor: pointer;
-      }
-      .${APP}__playlist-card:hover,
-      .${APP}__playlist-card:focus-visible,
-      .${APP}__playlist-card.${APP}--selected {
-        outline: none;
-      }
-      .${APP}__playlist-card:last-child {
-        border-bottom: 0;
-      }
-      .${APP}__playlist-card.${APP}--selected {
-        color: var(--brand_blue, #00aeec);
-        background: transparent;
-      }
-      .${APP}__playlist-card:hover .${APP}__playlist-title,
-      .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
-        color: var(--brand_blue, #00aeec);
-      }
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-stats {
-        color: var(--text2, #61666d);
-      }
-      .${APP}__playlist-playing {
-        width: 16px;
-        height: 16px;
-        display: inline-block;
-        margin: 0 4px 0 0;
-        vertical-align: -3px;
-      }
-      .${APP}__playlist-cover {
-        position: relative;
-        z-index: 0;
-        min-width: 0;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--bg2, #f6f7f8);
-      }
-      .${APP}__playlist-cover img {
-        width: 100%;
-        height: 100%;
-        display: block;
-        object-fit: cover;
-      }
-      .${APP}__playlist-duration {
-        position: absolute;
-        right: 4px;
-        bottom: 4px;
-        height: 18px;
-        padding: 0 5px;
-        border-radius: 3px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.72);
-        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      .${APP}__playlist-info {
-        position: relative;
-        z-index: 1;
-        width: 100%;
-        min-width: 0;
-        max-width: 100%;
-        overflow: visible;
-        padding: 1px 2px 0 1px;
-        display: grid;
-        align-content: start;
-        gap: 6px;
-      }
-      .${APP}__playlist-title {
-        width: 100%;
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        color: var(--text1, #18191c);
-        font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      .${APP}__playlist-title-text {
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-      }
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats,
-      .${APP}__playlist-empty {
-        color: var(--text3, #9499a0);
-        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats {
-        max-width: 100%;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-      }
-      .${APP}__playlist-stats {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .${APP}__playlist-stat {
-        min-width: 0;
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-      }
-      .${APP}__playlist-stat-icon {
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-        color: currentColor;
-      }
-      .${APP}__playlist-card--skeleton {
-        cursor: default;
-        pointer-events: none;
-      }
-      .${APP}__playlist-skeleton-cover,
-      .${APP}__playlist-skeleton-line {
-        position: relative;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--graph_bg_regular, var(--bg2, #f1f2f3));
-      }
-      .${APP}__playlist-skeleton-cover {
-        width: 100%;
-        aspect-ratio: 16 / 9;
-      }
-      .${APP}__playlist-skeleton-info {
-        min-width: 0;
-        display: grid;
-        align-content: start;
-        gap: 9px;
-        padding-top: 2px;
-      }
-      .${APP}__playlist-skeleton-line {
-        height: 12px;
-      }
-      .${APP}__playlist-skeleton-line--title {
-        height: 16px;
-      }
-      .${APP}__playlist-skeleton-cover::after,
-      .${APP}__playlist-skeleton-line::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        transform: translateX(-100%);
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
-        animation: ${APP}-skeleton-shimmer 1.25s ease-in-out infinite;
-      }
-      @keyframes ${APP}-skeleton-shimmer {
-        100% {
-          transform: translateX(100%);
-        }
-      }
-      .${APP}__bottom-fixed-hidden {
-        display: none !important;
-      }
-    </style>
-  </head>
-  <body class="${commentLayoutClass}"></body>
-</html>`);
+    writePipDocument(pipWindow, renderPipPlayerDocument({
+      title: bootstrap.title,
+      stylesheets: [...bootstrap.stylesheets, ...getBiliThemeStylesheets()],
+      themeClassMarkup: getPipThemeClassMarkup(),
+      commentLayoutClass,
+    }));
 
     mountPipPlayerPage({
       targetDocument: pipWindow.document,
@@ -2384,15 +1529,91 @@ import {
     attachPipCommentsTabs(pipWindow);
     setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
     renderPlaylist('pip');
+    renderPageParts('pip', bootstrap);
     renderRecommendations('pip', bootstrap);
     syncCommentsTabs('pip');
+    attachPipPlaylistAutoRefresh(pipWindow);
     await loadScriptOnce(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
     if (token !== state.switchToken || pipWindow.closed) return;
     if (!pipWindow.nano) throw new Error('nano not available after core load');
     attachPipCommentResizer(pipWindow);
+    attachPipWindowResizeSync(pipWindow);
     syncCommentWidth();
     connectPipPlayer(pipWindow, bootstrap, token);
     mountPipComments(pipWindow, bootstrap, token);
+  }
+
+  async function bootLivePipWindow(pipWindow, bootstrap, token) {
+    disposePipPlayer();
+    disposePipComments();
+
+    writeLivePipDocument(pipWindow, bootstrap);
+    installLivePipGlobals(pipWindow, bootstrap);
+
+    await loadScriptOnce(pipWindow.document, bootstrap.playerScript, () => pipWindow.Player);
+    if (token !== state.switchToken || pipWindow.closed) return;
+    if (!pipWindow.Player) throw new Error('live Player not available after load');
+
+    connectLivePipPlayer(pipWindow, bootstrap, token);
+  }
+
+  function writeLivePipDocument(pipWindow, bootstrap) {
+    writePipDocument(pipWindow, renderLivePipDocument({
+      title: bootstrap.title,
+      href: bootstrap.href,
+      themeClassMarkup: getPipThemeClassMarkup(),
+    }));
+  }
+
+  function connectLivePipPlayer(targetWindow, bootstrap, token) {
+    if (token !== state.switchToken || targetWindow.closed) return;
+    const playerRoot = targetWindow.document.getElementById('live-player');
+    if (!playerRoot) throw new Error('live-player container not found');
+
+    const player = new targetWindow.Player(playerRoot, buildLivePipPlayerOptions(targetWindow, bootstrap));
+    targetWindow.EmbedPlayer = { instance: player };
+    targetWindow.__PLAYER_GLOBAL_INSTANCE__ = player;
+    targetWindow.__biliPopupPlayerNanoDebug = {
+      getPlayer: () => player,
+      getBootstrap: () => bootstrap,
+      getPrimarySetting: () => buildLivePipPlayerOptions(targetWindow, bootstrap),
+    };
+
+    state.pip.player = createLivePipPlayerAdapter(targetWindow, player);
+    attachPipWindowResizeSync(targetWindow);
+    syncPipSize(targetWindow);
+    targetWindow.setTimeout(() => syncPipSize(targetWindow), 600);
+    targetWindow.setTimeout(() => syncPipSize(targetWindow), 1600);
+    setPipStatus('播放中');
+
+    targetWindow.addEventListener('pagehide', () => {
+      if (state.pip.switchingWindow) return;
+      if (state.pip.player) disposePipPlayer();
+      if (state.pip.win === targetWindow) state.pip.win = null;
+    });
+  }
+
+  function attachPipWindowResizeSync(targetWindow) {
+    if (!targetWindow || targetWindow.closed) return;
+    if (targetWindow.__biliPopupPlayerNanoResizeSyncBound) return;
+    targetWindow.__biliPopupPlayerNanoResizeSyncBound = true;
+
+    const onResize = () => schedulePipLayoutSync(targetWindow);
+    targetWindow.addEventListener('resize', onResize);
+    targetWindow.__biliPopupPlayerNanoResizeSyncCleanup = () => {
+      targetWindow.removeEventListener('resize', onResize);
+      targetWindow.__biliPopupPlayerNanoResizeObserver?.disconnect?.();
+      delete targetWindow.__biliPopupPlayerNanoResizeObserver;
+      delete targetWindow.__biliPopupPlayerNanoResizeSyncCleanup;
+      delete targetWindow.__biliPopupPlayerNanoResizeSyncBound;
+    };
+
+    const stage = targetWindow.document?.getElementById('stage');
+    if (stage && targetWindow.ResizeObserver) {
+      const observer = new targetWindow.ResizeObserver(onResize);
+      observer.observe(stage);
+      targetWindow.__biliPopupPlayerNanoResizeObserver = observer;
+    }
   }
 
   function canReloadPip(pipWindow) {
@@ -2400,6 +1621,7 @@ import {
       pipWindow &&
       !pipWindow.closed &&
       state.pip.win === pipWindow &&
+      !isLiveBootstrap(state.pip.bootstrap) &&
       state.pip.player &&
       typeof state.pip.player.reload === 'function' &&
       pipWindow.document?.getElementById('bilibili-player') &&
@@ -2418,8 +1640,11 @@ import {
     attachPipCommentsTabs(targetWindow);
     setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
     renderPlaylist('pip');
+    renderPageParts('pip', bootstrap);
     renderRecommendations('pip', bootstrap);
+    attachPipPlaylistAutoRefresh(targetWindow);
     attachPipCommentResizer(targetWindow);
+    attachPipWindowResizeSync(targetWindow);
     syncCommentWidth();
     syncPipSize(targetWindow);
     setPipStatus('换源中');
@@ -2503,6 +1728,9 @@ import {
       bvid: info.bvid,
       p: info.p,
       t: info.t,
+      hasPrev: Boolean(info.hasPrev),
+      hasNext: Boolean(info.hasNext),
+      seasonId: info.seasonId,
       kind: targetWindow.nano.GroupKind.Ugc,
       featureList: new targetWindow.Set(['blackGap']),
       stats: { spmId: '333.788.0.0', spmIdFrom: '333.788.0.0', trackId: '' },
@@ -2590,7 +1818,7 @@ import {
       syncHomeBackToTopButton();
       scheduleHomeBottomFixedWrapperSync();
     }, { passive: true });
-    [ui.commentsPanel, ui.playlistPanel, ui.recommendPanel].forEach((panel) => {
+    [ui.commentsPanel, ui.pagesPanel, ui.playlistPanel, ui.recommendPanel].forEach((panel) => {
       panel?.addEventListener('scroll', () => {
         syncHomeBackToTopButton();
         scheduleHomeBottomFixedWrapperSync();
@@ -2609,40 +1837,57 @@ import {
     ].forEach((container) => {
       if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
       container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
-      container.addEventListener('scroll', scheduleHomePlaylistAutoRefreshCheck, { passive: true });
+      container.addEventListener('scroll', () => schedulePlaylistAutoRefreshCheck('home'), { passive: true });
     });
   }
 
-  function scheduleHomePlaylistAutoRefreshCheck() {
-    if (state.home.playlistRefreshFrame) return;
-    state.home.playlistRefreshFrame = window.requestAnimationFrame(() => {
-      state.home.playlistRefreshFrame = 0;
-      void maybeLoadMoreHomePlaylist();
+  function attachPipPlaylistAutoRefresh(targetWindow) {
+    if (!targetWindow || targetWindow.closed) return;
+    const doc = targetWindow.document;
+    const layout = doc?.getElementById('layout');
+    const playlistPanel = doc?.getElementById('playlist-panel');
+    [
+      layout,
+      playlistPanel,
+    ].forEach((container) => {
+      if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
+      container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
+      container.addEventListener('scroll', () => schedulePlaylistAutoRefreshCheck('pip'), { passive: true });
     });
   }
 
-  async function maybeLoadMoreHomePlaylist({ force = false } = {}) {
-    const feed = state.home.feed;
+  function schedulePlaylistAutoRefreshCheck(kind) {
+    const scope = state[kind];
+    if (!scope || scope.playlistRefreshFrame) return;
+    const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+    scope.playlistRefreshFrame = targetWindow.requestAnimationFrame(() => {
+      scope.playlistRefreshFrame = 0;
+      void maybeLoadMorePlaylist(kind);
+    });
+  }
+
+  async function maybeLoadMorePlaylist(kind, { force = false } = {}) {
+    const scope = state[kind];
+    const feed = scope?.feed;
     if (!feed || feed.loading || feed.exhausted) return;
     if (!isHomeFeedPage()) return;
-    if (!state.home.ui || !state.home.overlay || state.home.overlay.classList.contains(`${APP}--hidden`)) return;
-    if (state.home.activeCommentsTab !== 'playlist') return;
-    if (!force && !isHomePlaylistNearBottom()) return;
+    if (!isPlaylistAutoRefreshActive(kind)) return;
+    if (!force && !isPlaylistNearBottom(kind)) return;
 
     const requestId = feed.requestId + 1;
     feed.requestId = requestId;
     feed.loading = true;
     feed.error = '';
     feed.session ||= createHomeFeedSession();
-    renderPlaylist('home', {
-      appendLoading: state.home.playlistCards.length > 0,
+    renderPlaylist(kind, {
+      appendLoading: scope.playlistCards.length > 0,
       autoScrollSelected: false,
-      loading: state.home.playlistCards.length === 0,
+      loading: scope.playlistCards.length === 0,
     });
 
     try {
       const cards = await fetchHomeFeedCards({
-        existingCards: state.home.playlistCards,
+        existingCards: scope.playlistCards,
         session: feed.session,
       });
       if (requestId !== feed.requestId) return;
@@ -2650,7 +1895,7 @@ import {
         feed.exhausted = true;
         return;
       }
-      appendHomePlaylistCards(cards);
+      appendPlaylistCards(kind, cards);
     } catch (error) {
       if (requestId !== feed.requestId) return;
       feed.error = error?.message || String(error);
@@ -2658,35 +1903,58 @@ import {
     } finally {
       if (requestId === feed.requestId) {
         feed.loading = false;
-        renderPlaylist('home', getHomePlaylistEmptyText(), { autoScrollSelected: false });
+        renderPlaylist(kind, getPlaylistEmptyText(kind), { autoScrollSelected: false });
       }
     }
   }
 
-  function appendHomePlaylistCards(cards) {
-    const seen = new Set(state.home.playlistCards.map((card) => card?.bvid).filter(Boolean));
+  function appendPlaylistCards(kind, cards) {
+    const scope = state[kind];
+    if (!scope) return;
+    const seen = new Set(scope.playlistCards.map((card) => card?.bvid).filter(Boolean));
     const nextCards = cards.filter((card) => {
       if (!card?.bvid || seen.has(card.bvid)) return false;
       seen.add(card.bvid);
       return true;
     });
-    if (nextCards.length) state.home.playlistCards = [...state.home.playlistCards, ...nextCards];
+    if (nextCards.length) scope.playlistCards = [...scope.playlistCards, ...nextCards];
   }
 
-  function isHomePlaylistNearBottom() {
-    const container = getHomePlaylistScrollContainer();
+  function isPlaylistNearBottom(kind) {
+    const container = getPlaylistScrollContainer(kind);
     if (!container) return false;
     return container.scrollHeight - container.scrollTop - container.clientHeight <= 320;
   }
 
-  function getHomePlaylistScrollContainer() {
-    const ui = state.home.ui;
-    if (!ui) return null;
-    return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+  function getPlaylistScrollContainer(kind) {
+    if (kind === 'home') {
+      const ui = state.home.ui;
+      if (!ui) return null;
+      return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+    }
+    const doc = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
+    if (!doc) return null;
+    return state.commentLayout === 'right' ? doc.getElementById('playlist-panel') : doc.getElementById('layout');
   }
 
-  function resetHomePlaylistFeed() {
-    const feed = state.home.feed;
+  function isPlaylistAutoRefreshActive(kind) {
+    if (kind === 'home') {
+      return Boolean(
+        state.home.ui &&
+        state.home.overlay &&
+        !state.home.overlay.classList.contains(`${APP}--hidden`) &&
+        state.home.activeCommentsTab === 'playlist',
+      );
+    }
+    return Boolean(
+      state.pip.win &&
+      !state.pip.win.closed &&
+      state.pip.activeCommentsTab === 'playlist',
+    );
+  }
+
+  function resetPlaylistFeed(kind) {
+    const feed = state[kind]?.feed;
     if (!feed) return;
     feed.error = '';
     feed.exhausted = false;
@@ -2695,8 +1963,8 @@ import {
     feed.session = null;
   }
 
-  function getHomePlaylistEmptyText() {
-    if (state.home.feed?.error) return '首页推荐加载失败，继续滚动可重试';
+  function getPlaylistEmptyText(kind) {
+    if (state[kind]?.feed?.error) return '首页推荐加载失败，继续滚动可重试';
     return '当前页面没有扫到可播放卡片';
   }
 
@@ -2819,6 +2087,7 @@ import {
   function getHomeActiveCommentsPanel() {
     const ui = state.home.ui;
     if (!ui) return null;
+    if (state.home.activeCommentsTab === 'pages') return ui.pagesPanel;
     if (state.home.activeCommentsTab === 'playlist') return ui.playlistPanel;
     if (state.home.activeCommentsTab === 'recommend') return ui.recommendPanel;
     return ui.commentsPanel;
@@ -2870,6 +2139,7 @@ import {
 
   function getPipActiveCommentsPanel(doc) {
     if (!doc) return null;
+    if (state.pip.activeCommentsTab === 'pages') return doc.getElementById('pages-panel');
     if (state.pip.activeCommentsTab === 'playlist') return doc.getElementById('playlist-panel');
     if (state.pip.activeCommentsTab === 'recommend') return doc.getElementById('recommend-panel');
     return doc.getElementById('comments-panel');
@@ -2949,7 +2219,7 @@ import {
         schedulePipLayoutSync(targetWindow);
       }, { passive: true });
     }
-    const panels = [...(targetWindow.document?.querySelectorAll?.('#comments-panel, #playlist-panel, #recommend-panel') || [])];
+    const panels = [...(targetWindow.document?.querySelectorAll?.('#comments-panel, #pages-panel, #playlist-panel, #recommend-panel') || [])];
     panels.forEach((panel) => {
       if (panel.__biliPopupPlayerNanoScrollSyncBound) return;
       panel.__biliPopupPlayerNanoScrollSyncBound = true;
@@ -3136,8 +2406,13 @@ import {
   }
 
   function saveLastPlayed(meta, bootstrap) {
+    const playbackId = getPlaybackIdentity(meta, bootstrap);
+    if (!playbackId || !meta.href) return;
     const next = {
+      id: playbackId,
+      kind: bootstrap.kind || meta.kind || 'video',
       bvid: bootstrap.playerInfo?.bvid || meta.bvid,
+      roomId: bootstrap.playerInfo?.roomId || meta.roomId,
       href: meta.href,
       title: bootstrap.title || meta.title,
       savedAt: Date.now(),
@@ -3149,9 +2424,11 @@ import {
   }
 
   function recordPlaybackHistory(meta, bootstrap) {
+    const playbackId = getPlaybackIdentity(meta, bootstrap);
     const bvid = bootstrap.playerInfo?.bvid || meta.bvid;
+    const roomId = bootstrap.playerInfo?.roomId || meta.roomId;
     const href = bootstrap.href || meta.href;
-    if (!bvid || !href) return;
+    if (!playbackId || !href) return;
 
     if (meta.fromHistory && Number.isInteger(meta.historyIndex)) {
       state.playbackHistory.index = clampHistoryIndex(meta.historyIndex);
@@ -3160,13 +2437,16 @@ import {
     }
 
     const next = {
+      id: playbackId,
+      kind: bootstrap.kind || meta.kind || 'video',
       bvid,
+      roomId,
       href,
-      title: bootstrap.title || meta.title || bvid,
+      title: bootstrap.title || meta.title || bvid || `直播 ${roomId}`,
     };
     const history = state.playbackHistory;
     const current = history.entries[history.index];
-    if (current?.bvid === next.bvid) {
+    if (current?.id === next.id || (next.bvid && current?.bvid === next.bvid) || (next.roomId && current?.roomId === next.roomId)) {
       history.entries[history.index] = { ...current, ...next };
       syncPlaybackHistoryButtons();
       return;
@@ -3188,7 +2468,7 @@ import {
     if (!entry) return;
     history.index = nextIndex;
     syncPlaybackHistoryButtons();
-    openWithRenderer(homeRenderer, {
+    openWithRenderer(entry.kind === 'live' ? pipRenderer : homeRenderer, {
       ...entry,
       fromHistory: true,
       historyIndex: nextIndex,
@@ -3218,7 +2498,21 @@ import {
   }
 
   function isSamePlayback(meta, bootstrap) {
+    if (isLiveMeta(meta) || isLiveBootstrap(bootstrap)) {
+      const roomId = String(meta?.roomId || '');
+      const info = bootstrap?.playerInfo || {};
+      return Boolean(roomId && (roomId === String(info.roomId || '') || roomId === String(info.shortId || '')));
+    }
     return Boolean(meta?.bvid && bootstrap?.playerInfo?.bvid && meta.bvid === bootstrap.playerInfo.bvid);
+  }
+
+  function getPlaybackIdentity(meta, bootstrap) {
+    if (isLiveMeta(meta) || isLiveBootstrap(bootstrap)) {
+      const roomId = bootstrap?.playerInfo?.roomId || meta?.roomId;
+      return roomId ? `live:${roomId}` : '';
+    }
+    const bvid = bootstrap?.playerInfo?.bvid || meta?.bvid;
+    return bvid ? `video:${bvid}` : '';
   }
 
   function updateDebug(primarySetting, bootstrap) {
@@ -3254,7 +2548,6 @@ import {
       // Ignore resize failures.
     }
     scheduleHomeBottomFixedWrapperSync();
-    window.dispatchEvent(new Event('resize'));
   }
 
   function syncHomePlayerFrame() {
@@ -3303,7 +2596,8 @@ import {
   }
 
   function syncPipSize(targetWindow) {
-    const root = targetWindow.document?.getElementById('bilibili-player');
+    const root = targetWindow.document?.getElementById('bilibili-player') ||
+      targetWindow.document?.getElementById('live-player');
     if (!root) return;
     const stage = targetWindow.document.getElementById('stage');
     const rect = stage?.getBoundingClientRect();
@@ -3313,13 +2607,13 @@ import {
     root.style.height = `${height}px`;
     root.style.minWidth = '0px';
     root.style.minHeight = '0px';
+    targetWindow.dispatchEvent(new targetWindow.Event('resize'));
     try {
       state.pip.player?.resize?.();
     } catch {
       // Ignore resize failures.
     }
     schedulePipBottomFixedWrapperSync(targetWindow);
-    targetWindow.dispatchEvent(new targetWindow.Event('resize'));
     targetWindow.requestAnimationFrame(() => {
       const nextRect = stage?.getBoundingClientRect();
       const nextWidth = Math.max(1, Math.floor(nextRect?.width || targetWindow.innerWidth));
@@ -3328,116 +2622,39 @@ import {
       root.style.height = `${nextHeight}px`;
       root.style.minWidth = '0px';
       root.style.minHeight = '0px';
+      targetWindow.dispatchEvent(new targetWindow.Event('resize'));
       try {
         state.pip.player?.resize?.();
       } catch {
         // Ignore resize failures.
       }
-      targetWindow.dispatchEvent(new targetWindow.Event('resize'));
     });
   }
 
   function writePipLoading(pipWindow, title, href) {
-    const stylesheetLinks = getBiliThemeStylesheets()
-      .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
-      .join('\n');
-    writePipDocument(pipWindow, `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>${escapeHtml(title || 'Bilibili 小窗播放')}</title>
-    ${stylesheetLinks}
-    <style>
-      html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        display: grid;
-        place-items: center;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      a {
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        width: 34px;
-        height: 34px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 8px;
-        color: var(--text1, #18191c);
-        background: var(--bg2, #f6f7f8);
-      }
-      a svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
-      }
-    </style>
-  </head>
-  <body>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>` : ''}加载中...</body>
-</html>`);
+    writePipDocument(pipWindow, renderPipLoadingDocument({
+      title,
+      href,
+      stylesheets: getBiliThemeStylesheets(),
+      themeClassMarkup: getPipThemeClassMarkup(),
+    }));
   }
 
   function writePipError(pipWindow, error, href) {
     disposePipPlayer();
     disposePipComments();
-    const stylesheetLinks = getBiliThemeStylesheets()
-      .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
-      .join('\n');
-    writePipDocument(pipWindow, `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>初始化失败</title>
-    ${stylesheetLinks}
-    <style>
-      html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        display: grid;
-        place-items: center;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      pre {
-        max-width: calc(100vw - 32px);
-        white-space: pre-wrap;
-      }
-      a {
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        width: 34px;
-        height: 34px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 8px;
-        color: var(--text1, #18191c);
-        background: var(--bg2, #f6f7f8);
-      }
-      a svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
-      }
-    </style>
-  </head>
-  <body>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>` : ''}<pre>${escapeHtml(error?.message || String(error))}</pre></body>
-</html>`);
+    writePipDocument(pipWindow, renderPipErrorDocument({
+      error,
+      href,
+      stylesheets: getBiliThemeStylesheets(),
+      themeClassMarkup: getPipThemeClassMarkup(),
+    }));
   }
 
   function writePipDocument(pipWindow, html) {
     state.pip.switchingWindow = true;
     pipWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
+    pipWindow.__biliPopupPlayerNanoResizeSyncCleanup?.();
     delete pipWindow.__biliPopupPlayerNanoControlsObserver;
     pipWindow.__biliPopupPlayerNanoControlsToken = (pipWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
     pipWindow.document.open();
@@ -3448,6 +2665,10 @@ import {
     }, 0);
   }
 
+  function getPipThemeClassMarkup() {
+    return getThemeStyle() === 'dark' ? ' class="night-mode"' : '';
+  }
+
   function setPipStatus(message) {
     setLastButtonStatus(message);
   }
@@ -3456,7 +2677,13 @@ import {
     if (!state.lastButton?.isConnected) return;
     state.lastButton.textContent = message;
     window.setTimeout(() => {
-      if (state.lastButton?.isConnected) state.lastButton.textContent = '小窗播放';
+      if (state.lastButton?.isConnected) {
+        if (state.lastButton.classList.contains(`${APP}__fixed-pip-button`)) {
+          state.lastButton.replaceChildren(createPictureInPictureIcon());
+        } else {
+          state.lastButton.textContent = '小窗播放';
+        }
+      }
     }, 1800);
   }
 
@@ -3525,6 +2752,7 @@ import {
     state.observer?.disconnect();
     if (state.scanTimer) window.clearTimeout(state.scanTimer);
     if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
+    if (state.homeSizeFrame) cancelAnimationFrame(state.homeSizeFrame);
     if (state.settingsVisibilityFrame) cancelAnimationFrame(state.settingsVisibilityFrame);
     if (state.bottomFixedFrame) cancelAnimationFrame(state.bottomFixedFrame);
     stopScanWarmup();
@@ -3536,6 +2764,8 @@ import {
     state.home.ui?.dispose?.();
     state.home.ui = null;
     state.home.overlay = null;
+    removeLivePageButton();
+    removePlaybackPagePipButton();
     settingsUi.destroy();
     document.removeEventListener('mousemove', onDocumentMouseMove, true);
     document.removeEventListener('mouseleave', onDocumentMouseLeave, true);

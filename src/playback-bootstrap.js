@@ -1,108 +1,190 @@
-import { COMMENT_FALLBACK, CORE_FALLBACK } from './constants.js';
+import { BV_RE, COMMENT_FALLBACK, CORE_FALLBACK } from './constants.js';
 import {
-  getCardRoot,
-  getVideoMetaFromLink,
-  isCoverLink,
   normalizeResourceUrl,
   normalizeVideoHref,
-  PLAYBACK_VIDEO_LINK_SELECTOR,
 } from './video-meta.js';
+import { getPlayerNanoTheme } from './player-theme.js';
 
 export async function resolvePlaybackBootstrap(meta) {
-  const html = await fetch(meta.href, { credentials: 'include' }).then((res) => res.text());
-  const initialState = JSON.parse(extractAssignedJson(html, 'window.__INITIAL_STATE__'));
-  const playInfoJson = extractAssignedJson(html, 'window.__playinfo__');
-  const playInfo = playInfoJson ? JSON.parse(playInfoJson) : null;
-  const vd = initialState.videoData;
-  const p = Number(initialState.p || 1);
-  const page = vd.pages?.[p - 1] || vd.pages?.[0] || {};
-  const currentBvid = vd.bvid || meta.bvid;
-  const recommendationCards = mergePlaylistCards(
-    extractPlaylistCardsFromHtml(html, meta.href, currentBvid),
-    extractPlaylistCardsFromInitialState(initialState, meta.href, currentBvid),
-  );
+  const apiBootstrap = await resolvePlaybackBootstrapFromApis(meta);
+  if (apiBootstrap) return apiBootstrap;
 
-  return {
-    title: vd.title || meta.title,
-    coreScript: extractCoreScriptUrl(html) || CORE_FALLBACK,
-    commentScript: extractCommentScriptUrl(html) || COMMENT_FALLBACK,
-    stylesheets: extractStylesheetUrls(html),
-    initialState,
-    playInfo,
-    recommendationCards,
-    playerInfo: {
-      aid: vd.aid || initialState.aid,
-      bvid: currentBvid,
-      cid: page.cid || initialState.cid,
-      p,
-      t: 0,
-    },
-    href: meta.href,
-    commentInfo: {
-      params: `1,${vd.aid || initialState.aid}`,
-      spmPrefix: initialState.spmidPrefix || '333.788',
-      cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || '',
-    },
-  };
+  throw new Error('Playback API bootstrap failed');
 }
 
-function mergePlaylistCards(...groups) {
-  const byBvid = new Map();
-  groups.flat().forEach((card) => {
-    if (!card?.bvid) return;
-    byBvid.set(card.bvid, mergePlaylistCard(byBvid.get(card.bvid), card));
+async function resolvePlaybackBootstrapFromApis(meta) {
+  const bvid = meta.bvid || meta.href?.match(BV_RE)?.[1];
+  if (!bvid) return null;
+
+  try {
+    const [viewResult, relatedResult, pagelistResult] = await Promise.allSettled([
+      fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`),
+      fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/archive/related?bvid=${encodeURIComponent(bvid)}`),
+      fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`),
+    ]);
+    if (viewResult.status !== 'fulfilled') return null;
+
+    const vd = normalizeVideoData(
+      viewResult.value?.data,
+      pagelistResult.status === 'fulfilled' ? pagelistResult.value?.data : null,
+    );
+    if (!vd?.aid || !vd?.bvid) return null;
+
+    const pageP = resolveCurrentPage(meta.href, { p: 1, videoData: vd });
+    const sequence = resolvePlaybackSequence(vd, pageP);
+    const page = getVideoPage(vd, pageP);
+    const relatedItems = relatedResult.status === 'fulfilled' && Array.isArray(relatedResult.value?.data)
+      ? relatedResult.value.data
+      : [];
+    const initialState = buildInitialStateFromApis({ meta, p: sequence.p, relatedItems, videoData: vd });
+    const recommendationCards = extractPlaylistCardsFromRelatedItems(relatedItems, meta.href, vd.bvid);
+
+    return {
+      title: vd.title || meta.title,
+      coreScript: CORE_FALLBACK,
+      commentScript: COMMENT_FALLBACK,
+      stylesheets: [],
+      initialState,
+      playInfo: null,
+      recommendationCards,
+      playerInfo: {
+        aid: vd.aid,
+        bvid: vd.bvid,
+        cid: page.cid || vd.cid || initialState.cid,
+        p: sequence.p,
+        t: 0,
+        hasPrev: sequence.hasPrev,
+        hasNext: sequence.hasNext,
+        seasonId: sequence.seasonId,
+      },
+      href: meta.href,
+      commentInfo: {
+        params: `1,${vd.aid}`,
+        spmPrefix: '333.788',
+        cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || '',
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPlaybackJson(url) {
+  const response = await fetch(url, {
+    credentials: 'include',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
   });
-  return [...byBvid.values()];
+  if (!response.ok) throw new Error(`Playback API request failed: ${response.status}`);
+  const payload = await response.json();
+  if (payload?.code !== 0) throw new Error(payload?.message || `Playback API error: ${payload?.code}`);
+  return payload;
 }
 
-function mergePlaylistCard(base, next) {
-  if (!base) return next;
+function normalizeVideoData(videoData, pageList) {
+  if (!videoData) return null;
+  const pages = mergeVideoPages(videoData.pages, pageList);
   return {
-    ...base,
-    href: base.href || next.href,
-    title: isUsefulTitle(base.title) ? base.title : next.title,
-    cover: base.cover || next.cover,
-    subtitle: base.subtitle || next.subtitle,
-    duration: base.duration || next.duration,
-    stats: base.stats || next.stats,
+    ...videoData,
+    pages,
+    videos: videoData.videos || pages.length,
   };
 }
 
-function extractPlaylistCardsFromHtml(html, baseUrl, currentBvid) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const seen = new Set();
-  return [...doc.querySelectorAll(PLAYBACK_VIDEO_LINK_SELECTOR)]
-    .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
-    .map((link) => buildPlaylistCard(link, baseUrl))
-    .filter((card) => {
-      if (!card || card.bvid === currentBvid || seen.has(card.bvid)) return false;
-      seen.add(card.bvid);
-      return true;
+function mergeVideoPages(primaryPages, pageList) {
+  const byPage = new Map();
+  const addPage = (page) => {
+    if (!page) return;
+    const pageNo = Number(page.page || byPage.size + 1);
+    byPage.set(pageNo, {
+      ...byPage.get(pageNo),
+      ...page,
+      page: pageNo,
     });
+  };
+  (Array.isArray(primaryPages) ? primaryPages : []).forEach(addPage);
+  (Array.isArray(pageList) ? pageList : []).forEach(addPage);
+  return [...byPage.values()].sort((a, b) => Number(a.page || 0) - Number(b.page || 0));
 }
 
-function buildPlaylistCard(link, baseUrl) {
-  const meta = getVideoMetaFromLink(link, baseUrl);
-  if (!meta) return null;
-
-  const root = getCardRoot(link);
-  const title = getPlaylistCardTitle(link, root, meta.title);
-  const cover = getPlaylistCardCover(root, baseUrl);
-  const subtitle = getPlaylistCardSubtitle(root);
-  const duration = getPlaylistCardDuration(root);
-  const stats = getPlaylistCardStats(root);
-  return { ...meta, title, cover, subtitle, duration, stats };
+function buildInitialStateFromApis({ meta, p, relatedItems, videoData }) {
+  const page = getVideoPage(videoData, p);
+  const owner = videoData.owner || {};
+  return {
+    aid: videoData.aid,
+    bvid: videoData.bvid || meta.bvid,
+    cid: page.cid || videoData.cid,
+    p,
+    videoData,
+    related: relatedItems,
+    spmidPrefix: '333.788',
+    upData: {
+      mid: owner.mid,
+      name: owner.name,
+      face: owner.face,
+      fans: owner.fans,
+    },
+    staffData: videoData.staff || [],
+    nanoTheme: getPlayerNanoTheme(),
+  };
 }
 
-function extractPlaylistCardsFromInitialState(initialState, baseUrl, currentBvid) {
-  return (initialState.related || [])
+function resolveCurrentPage(href, initialState) {
+  const parsed = new URL(href, location.href);
+  const urlPage = Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 0);
+  const statePage = Number(initialState?.p || 0);
+  const page = urlPage || statePage || 1;
+  const pageCount = initialState?.videoData?.pages?.length || 0;
+  if (!Number.isFinite(page) || page < 1) return 1;
+  return pageCount ? Math.min(page, pageCount) : page;
+}
+
+function getVideoPage(videoData, p) {
+  return videoData?.pages?.find((page) => Number(page.page) === Number(p)) ||
+    videoData?.pages?.[Number(p) - 1] ||
+    videoData?.pages?.[0] ||
+    {};
+}
+
+function resolvePlaybackSequence(videoData, pageP) {
+  const episodes = getUgcSeasonEpisodes(videoData);
+  const currentEpisodeIndex = episodes.findIndex((episode) => (
+    episode?.bvid && videoData?.bvid && episode.bvid === videoData.bvid
+  ) || (
+    Number(episode?.cid) && Number(videoData?.cid) && Number(episode.cid) === Number(videoData.cid)
+  ));
+  if (currentEpisodeIndex >= 0 && episodes.length > 1) {
+    return {
+      p: currentEpisodeIndex + 1,
+      hasPrev: currentEpisodeIndex > 0,
+      hasNext: currentEpisodeIndex < episodes.length - 1,
+      seasonId: videoData?.ugc_season?.id || episodes[currentEpisodeIndex]?.season_id,
+    };
+  }
+
+  const pageCount = videoData?.pages?.length || 0;
+  return {
+    p: pageP,
+    hasPrev: pageP > 1,
+    hasNext: pageCount > 0 && pageP < pageCount,
+    seasonId: videoData?.season_id,
+  };
+}
+
+function getUgcSeasonEpisodes(videoData) {
+  return (Array.isArray(videoData?.ugc_season?.sections) ? videoData.ugc_season.sections : [])
+    .flatMap((section) => Array.isArray(section?.episodes) ? section.episodes : []);
+}
+
+function extractPlaylistCardsFromRelatedItems(items, baseUrl, currentBvid) {
+  return (Array.isArray(items) ? items : [])
     .map((item) => {
       const bvid = item?.bvid;
       if (!bvid || bvid === currentBvid) return null;
       return {
         bvid,
-        href: normalizeVideoHref(item.uri || `/video/${bvid}`, baseUrl),
+        href: normalizeVideoHref(item.uri, baseUrl) || normalizeVideoHref(`/video/${bvid}`, baseUrl),
         title: String(item.title || 'Bilibili 视频').replace(/\s+/g, ' ').trim(),
         cover: normalizeResourceUrl(item.pic, baseUrl),
         subtitle: String(item.owner?.name || item.author || '').replace(/\s+/g, ' ').trim(),
@@ -111,83 +193,6 @@ function extractPlaylistCardsFromInitialState(initialState, baseUrl, currentBvid
       };
     })
     .filter((card) => card?.href);
-}
-
-function getPlaylistCardTitle(link, root, fallback) {
-  const candidate = link.getAttribute('title') ||
-    link.getAttribute('aria-label') ||
-    getSafeTitleElementText(root, [
-      '.title',
-      '.info-title',
-      '.bili-video-card__info--tit',
-      '.video-page-card-small-title',
-    ].join(',')) ||
-    root?.querySelector?.('img')?.getAttribute('alt') ||
-    fallback;
-  const title = String(candidate || fallback || 'Bilibili 视频').replace(/\s+/g, ' ').trim();
-  return isUsefulTitle(title) ? title : 'Bilibili 视频';
-}
-
-function getSafeTitleElementText(root, selector) {
-  return [...(root?.querySelectorAll?.(selector) || [])]
-    .map((element) => element.textContent || element.getAttribute?.('title') || '')
-    .find(isUsefulTitle) || '';
-}
-
-function getPlaylistCardCover(root, baseUrl) {
-  const img = root?.querySelector?.('img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-url]');
-  const source = root?.querySelector?.('source[srcset], source[data-srcset]');
-  const raw = img?.getAttribute('data-src') ||
-    img?.getAttribute('data-lazy-src') ||
-    img?.getAttribute('data-original') ||
-    img?.getAttribute('data-url') ||
-    img?.getAttribute('src') ||
-    getFirstSrcsetUrl(source?.getAttribute('data-srcset') || source?.getAttribute('srcset')) ||
-    '';
-  return normalizeResourceUrl(raw, baseUrl);
-}
-
-function getPlaylistCardSubtitle(root) {
-  const candidate = root?.querySelector?.([
-    '.upname',
-    '.name',
-    '.bili-video-card__info--author',
-    '.video-page-card-small-author',
-    '[class*="author"]',
-  ].join(','))?.textContent || '';
-  return candidate.replace(/\s+/g, ' ').trim();
-}
-
-function getPlaylistCardDuration(root) {
-  const candidate = root?.querySelector?.([
-    '.duration',
-    '.bili-video-card__stats__duration',
-    '[class*="duration"]',
-  ].join(','))?.textContent || '';
-  return candidate.replace(/\s+/g, ' ').trim();
-}
-
-function getPlaylistCardStats(root) {
-  const playInfo = root?.querySelector?.('.playinfo')?.textContent;
-  if (playInfo) return playInfo.replace(/\s+/g, ' ').trim();
-
-  const items = [...(root?.querySelectorAll?.([
-    '.bili-video-card__stats--text',
-    '.bili-video-card__stats--item',
-    '[class*="stats"] [class*="text"]',
-  ].join(',')) || [])]
-    .map((element) => element.textContent.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-  return [...new Set(items)].slice(0, 2).join(' ');
-}
-
-function getFirstSrcsetUrl(srcset) {
-  return String(srcset || '').split(',')[0]?.trim().split(/\s+/)[0] || '';
-}
-
-function isUsefulTitle(value) {
-  const title = String(value || '').replace(/\s+/g, ' ').trim();
-  return Boolean(title && title !== '不感兴趣' && title !== '撤销' && !title.includes('将减少此类内容推荐'));
 }
 
 function formatRelatedStats(item) {
@@ -217,65 +222,4 @@ function formatDuration(value) {
   const s = total % 60;
   if (h) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function extractAssignedJson(html, marker) {
-  const start = html.indexOf(`${marker}=`);
-  if (start < 0) {
-    if (marker === 'window.__playinfo__') return null;
-    throw new Error(`${marker} not found`);
-  }
-
-  const jsonStart = start + marker.length + 1;
-  const first = html[jsonStart];
-  if (first !== '{' && first !== '[') throw new Error(`${marker} assignment is not JSON`);
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = jsonStart; i < html.length; i += 1) {
-    const char = html[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') inString = true;
-    else if (char === '{' || char === '[') depth += 1;
-    else if (char === '}' || char === ']') {
-      depth -= 1;
-      if (depth === 0) return html.slice(jsonStart, i + 1);
-    }
-  }
-  throw new Error(`${marker} JSON is not closed`);
-}
-
-function extractCoreScriptUrl(html) {
-  const candidates = [...html.matchAll(/<script[^>]+src="([^"]*\/player\/main\/core\.[^"]+\.js[^"]*)"[^>]*>/g)]
-    .map((match) => normalizeResourceUrl(match[1]))
-    .filter(Boolean);
-  return candidates[0] || '';
-}
-
-function extractCommentScriptUrl(html) {
-  const hash = html.match(/"comment_version_hash":"([^"]+)"/)?.[1];
-  if (hash) return `https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.${hash}.js`;
-  const src = html.match(/<script[^>]+src="([^"]*bili-comments[^"]+\.js[^"]*)"[^>]*>/)?.[1];
-  return normalizeResourceUrl(src);
-}
-
-function extractStylesheetUrls(html) {
-  const urls = [];
-  const patterns = [
-    /<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"[^>]*>/g,
-    /<link[^>]+href="([^"]+)"[^>]+rel="stylesheet"[^>]*>/g,
-  ];
-  patterns.forEach((pattern) => {
-    for (const match of html.matchAll(pattern)) {
-      const href = normalizeResourceUrl(match[1]);
-      if (href && !urls.includes(href)) urls.push(href);
-    }
-  });
-  return urls;
 }

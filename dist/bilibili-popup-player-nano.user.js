@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.3.1
+// @version      3.3.10
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
 // @match        https://space.bilibili.com/*
 // @match        https://search.bilibili.com/*
+// @match        https://live.bilibili.com/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -25,7 +26,7 @@
   const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
   const STORAGE_COMMENT_WIDTH = `${APP}:comment-width`;
   const STORAGE_LAST_PLAYED = `${APP}:last-played`;
-  const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/)/;
+  const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/)/;
   const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
   const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
   const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
@@ -560,7 +561,7 @@
     return untrack(() => Comp(props || {}));
   }
 
-  const TAB_KEYS = ['comments', 'playlist', 'recommend'];
+  const TAB_KEYS = ['comments', 'pages', 'playlist', 'recommend'];
   const PLAYING_ICON_URL = 'https://i0.hdslb.com/bfs/static/jinkela/playlist-video/asserts/playing.gif';
   function createCommentsTabsUi({
     state,
@@ -573,6 +574,7 @@
     schedulePipLayoutSync
   }) {
     const activeSignals = new Map();
+    const selectedPageSignals = new Map();
     const selectedSignals = new Map();
     const listViews = new Map();
     function createTabs(targetDocument, kind) {
@@ -580,7 +582,7 @@
       tabs.className = `${APP}__comments-tabs`;
       tabs.setAttribute('role', 'tablist');
       tabs.setAttribute('aria-label', '评论区内容');
-      tabs.append(createTab(targetDocument, kind, 'comments', '评论'), createTab(targetDocument, kind, 'playlist', '播放列表'), createTab(targetDocument, kind, 'recommend', '推荐列表'));
+      tabs.append(createTab(targetDocument, kind, 'comments', '评论'), createTab(targetDocument, kind, 'pages', '合集'), createTab(targetDocument, kind, 'playlist', '播放列表'), createTab(targetDocument, kind, 'recommend', '推荐列表'));
       const [, setActive] = getActiveSignal(kind);
       setActive(state[kind].activeCommentsTab || 'comments');
       tabs.__biliPopupPlayerNanoDisposeSolidTabs?.();
@@ -602,13 +604,15 @@
       button.setAttribute('role', 'tab');
       button.textContent = label;
       button.addEventListener('click', () => setTab(kind, tab));
+      if (tab === 'pages') button.hidden = !state[kind].pageCards?.length;
       return button;
     }
     function setTab(kind, tab) {
-      state[kind].activeCommentsTab = tab === 'playlist' || tab === 'recommend' ? tab : 'comments';
+      state[kind].activeCommentsTab = TAB_KEYS.includes(tab) ? tab : 'comments';
       getActiveSignal(kind)[1](state[kind].activeCommentsTab);
       syncTabs(kind);
       if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind);
+      if (state[kind].activeCommentsTab === 'pages') scrollSelectedPageIntoView(kind);
       onTabChange?.(kind, state[kind].activeCommentsTab);
       if (kind === 'home') syncHomeSize();else if (state.pip.win && !state.pip.win.closed) schedulePipLayoutSync(state.pip.win);
     }
@@ -617,8 +621,9 @@
       if (!ui) return;
       const activeTab = TAB_KEYS.includes(state[kind].activeCommentsTab) ? state[kind].activeCommentsTab : 'comments';
       getActiveSignal(kind)[1](activeTab);
-      syncTabButtonSet([ui.commentsTab, ui.playlistTab, ui.recommendTab], activeTab);
+      syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.recommendTab], activeTab);
       ui.commentsPanel.hidden = activeTab !== 'comments';
+      ui.pagesPanel.hidden = activeTab !== 'pages';
       ui.playlistPanel.hidden = activeTab !== 'playlist';
       ui.recommendPanel.hidden = activeTab !== 'recommend';
     }
@@ -639,9 +644,13 @@
         if (!ui?.commentsPanel || !ui.playlistPanel || !ui.recommendPanel) return null;
         return {
           commentsTab: ui.commentsTabs?.querySelector?.('[data-tab="comments"]'),
+          pagesTab: ui.commentsTabs?.querySelector?.('[data-tab="pages"]'),
           playlistTab: ui.commentsTabs?.querySelector?.('[data-tab="playlist"]'),
           recommendTab: ui.commentsTabs?.querySelector?.('[data-tab="recommend"]'),
           commentsPanel: ui.commentsPanel,
+          pagesPanel: ui.pagesPanel,
+          pagesList: ui.pagesList,
+          pagesEmpty: ui.pagesEmpty,
           playlistPanel: ui.playlistPanel,
           playlistList: ui.playlistList,
           playlistEmpty: ui.playlistEmpty,
@@ -653,14 +662,19 @@
       const doc = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
       if (!doc) return null;
       const commentsPanel = doc.getElementById('comments-panel');
+      const pagesPanel = doc.getElementById('pages-panel');
       const playlistPanel = doc.getElementById('playlist-panel');
       const recommendPanel = doc.getElementById('recommend-panel');
-      if (!commentsPanel || !playlistPanel || !recommendPanel) return null;
+      if (!commentsPanel || !pagesPanel || !playlistPanel || !recommendPanel) return null;
       return {
         commentsTab: doc.getElementById('tab-comments'),
+        pagesTab: doc.getElementById('tab-pages'),
         playlistTab: doc.getElementById('tab-playlist'),
         recommendTab: doc.getElementById('tab-recommend'),
         commentsPanel,
+        pagesPanel,
+        pagesList: doc.getElementById('pages-list'),
+        pagesEmpty: doc.getElementById('pages-empty'),
         playlistPanel,
         playlistList: doc.getElementById('playlist-list'),
         playlistEmpty: doc.getElementById('playlist-empty'),
@@ -674,10 +688,38 @@
       setSelectedPlaylistBvid(kind, selectedBvid);
       renderPlaylist(kind);
     }
+    function renderPageParts(kind, bootstrap, statusText = '合集加载中...') {
+      const cards = bootstrap ? getPagePartCards(bootstrap) : [];
+      state[kind].pageCards = cards;
+      setSelectedPageKey(kind, bootstrap ? getSelectedPageKey(bootstrap) : '');
+      const ui = getUi(kind);
+      if (!ui?.pagesList || !ui.pagesEmpty) return;
+      syncPageTabVisibility(kind, Boolean(cards.length));
+      renderCardList({
+        list: ui.pagesList,
+        empty: ui.pagesEmpty,
+        cards,
+        emptyText: bootstrap ? '当前视频没有合集' : statusText,
+        kind,
+        source: 'pages',
+        loading: !bootstrap
+      });
+    }
+    function syncPageTabVisibility(kind, visible) {
+      const ui = getUi(kind);
+      if (!ui?.pagesTab) return;
+      ui.pagesTab.hidden = !visible;
+      if (!visible && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
+    }
     function setSelectedPlaylistBvid(kind, bvid) {
       state[kind].selectedPlaylistBvid = bvid || '';
       getSelectedSignal(kind)[1](state[kind].selectedPlaylistBvid);
       scrollSelectedPlaylistIntoView(kind);
+    }
+    function setSelectedPageKey(kind, key) {
+      state[kind].selectedPageKey = key || '';
+      getSelectedPageSignal(kind)[1](state[kind].selectedPageKey);
+      scrollSelectedPageIntoView(kind);
     }
     function getScannedPlaylistCards() {
       const seen = new Set();
@@ -775,7 +817,7 @@
           const currentCards = cards();
           const currentLoading = loading();
           const currentAppendLoading = appendLoading();
-          const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : '';
+          const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : source === 'pages' ? getSelectedPageSignal(kind)[0]() : '';
           list.textContent = '';
           empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
           empty.textContent = currentLoading || currentAppendLoading || currentCards.length ? '' : emptyText();
@@ -788,6 +830,7 @@
           });
           if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
           if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
+          if (source === 'pages' && autoScrollSelected()) scrollSelectedPageIntoView(kind);
         });
         return disposeRoot;
       });
@@ -828,10 +871,11 @@
       return card;
     }
     function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '') {
-      const selected = source === 'playlist' && selectedBvid === card.bvid;
+      const selected = source === 'playlist' ? selectedBvid === card.bvid : source === 'pages' && selectedBvid === card.pageKey;
       const button = targetDocument.createElement('div');
       button.className = `${APP}__playlist-card`;
       button.dataset.bvid = card.bvid || '';
+      button.dataset.pageKey = card.pageKey || '';
       button.dataset.source = source;
       button.tabIndex = 0;
       button.setAttribute('role', 'button');
@@ -844,10 +888,14 @@
       button.addEventListener('click', () => {
         state.lastButton = null;
         if (source === 'playlist') setSelectedPlaylistBvid(kind, card.bvid);
+        if (source === 'pages') setSelectedPageKey(kind, card.pageKey);
         const renderer = kind === 'pip' ? getPipRenderer() : getHomeRenderer();
         openWithRenderer(renderer, source === 'playlist' ? {
           ...card,
           fromPlaylist: true
+        } : source === 'pages' ? {
+          ...card,
+          fromPagePart: true
         } : card);
       });
       button.addEventListener('keydown', event => {
@@ -929,6 +977,14 @@
       }
       return signal;
     }
+    function getSelectedPageSignal(kind) {
+      let signal = selectedPageSignals.get(kind);
+      if (!signal) {
+        signal = createSignal(state[kind].selectedPageKey || '');
+        selectedPageSignals.set(kind, signal);
+      }
+      return signal;
+    }
     function scrollSelectedPlaylistIntoView(kind) {
       if (getCommentLayout?.() !== 'right') return;
       const bvid = state[kind].selectedPlaylistBvid;
@@ -937,22 +993,124 @@
       const list = ui?.playlistList;
       if (!list || ui.playlistPanel?.hidden) return;
       const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])].find(card => card.dataset.bvid === bvid);
-      item?.scrollIntoView?.({
-        behavior: 'smooth',
-        block: 'center',
-        inline: 'nearest'
+      scrollItemWithinPanel(ui.playlistPanel, item);
+    }
+    function scrollSelectedPageIntoView(kind) {
+      if (getCommentLayout?.() !== 'right') return;
+      const pageKey = state[kind].selectedPageKey;
+      if (!pageKey) return;
+      const ui = getUi(kind);
+      const list = ui?.pagesList;
+      if (!list || ui.pagesPanel?.hidden) return;
+      const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])].find(card => card.dataset.pageKey === pageKey);
+      scrollItemWithinPanel(ui.pagesPanel, item);
+    }
+    function scrollItemWithinPanel(panel, item) {
+      if (!panel || !item) return;
+      const panelRect = panel.getBoundingClientRect?.();
+      const itemRect = item.getBoundingClientRect?.();
+      if (!panelRect || !itemRect) return;
+      const targetTop = panel.scrollTop + (itemRect.top - panelRect.top) - Math.max(0, (panel.clientHeight - itemRect.height) / 2);
+      const maxTop = Math.max(0, panel.scrollHeight - panel.clientHeight);
+      const top = Math.min(maxTop, Math.max(0, targetTop));
+      panel.scrollTo?.({
+        top,
+        behavior: 'smooth'
       });
     }
     return {
       attachPipTabs,
       capturePagePlaylist,
       createTabs,
+      renderPageParts,
       renderPlaylist,
       renderRecommendations,
       scrollSelectedPlaylistIntoView,
+      setSelectedPageKey,
       setSelectedPlaylistBvid,
       syncTabs
     };
+  }
+  function getPagePartCards(bootstrap) {
+    const vd = bootstrap?.initialState?.videoData || {};
+    const bvid = bootstrap?.playerInfo?.bvid || vd.bvid;
+    const href = bootstrap?.href || (bvid ? `https://www.bilibili.com/video/${bvid}` : '');
+    const pageCards = (Array.isArray(vd.pages) ? vd.pages : []).map((page, index) => buildPagePartCard({
+      bvid,
+      href,
+      index,
+      page,
+      title: vd.title,
+      cover: vd.pic
+    })).filter(Boolean);
+    if (pageCards.length > 1) return pageCards;
+    const episodes = (Array.isArray(vd.ugc_season?.sections) ? vd.ugc_season.sections : []).flatMap(section => Array.isArray(section?.episodes) ? section.episodes : []);
+    if (episodes.length <= 1) return [];
+    return episodes.map((episode, index) => buildSeasonEpisodeCard({
+      episode,
+      fallbackBvid: bvid,
+      fallbackHref: href,
+      index
+    })).filter(Boolean);
+  }
+  function buildPagePartCard({
+    bvid,
+    href,
+    index,
+    page,
+    title,
+    cover
+  }) {
+    if (!bvid || !page?.cid) return null;
+    const pageNo = Number(page.page || index + 1);
+    const pageHref = setVideoPageParam(href || `/video/${bvid}`, pageNo);
+    return {
+      bvid,
+      cid: page.cid,
+      cover: normalizeResourceUrl(page.first_frame || cover),
+      duration: formatDuration$2(page.duration),
+      href: pageHref,
+      page: pageNo,
+      pageKey: `${bvid}:${pageNo}`,
+      subtitle: title || '',
+      title: `${pageNo}. ${cleanText$1(page.part) || '未命名片段'}`
+    };
+  }
+  function buildSeasonEpisodeCard({
+    episode,
+    fallbackBvid,
+    fallbackHref,
+    index
+  }) {
+    const bvid = episode?.bvid || fallbackBvid;
+    const pageNo = Number(episode?.p || index + 1);
+    const href = normalizeVideoHref(episode?.link || episode?.uri || `/video/${bvid}`, fallbackHref) || setVideoPageParam(`/video/${bvid}`, pageNo);
+    if (!bvid || !href) return null;
+    return {
+      bvid,
+      cid: episode.cid,
+      cover: normalizeResourceUrl(episode.arc?.pic || episode.cover),
+      duration: formatDuration$2(episode.duration),
+      href,
+      page: pageNo,
+      pageKey: `${bvid}:${pageNo}`,
+      subtitle: episode.arc?.title || '',
+      title: `${pageNo}. ${cleanText$1(episode.title || episode.part) || '未命名片段'}`
+    };
+  }
+  function getSelectedPageKey(bootstrap) {
+    const info = bootstrap?.playerInfo;
+    if (!info?.bvid) return '';
+    return `${info.bvid}:${Number(info.p || 1)}`;
+  }
+  function setVideoPageParam(rawHref, page) {
+    try {
+      const url = new URL(rawHref, location.href);
+      url.searchParams.set('p', String(page));
+      return normalizeVideoHref(url.href) || url.href;
+    } catch {
+      return '';
+    }
   }
   function appendStats(targetDocument, container, stats) {
     const values = normalizeStats(stats);
@@ -994,6 +1152,16 @@
       danmaku: parts[1] || ''
     };
   }
+  function formatDuration$2(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '';
+    const total = Math.round(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor(total % 3600 / 60);
+    const s = total % 60;
+    if (h) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
   function viewIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.99805C9.48178 4.99805 7.283 5.12616 5.73089 5.25202C4.65221 5.33949 3.81611 6.16352 3.72 7.23254C3.60607 8.4998 3.5 10.171 3.5 11.998C3.5 13.8251 3.60607 15.4963 3.72 16.76355C3.81611 17.83255 4.65221 18.6566 5.73089 18.7441C7.283 18.8699 9.48178 18.998 12 18.998C14.5185 18.998 16.7174 18.8699 18.2696 18.74405C19.3481 18.65655 20.184 17.8328 20.2801 16.76405C20.394 15.4973 20.5 13.82645 20.5 11.998C20.5 10.16965 20.394 8.49877 20.2801 7.23205C20.184 6.1633 19.3481 5.33952 18.2696 5.25205C16.7174 5.12618 14.5185 4.99805 12 4.99805zM5.60965 3.75693C7.19232 3.62859 9.43258 3.49805 12 3.49805C14.5677 3.49805 16.8081 3.62861 18.3908 3.75696C20.1881 3.90272 21.6118 5.29278 21.7741 7.09773C21.8909 8.3969 22 10.11405 22 11.998C22 13.88205 21.8909 15.5992 21.7741 16.8984C21.6118 18.7033 20.1881 20.09335 18.3908 20.23915C16.8081 20.3675 14.5677 20.498 12 20.498C9.43258 20.498 7.19232 20.3675 5.60965 20.2392C3.81206 20.0934 2.38831 18.70295 2.22603 16.8979C2.10918 15.5982 2 13.8808 2 11.998C2 10.1153 2.10918 8.39787 2.22603 7.09823C2.38831 5.29312 3.81206 3.90269 5.60965 3.75693z" fill="currentColor"></path><path d="M14.7138 10.96875C15.50765 11.4271 15.50765 12.573 14.71375 13.0313L11.5362 14.8659C10.74235 15.3242 9.75 14.7513 9.75001 13.8346L9.75001 10.1655C9.75001 9.24881 10.74235 8.67587 11.5362 9.13422L14.7138 10.96875z" fill="currentColor"></path></svg>';
   }
@@ -1003,23 +1171,23 @@
   function getEntryCardTitle(root, link, fallback) {
     const bvid = getVideoMetaFromLink(link)?.bvid;
     const textLink = getEntryTextLink(root, bvid);
-    const candidate = textLink?.textContent || getSafeTitleElementText$1(root, ['.bili-video-card__info--tit', '.video-page-card-small-title', '.title', '.info-title'].join(',')) || link?.getAttribute?.('title') || link?.getAttribute?.('aria-label') || root?.querySelector?.('img')?.getAttribute('alt') || fallback;
+    const candidate = textLink?.textContent || getSafeTitleElementText(root, ['.bili-video-card__info--tit', '.video-page-card-small-title', '.title', '.info-title'].join(',')) || link?.getAttribute?.('title') || link?.getAttribute?.('aria-label') || root?.querySelector?.('img')?.getAttribute('alt') || fallback;
     return cleanTitle$1(candidate || fallback || 'Bilibili 视频');
   }
   function getEntryTextLink(root, bvid) {
     if (!root || !bvid) return null;
     return [...(root.querySelectorAll?.('a[href*="/video/BV"]') || [])].find(candidate => {
       const meta = getVideoMetaFromLink(candidate);
-      return meta?.bvid === bvid && !isCoverLink(candidate) && isUsefulTitle$1(candidate.textContent);
+      return meta?.bvid === bvid && !isCoverLink(candidate) && isUsefulTitle(candidate.textContent);
     }) || null;
   }
-  function getSafeTitleElementText$1(root, selector) {
-    return [...(root?.querySelectorAll?.(selector) || [])].map(element => element.textContent || element.getAttribute?.('title') || '').find(isUsefulTitle$1) || '';
+  function getSafeTitleElementText(root, selector) {
+    return [...(root?.querySelectorAll?.(selector) || [])].map(element => element.textContent || element.getAttribute?.('title') || '').find(isUsefulTitle) || '';
   }
   function getEntryCardCover(root, link) {
     const img = root?.querySelector?.('img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-url]') || link?.querySelector?.('img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-url]');
     const source = root?.querySelector?.('source[srcset], source[data-srcset]') || link?.querySelector?.('source[srcset], source[data-srcset]');
-    const raw = img?.getAttribute('data-src') || img?.getAttribute('data-lazy-src') || img?.getAttribute('data-original') || img?.getAttribute('data-url') || img?.getAttribute('src') || getFirstSrcsetUrl$1(source?.getAttribute('data-srcset') || source?.getAttribute('srcset')) || '';
+    const raw = img?.getAttribute('data-src') || img?.getAttribute('data-lazy-src') || img?.getAttribute('data-original') || img?.getAttribute('data-url') || img?.getAttribute('src') || getFirstSrcsetUrl(source?.getAttribute('data-srcset') || source?.getAttribute('srcset')) || '';
     return normalizeResourceUrl(raw);
   }
   function getEntryCardSubtitle(root) {
@@ -1039,16 +1207,16 @@
   }
   function cleanTitle$1(value) {
     const title = cleanText$1(value);
-    return isUsefulTitle$1(title) ? title : 'Bilibili 视频';
+    return isUsefulTitle(title) ? title : 'Bilibili 视频';
   }
-  function isUsefulTitle$1(value) {
+  function isUsefulTitle(value) {
     const title = cleanText$1(value);
     return Boolean(title && title !== '不感兴趣' && title !== '撤销' && !title.includes('将减少此类内容推荐'));
   }
   function uniqueList(values) {
     return [...new Set(values)];
   }
-  function getFirstSrcsetUrl$1(srcset) {
+  function getFirstSrcsetUrl(srcset) {
     return String(srcset || '').split(',')[0]?.trim().split(/\s+/)[0] || '';
   }
 
@@ -1237,6 +1405,9 @@
   function createMinimizeIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M8 3v3a2 2 0 0 1-2 2H3', 'M21 8h-3a2 2 0 0 1-2-2V3', 'M3 16h3a2 2 0 0 1 2 2v3', 'M16 21v-3a2 2 0 0 1 2-2h3']));
   }
+  function createPictureInPictureIcon() {
+    return createIconFromMarkup(lucideIconMarkup(['M21 9V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4', 'M21 13v5a2 2 0 0 1-2 2h-5', 'M15 15h6v5h-6z']));
+  }
   function createCloseIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M18 6 6 18', 'm6 6 12 12']));
   }
@@ -1245,6 +1416,1014 @@
   }
   function arrowUpIconMarkup() {
     return lucideIconMarkup(['m18 15-6-6-6 6']);
+  }
+
+  const LIVE_ROOM_RE = /^https?:\/\/live\.bilibili\.com\/(?:blanc\/)?(\d+)/;
+  const LIVE_PLAYER_SCRIPT = 'https://s1.hdslb.com/bfs/blive-engineer/live-web-player/room-player.prod.min.js';
+  function isLivePage() {
+    return LIVE_ROOM_RE.test(location.href);
+  }
+  function getCurrentLiveMeta() {
+    const match = location.href.match(LIVE_ROOM_RE);
+    if (!match) return null;
+    const roomId = match[1];
+    const title = cleanLiveTitle(document.querySelector('meta[property="og:title"]')?.getAttribute('content') || document.querySelector('meta[name="title"]')?.getAttribute('content') || document.title || `Bilibili 直播 ${roomId}`);
+    return {
+      kind: 'live',
+      roomId,
+      href: normalizeLiveHref(location.href),
+      title
+    };
+  }
+  function isLiveMeta(meta) {
+    return meta?.kind === 'live' || Boolean(meta?.roomId && !meta?.bvid);
+  }
+  function isLiveBootstrap(bootstrap) {
+    return bootstrap?.kind === 'live';
+  }
+  async function resolveLiveBootstrap(meta) {
+    const inputRoomId = String(meta?.roomId || '').trim();
+    if (!inputRoomId) throw new Error('直播房间号缺失');
+    const roomInit = await fetchLiveJson(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${encodeURIComponent(inputRoomId)}`);
+    const room = roomInit?.data;
+    if (!room?.room_id) throw new Error('直播房间解析失败');
+    if (room.is_hidden) throw new Error('直播间已隐藏');
+    if (room.is_locked) throw new Error('直播间已锁定');
+    if (!room.live_status) throw new Error('当前直播间未开播');
+    const playInfo = await fetchLiveJson(buildPlayInfoUrl(room.room_id));
+    if (!playInfo?.data?.playurl_info?.playurl) throw new Error('直播播放地址解析失败');
+    const roomInitData = {
+      code: 0,
+      message: '0',
+      ttl: 1,
+      data: {
+        ...room,
+        ...playInfo.data,
+        room_id: room.room_id,
+        short_id: room.short_id,
+        uid: room.uid,
+        live_status: room.live_status
+      }
+    };
+    return {
+      kind: 'live',
+      title: meta.title || `Bilibili 直播 ${inputRoomId}`,
+      href: normalizeLiveHref(meta.href || `https://live.bilibili.com/${inputRoomId}`),
+      playerScript: LIVE_PLAYER_SCRIPT,
+      stylesheets: [],
+      roomInitData,
+      playerInfo: {
+        roomId: room.room_id,
+        shortId: room.short_id || inputRoomId,
+        uid: room.uid,
+        t: 0
+      }
+    };
+  }
+  function buildPlayInfoUrl(roomId) {
+    const url = new URL('https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo');
+    url.searchParams.set('room_id', String(roomId));
+    url.searchParams.set('protocol', '0,1');
+    url.searchParams.set('format', '0,1,2');
+    url.searchParams.set('codec', '0,1,2');
+    url.searchParams.set('qn', '10000');
+    url.searchParams.set('platform', 'web');
+    url.searchParams.set('ptype', '16');
+    url.searchParams.set('dolby', '5');
+    url.searchParams.set('panorama', '1');
+    return url.href;
+  }
+  async function fetchLiveJson(url) {
+    const response = await fetch(url, {
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*'
+      }
+    });
+    if (!response.ok) throw new Error(`直播接口请求失败：${response.status}`);
+    const json = await response.json();
+    if (json.code !== 0) throw new Error(json.message || json.msg || `直播接口错误：${json.code}`);
+    return json;
+  }
+  function normalizeLiveHref(rawHref) {
+    try {
+      const url = new URL(rawHref, location.href);
+      return `https://live.bilibili.com/${url.pathname.match(/(\d+)/)?.[1] || ''}`;
+    } catch {
+      return rawHref || '';
+    }
+  }
+  function cleanLiveTitle(value) {
+    const title = String(value || '').replace(/\s+/g, ' ').trim();
+    return title.replace(/_哔哩哔哩直播.*$/u, '').replace(/- 哔哩哔哩直播.*$/u, '').trim() || 'Bilibili 直播';
+  }
+
+  function installLivePipGlobals(targetWindow, bootstrap) {
+    const now = Date.now();
+    const rnd = Math.floor(now / 1000);
+    targetWindow.BilibiliLive = {
+      INIT_TIME: now,
+      RND: rnd,
+      UID: 0,
+      ROOMID: bootstrap.playerInfo?.roomId || 0,
+      ANCHOR_UID: bootstrap.playerInfo?.uid || 0
+    };
+    targetWindow.DANMU_RND = rnd;
+    targetWindow.webPlayerAbTest = {};
+    targetWindow.__RoomPlayerReportData__ = {
+      startLoadPlayer: targetWindow.performance?.now?.() || 0
+    };
+    targetWindow.__NEPTUNE_IS_MY_WAIFU__ = {
+      roomInitRes: bootstrap.roomInitData,
+      roomInfoRes: {
+        code: 0,
+        data: {
+          new_switch_info: {},
+          player_watermark: {
+            url: ''
+          },
+          pure_room_info: {
+            function_control: []
+          }
+        }
+      }
+    };
+    targetWindow.addWaifu = () => {};
+    targetWindow.roomPlayerLoaded = () => {
+      targetWindow.roomPlayerIsLoaded = true;
+    };
+    targetWindow.roomPlayerError = () => {
+      targetWindow.roomPlayerTriggerError = 'loadError';
+    };
+  }
+  function buildLivePipPlayerOptions(targetWindow, bootstrap) {
+    return {
+      fullscreenContainer: targetWindow.document.getElementById('fullscreen-container'),
+      cid: bootstrap.playerInfo.roomId,
+      initTime: targetWindow.performance?.now?.() || 0,
+      roomInitDataV2: bootstrap.roomInitData,
+      relayRoomId: bootstrap.roomInitData?.data?.relay_room_id,
+      rnd: targetWindow.DANMU_RND,
+      fnPromiseMode: true,
+      protover: 2,
+      mask: {
+        shouldOpenMask: true
+      },
+      ptype: 16,
+      backgroundFilter: true,
+      coreType: 2,
+      coreProtocol: 0,
+      initTrackData: {
+        ...targetWindow.__RoomPlayerReportData__
+      },
+      UI: {
+        logo: false,
+        logoOptions: {
+          url: ''
+        },
+        feedback: false,
+        recommend: false,
+        showDanmakuSetting: true,
+        dmContainerTopOffset: 0,
+        danmaku: true
+      }
+    };
+  }
+  function createLivePipPlayerAdapter(targetWindow, player) {
+    return {
+      raw: player,
+      play: () => player?.play?.(),
+      pause: () => player?.pause?.(),
+      resize: () => {
+        player?.resize?.();
+        player?.setSize?.(targetWindow.innerWidth, targetWindow.innerHeight);
+      },
+      disconnect: () => {
+        player?.destroy?.();
+        player?.dispose?.();
+        player?.unload?.();
+      },
+      on: (...args) => player?.on?.(...args),
+      off: (...args) => player?.off?.(...args)
+    };
+  }
+
+  const NANO_THEME = {
+    'bpx-primary-color': 'var(--brand_blue)',
+    'bpx-fn-color': 'var(--brand_blue)',
+    'bpx-fn-hover-color': 'var(--brand_blue)',
+    'bpx-box-shadow': 'var(--bg3)',
+    'bpx-dmsend-switch-icon': 'var(--text2)',
+    'bpx-dmsend-hint-icon': 'var(--graph_medium)',
+    'bpx-aux-header-icon': 'var(--graph_icon)',
+    'bpx-aux-float-icon': 'var(--graph_icon)',
+    'bpx-aux-block-icon': 'var(--text3)',
+    'bpx-dmsend-info-font': 'var(--text2)',
+    'bpx-dmsend-input-font': 'var(--text1)',
+    'bpx-dmsend-hint-font': 'var(--text3)',
+    'bpx-aux-header-font': 'var(--text1)',
+    'bpx-aux-footer-font': 'var(--text2)',
+    'bpx-aux-footer-font-hover': 'var(--text1)',
+    'bpx-aux-content-font1': 'var(--text1)',
+    'bpx-aux-content-font2': 'var(--text2)',
+    'bpx-aux-content-font3': 'var(--text2)',
+    'bpx-aux-content-font4': 'var(--text3)',
+    'bpx-aux-content-font5': 'var(--text3)',
+    'bpx-dmsend-main-bg': 'var(--bg1)',
+    'bpx-dmsend-input-bg': 'var(--bg3)',
+    'bpx-aux-header-bg': 'var(--graph_bg_regular)',
+    'bpx-aux-footer-bg': 'var(--graph_bg_regular)',
+    'bpx-aux-content-bg': 'var(--bg1)',
+    'bpx-aux-button-bg': 'var(--bg3)',
+    'bpx-aux-button-disabled-bg': 'var(--graph_bg_thin)',
+    'bpx-aux-float-bg': 'var(--bg1_float)',
+    'bpx-aux-float-hover-bg': 'var(--graph_medium)',
+    'bpx-aux-cover-bg': 'var(--graph_weak)',
+    'bpx-dmsend-border': 'var(--bg3)',
+    'bpx-aux-float-border': 'var(--line_light)',
+    'bpx-aux-line-border': 'var(--line_regular)',
+    'bpx-aux-input-border': 'var(--line_regular)',
+    'bpx-dmsend-disable-button-bg': 'var(--graph_bg_thick)',
+    'bpx-dmsend-disable-button-text': 'var(--text3)'
+  };
+  function getPlayerNanoTheme() {
+    return {
+      ...NANO_THEME
+    };
+  }
+  function getPlayerThemeVariableCss(selector) {
+    return `
+      ${selector} .bpx-player-container {
+        --bpx-dmsend-main-bg: var(--bg1, #fff);
+        --bpx-dmsend-input-bg: var(--bg3, var(--bg2, #f4f4f4));
+        --bpx-dmsend-border: var(--bg3, var(--line_regular, #e7e7e7));
+        --bpx-dmsend-info-font: var(--text2, #505050);
+        --bpx-dmsend-input-font: var(--text1, #212121);
+        --bpx-dmsend-switch-icon: var(--text2, #757575);
+        --bpx-dmsend-hint-font: var(--text3, #757a81);
+        --bpx-dmsend-hint-icon: var(--text3, #757a81);
+        --bpx-dmsend-disable-button-bg: var(--graph_bg_thick, #e3e5e7);
+        --bpx-dmsend-disable-button-text: var(--text3, #9499a0);
+        --bpx-primary-color: var(--brand_blue, #00aeec);
+      }
+`;
+  }
+
+  function installDocumentStyle(targetDocument = document) {
+    if (targetDocument.getElementById(DOCUMENT_STYLE_ID)) return;
+    const style = targetDocument.createElement('style');
+    style.id = DOCUMENT_STYLE_ID;
+    style.textContent = `
+      :root {
+        --${APP}-surface: var(--bg1, #fff);
+        --${APP}-surface-soft: var(--bg2, #f6f7f8);
+        --${APP}-surface-elevated: var(--bg1_float, var(--bg1, #fff));
+        --${APP}-text: var(--text1, #18191c);
+        --${APP}-text-subtle: var(--text2, #61666d);
+        --${APP}-text-muted: var(--text3, #9499a0);
+        --${APP}-border: var(--line_regular, #e3e5e7);
+        --${APP}-brand: var(--brand_pink, #fb7299);
+        --${APP}-brand-soft: var(--Pi5, rgba(251, 114, 153, 0.14));
+      }
+
+      .${BUTTON_CLASS} {
+        position: absolute !important;
+        z-index: 20;
+        right: 8px;
+        bottom: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 72px;
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--${APP}-border);
+        border-radius: 6px;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface-soft);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+        opacity: 0.96;
+        pointer-events: auto;
+        transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+      }
+
+      .${BUTTON_CLASS}:disabled {
+        color: var(--${APP}-text-muted);
+        background: var(--${APP}-surface-soft);
+        box-shadow: none;
+        cursor: default;
+      }
+
+      .${BUTTON_CLASS}:hover,
+      .${BUTTON_CLASS}:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        opacity: 1;
+        outline: none;
+      }
+
+      .${BADGE_CLASS} {
+        position: absolute !important;
+        z-index: 21;
+        top: 8px;
+        left: 8px;
+        display: none;
+        align-items: center;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 6px;
+        color: var(--${APP}-text-subtle);
+        border: 1px solid var(--${APP}-border);
+        background: var(--${APP}-surface-elevated);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        pointer-events: none;
+      }
+
+      .${BADGE_CLASS}.${APP}--active {
+        display: inline-flex;
+      }
+
+      .${BADGE_CLASS}.${APP}--playing {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+      }
+
+      .${APP}__control-overlay.${APP}--playback-web-fullscreen {
+        display: none;
+      }
+
+      .${APP}__fixed-pip-button {
+        position: fixed !important;
+        right: 16px !important;
+        bottom: 160px !important;
+        left: auto !important;
+        top: auto !important;
+        z-index: 2147481000;
+        width: 52px !important;
+        height: 52px !important;
+        min-width: 0 !important;
+        padding: 0 !important;
+        display: grid !important;
+        place-items: center !important;
+        border-radius: 10px !important;
+        font-size: 0 !important;
+      }
+
+      .${APP}__fixed-pip-button svg {
+        width: 22px;
+        height: 22px;
+        display: block;
+        stroke: currentColor;
+      }
+
+      #${APP}-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: rgba(15, 18, 24, 0.68);
+      }
+
+      body.${APP}--modal-open > bili-photoswipe,
+      body.${APP}--modal-open > bili-modal,
+      body.${APP}--modal-open > .pswp,
+      body.${APP}--modal-open > .bili-modal,
+      body.${APP}--modal-open > .bili-photoswipe,
+      body.${APP}--modal-open > [class*="pswp"],
+      body.${APP}--modal-open > [class*="photoswipe"],
+      body.${APP}--modal-open > [class*="photo-swipe"],
+      body.${APP}--modal-open > [class*="image-preview"],
+      body.${APP}--modal-open > [class*="picture-preview"],
+      body.${APP}--modal-open > [class*="preview"][class*="modal"],
+      body.${APP}--modal-open > [class*="preview"][class*="popup"],
+      #${APP}-overlay bili-photoswipe,
+      #${APP}-overlay bili-modal,
+      #${APP}-overlay .pswp,
+      #${APP}-overlay .bili-modal,
+      #${APP}-overlay .bili-photoswipe,
+      #${APP}-overlay [class*="pswp"],
+      #${APP}-overlay [class*="photoswipe"],
+      #${APP}-overlay [class*="photo-swipe"],
+      #${APP}-overlay [class*="image-preview"],
+      #${APP}-overlay [class*="picture-preview"],
+      #${APP}-overlay [class*="preview"][class*="modal"],
+      #${APP}-overlay [class*="preview"][class*="popup"] {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 2147483647 !important;
+      }
+
+      #${APP}-overlay.${APP}--hidden {
+        display: none;
+      }
+
+      #${APP}-dialog {
+        position: relative;
+        width: min(1360px, calc(100vw - 32px));
+        height: min(860px, calc(100vh - 32px));
+        display: grid;
+        grid-template-rows: 46px 1fr;
+        overflow: hidden;
+        border-radius: 8px;
+        background: var(--${APP}-surface);
+        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
+      }
+
+      #${APP}-overlay.${APP}--fullscreen {
+        padding: 0;
+        background: #000;
+      }
+
+      #${APP}-overlay.${APP}--fullscreen #${APP}-dialog {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      #${APP}-header {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        padding: 0 10px 0 16px;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface-elevated);
+        border-bottom: 1px solid var(--${APP}-border);
+      }
+
+      .${APP}__header-history {
+        display: inline-grid;
+        grid-template-columns: repeat(2, 32px);
+        gap: 2px;
+        align-items: center;
+      }
+
+      .${APP}__header-actions {
+        display: inline-grid;
+        grid-template-columns: repeat(4, 32px);
+        gap: 4px;
+        align-items: center;
+        justify-content: end;
+        min-width: 0;
+      }
+
+      #${APP}-title {
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #${APP}-status {
+        display: none;
+      }
+
+      .${APP}__header-button {
+        width: 32px;
+        height: 32px;
+        display: inline-grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        color: var(--${APP}-text-subtle);
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .${APP}__header-button:disabled {
+        color: var(--${APP}-text-muted);
+        cursor: default;
+        opacity: 0.45;
+      }
+
+      .${APP}__header-button svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
+      }
+
+      .${APP}__header-button--text {
+        width: auto;
+        min-width: 72px;
+        padding: 0 10px;
+        font-size: 12px;
+      }
+
+      .${APP}__header-button:hover,
+      .${APP}__header-button:focus-visible,
+      .${APP}__header-button.${APP}__header-button--active {
+        color: var(--${APP}-brand);
+        background: var(--${APP}-surface-soft);
+        outline: none;
+      }
+
+      .${APP}__header-button:disabled:hover,
+      .${APP}__header-button:disabled:focus-visible {
+        color: var(--${APP}-text-muted);
+        background: transparent;
+      }
+
+      #${APP}-content {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        background: var(--${APP}-surface);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
+        overflow: hidden;
+      }
+
+      .${APP}__back-to-top {
+        position: absolute;
+        right: 34px;
+        bottom: 30px;
+        z-index: 6;
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 999px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(6px);
+        transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+      }
+
+      #${APP}-overlay.${APP}--comments-right .${APP}__back-to-top {
+        right: 24px;
+        bottom: 24px;
+      }
+
+      .${APP}__back-to-top.${APP}--visible {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+      }
+
+      .${APP}__back-to-top:hover,
+      .${APP}__back-to-top:focus-visible {
+        color: var(--${APP}-brand);
+        border-color: var(--${APP}-brand);
+        outline: none;
+      }
+
+      .${APP}__back-to-top svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+        stroke: currentColor;
+      }
+
+      #${APP}-comments-resizer {
+        display: none;
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
+        display: block;
+        position: relative;
+        z-index: 2;
+        width: 8px;
+        min-width: 8px;
+        height: 100%;
+        cursor: col-resize;
+        background: transparent;
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 50%;
+        width: 1px;
+        transform: translateX(-50%);
+        background: rgba(148, 153, 160, 0.36);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover::before,
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible::before,
+      #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer::before {
+        background: var(--${APP}-brand);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible {
+        outline: none;
+      }
+
+      #${APP}-player-wrap {
+        position: relative;
+        height: calc(min(860px, calc(100vh - 32px)) - 46px);
+        min-width: 0;
+        min-height: 0;
+        background: #000;
+      }
+
+      #${APP}-overlay.${APP}--fullscreen #${APP}-player-wrap {
+        height: calc(100vh - 46px);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap,
+      #${APP}-overlay.${APP}--fullscreen.${APP}--comments-right #${APP}-player-wrap {
+        height: 100%;
+      }
+
+      #${APP}-player,
+      #${APP}-player .bpx-player-container {
+        width: 100% !important;
+        height: 100% !important;
+      }
+
+${getPlayerThemeVariableCss(`#${APP}-player`)}
+
+      #${APP}-player .bpx-player-ctrl-web,
+      #${APP}-player .bpx-player-ctrl-web-enter,
+      #${APP}-player .bpx-player-ctrl-web-leave,
+      #${APP}-player .bilibili-player-video-btn-web-fullscreen {
+        display: none !important;
+      }
+
+      #${APP}-player.bpx-player-web-full,
+      #${APP}-player .bpx-player-web-full,
+      #${APP}-player.bilibili-player-video-web-fullscreen,
+      #${APP}-player .bilibili-player-video-web-fullscreen {
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        z-index: 1 !important;
+      }
+
+      #${APP}-comments {
+        display: flex;
+        flex-direction: column;
+        min-height: 520px;
+        padding: 0;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments {
+        display: grid;
+        grid-template-rows: 42px minmax(0, 1fr);
+        min-width: 0;
+        min-height: 0;
+        height: 100%;
+        padding: 0;
+        overflow: hidden;
+        border-left: 0;
+      }
+
+      .${APP}__comments-tabs {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        box-sizing: border-box;
+        min-height: 42px;
+        margin: 0;
+        padding: 6px 0 0;
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        background: var(--bg1, #fff);
+        overflow: visible;
+      }
+
+      #${APP}-overlay.${APP}--comments-right .${APP}__comments-tabs {
+        grid-row: 1;
+        margin: 0;
+        padding: 6px 0 0;
+      }
+
+      .${APP}__comments-tab {
+        box-sizing: border-box;
+        height: 36px;
+        padding: 0 4px;
+        display: inline-flex;
+        align-items: center;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        color: var(--text2, #61666d);
+        background: transparent;
+        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__comments-tab[hidden] {
+        display: none !important;
+      }
+
+      .${APP}__comments-tab:hover,
+      .${APP}__comments-tab:focus-visible,
+      .${APP}__comments-tab.${APP}--active {
+        color: var(--brand_pink, #fb7299);
+        outline: none;
+      }
+
+      .${APP}__comments-tab.${APP}--active {
+        border-bottom-color: var(--brand_pink, #fb7299);
+      }
+
+      .${APP}__comments-panel[hidden] {
+        display: none !important;
+      }
+
+      .${APP}__comments-panel:not([hidden]) {
+        min-width: 0;
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: visible;
+      }
+
+      #${APP}-overlay.${APP}--comments-right .${APP}__comments-panel:not([hidden]) {
+        grid-row: 2;
+        height: 100%;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+
+      #${APP}-comments-mount {
+        box-sizing: border-box;
+        min-height: 360px;
+        padding: 8px 18px 0 0;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-mount {
+        padding: 8px 16px 0 0;
+      }
+
+      .${APP}__playlist {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 0 28px;
+        padding: 12px 0 24px;
+      }
+
+      #${APP}-overlay.${APP}--comments-right .${APP}__playlist {
+        grid-template-columns: 1fr;
+      }
+
+      .${APP}__playlist-card {
+        appearance: none;
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        display: grid;
+        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr);
+        column-gap: 12px;
+        align-items: start;
+        padding: 12px 16px;
+        border: 0;
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 0;
+        color: var(--text1, #18191c);
+        background: transparent;
+        text-align: left;
+        text-indent: 0;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .${APP}__playlist-card:hover,
+      .${APP}__playlist-card:focus-visible,
+      .${APP}__playlist-card.${APP}--selected {
+        outline: none;
+      }
+
+      .${APP}__playlist-card:last-child {
+        border-bottom: 0;
+      }
+
+      .${APP}__playlist-card.${APP}--selected {
+        color: var(--brand_blue, #00aeec);
+        background: transparent;
+      }
+
+      .${APP}__playlist-card:hover .${APP}__playlist-title,
+      .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
+        color: var(--brand_blue, #00aeec);
+      }
+
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-stats {
+        color: var(--text2, #61666d);
+      }
+
+      .${APP}__playlist-playing {
+        width: 16px;
+        height: 16px;
+        display: inline-block;
+        margin: 0 4px 0 0;
+        vertical-align: -3px;
+      }
+
+      .${APP}__playlist-cover {
+        position: relative;
+        z-index: 0;
+        min-width: 0;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        border-radius: 6px;
+        background: var(--bg2, #f6f7f8);
+      }
+
+      .${APP}__playlist-cover img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+      }
+
+      .${APP}__playlist-duration {
+        position: absolute;
+        right: 4px;
+        bottom: 4px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 3px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.72);
+        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__playlist-info {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        overflow: visible;
+        padding: 1px 2px 0 1px;
+        display: grid;
+        align-content: start;
+        gap: 6px;
+      }
+
+      .${APP}__playlist-title {
+        width: 100%;
+        min-width: 0;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        color: var(--text1, #18191c);
+        font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__playlist-title-text {
+        min-width: 0;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+
+      .${APP}__playlist-subtitle,
+      .${APP}__playlist-stats,
+      .${APP}__playlist-empty {
+        color: var(--text3, #9499a0);
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__playlist-subtitle,
+      .${APP}__playlist-stats {
+        max-width: 100%;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      .${APP}__playlist-stats {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .${APP}__playlist-stat {
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .${APP}__playlist-stat-icon {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        color: currentColor;
+      }
+
+      .${APP}__playlist-card--skeleton {
+        cursor: default;
+        pointer-events: none;
+      }
+
+      .${APP}__playlist-skeleton-cover,
+      .${APP}__playlist-skeleton-line {
+        position: relative;
+        overflow: hidden;
+        border-radius: 6px;
+        background: var(--graph_bg_regular, var(--bg2, #f1f2f3));
+      }
+
+      .${APP}__playlist-skeleton-cover {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+      }
+
+      .${APP}__playlist-skeleton-info {
+        min-width: 0;
+        display: grid;
+        align-content: start;
+        gap: 9px;
+        padding-top: 2px;
+      }
+
+      .${APP}__playlist-skeleton-line {
+        height: 12px;
+      }
+
+      .${APP}__playlist-skeleton-line--title {
+        height: 16px;
+      }
+
+      .${APP}__playlist-skeleton-cover::after,
+      .${APP}__playlist-skeleton-line::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
+        animation: ${APP}-skeleton-shimmer 1.25s ease-in-out infinite;
+      }
+
+      @keyframes ${APP}-skeleton-shimmer {
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
+      body.${APP}--modal-open .bili-comments-bottom-fixed-wrapper,
+      body.${APP}--modal-open [class*="bottom-fixed"],
+      body.${APP}--modal-open [class*="fixed-wrapper"],
+      #${APP}-overlay .bili-comments-bottom-fixed-wrapper,
+      #${APP}-overlay [class*="bottom-fixed"],
+      #${APP}-overlay [class*="fixed-wrapper"],
+      .${APP}__bottom-fixed-hidden {
+        display: none !important;
+      }
+
+      @media (max-width: 900px) {
+        #${APP}-overlay.${APP}--comments-right #${APP}-content {
+          display: block;
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+
+        #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
+          display: none;
+        }
+
+        #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
+          height: calc(min(860px, calc(100vh - 32px)) - 46px);
+        }
+
+        #${APP}-overlay.${APP}--comments-right #${APP}-comments {
+          height: auto;
+          overflow: visible;
+          border-left: 0;
+        }
+      }
+`;
+    targetDocument.head.appendChild(style);
   }
 
   function reconcileArrays(parentNode, a, b) {
@@ -1501,8 +2680,8 @@
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器></button></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
-    _tmpl$2 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=comments-mount>评论加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>推荐列表加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><button type=button title="在 Document PiP 打开"aria-label="在 Document PiP 打开"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
+    _tmpl$2 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>推荐列表加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
     targetDocument = document,
     createCommentsTabs,
@@ -1513,6 +2692,7 @@
     onHistoryNext,
     onHistoryPrevious,
     onOpenOriginal,
+    onOpenPip,
     onPlayerControlClick,
     onResizeStart
   }) {
@@ -1533,6 +2713,7 @@
       onHistoryNext: onHistoryNext,
       onHistoryPrevious: onHistoryPrevious,
       onOpenOriginal: onOpenOriginal,
+      onOpenPip: onOpenPip,
       onPlayerControlClick: onPlayerControlClick,
       onResizeStart: onResizeStart,
       targetDocument: targetDocument
@@ -1579,22 +2760,27 @@
         _el$7 = _el$4.nextSibling,
         _el$8 = _el$7.nextSibling,
         _el$9 = _el$8.nextSibling,
-        _el$0 = _el$9.nextSibling,
+        _el$0 = _el$9.firstChild,
         _el$1 = _el$0.nextSibling,
-        _el$10 = _el$3.nextSibling,
-        _el$11 = _el$10.firstChild,
-        _el$12 = _el$11.firstChild,
-        _el$13 = _el$11.nextSibling,
-        _el$14 = _el$13.nextSibling,
-        _el$15 = _el$14.firstChild,
-        _el$16 = _el$15.firstChild,
-        _el$17 = _el$15.nextSibling,
+        _el$10 = _el$1.nextSibling,
+        _el$11 = _el$10.nextSibling,
+        _el$12 = _el$3.nextSibling,
+        _el$13 = _el$12.firstChild,
+        _el$14 = _el$13.firstChild,
+        _el$15 = _el$13.nextSibling,
+        _el$16 = _el$15.nextSibling,
+        _el$17 = _el$16.firstChild,
         _el$18 = _el$17.firstChild,
-        _el$19 = _el$18.nextSibling,
-        _el$20 = _el$17.nextSibling,
-        _el$21 = _el$20.firstChild,
-        _el$22 = _el$21.nextSibling,
-        _el$23 = _el$10.nextSibling;
+        _el$19 = _el$17.nextSibling,
+        _el$20 = _el$19.firstChild,
+        _el$21 = _el$20.nextSibling,
+        _el$22 = _el$19.nextSibling,
+        _el$23 = _el$22.firstChild,
+        _el$24 = _el$23.nextSibling,
+        _el$25 = _el$22.nextSibling,
+        _el$26 = _el$25.firstChild,
+        _el$27 = _el$26.nextSibling,
+        _el$28 = _el$12.nextSibling;
       _el$.addEventListener("pointercancel", event => {
         backdropPointer = '0';
         event.currentTarget.dataset.backdropPointer = '0';
@@ -1633,75 +2819,93 @@
       var _ref$6 = props.refs('status');
       typeof _ref$6 === "function" && use(_ref$6, _el$8);
       setAttribute(_el$8, "id", `${APP}-status`);
-      _el$9.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
-      var _ref$7 = props.refs('openOriginal');
-      typeof _ref$7 === "function" && use(_ref$7, _el$9);
-      className(_el$9, `${APP}__header-button`);
-      insert(_el$9, createExternalLinkIcon);
-      _el$0.$$click = () => props.onFullscreen?.();
-      var _ref$8 = props.refs('fullscreen');
-      typeof _ref$8 === "function" && use(_ref$8, _el$0);
+      className(_el$9, `${APP}__header-actions`);
+      _el$0.$$click = () => props.onOpenPip?.();
+      var _ref$7 = props.refs('openPip');
+      typeof _ref$7 === "function" && use(_ref$7, _el$0);
       className(_el$0, `${APP}__header-button`);
-      insert(_el$0, createMaximizeIcon);
-      _el$1.$$click = () => props.onClose?.();
-      var _ref$9 = props.refs('close');
-      typeof _ref$9 === "function" && use(_ref$9, _el$1);
-      className(_el$1, `${APP}__header-button ${APP}__header-button--close`);
-      insert(_el$1, createCloseIcon);
-      var _ref$0 = props.refs('content');
-      typeof _ref$0 === "function" && use(_ref$0, _el$10);
-      setAttribute(_el$10, "id", `${APP}-content`);
-      var _ref$1 = props.refs('playerWrap');
-      typeof _ref$1 === "function" && use(_ref$1, _el$11);
-      setAttribute(_el$11, "id", `${APP}-player-wrap`);
-      _el$12.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
-      var _ref$10 = props.refs('playerRoot');
-      typeof _ref$10 === "function" && use(_ref$10, _el$12);
-      setAttribute(_el$12, "id", `${APP}-player`);
-      _el$13.$$pointerdown = event => props.onResizeStart?.(event);
-      var _ref$11 = props.refs('commentsResizer');
-      typeof _ref$11 === "function" && use(_ref$11, _el$13);
-      setAttribute(_el$13, "id", `${APP}-comments-resizer`);
-      var _ref$12 = props.refs('comments');
-      typeof _ref$12 === "function" && use(_ref$12, _el$14);
-      setAttribute(_el$14, "id", `${APP}-comments`);
-      insert(_el$14, () => props.commentsTabs, _el$15);
-      var _ref$13 = props.refs('commentsPanel');
-      typeof _ref$13 === "function" && use(_ref$13, _el$15);
-      setAttribute(_el$15, "id", `${APP}-comments-panel`);
-      className(_el$15, `${APP}__comments-panel`);
-      var _ref$14 = props.refs('commentsMount');
-      typeof _ref$14 === "function" && use(_ref$14, _el$16);
-      setAttribute(_el$16, "id", `${APP}-comments-mount`);
-      var _ref$15 = props.refs('playlistPanel');
-      typeof _ref$15 === "function" && use(_ref$15, _el$17);
-      setAttribute(_el$17, "id", `${APP}-playlist-panel`);
+      insert(_el$0, createPictureInPictureIcon);
+      _el$1.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
+      var _ref$8 = props.refs('openOriginal');
+      typeof _ref$8 === "function" && use(_ref$8, _el$1);
+      className(_el$1, `${APP}__header-button`);
+      insert(_el$1, createExternalLinkIcon);
+      _el$10.$$click = () => props.onFullscreen?.();
+      var _ref$9 = props.refs('fullscreen');
+      typeof _ref$9 === "function" && use(_ref$9, _el$10);
+      className(_el$10, `${APP}__header-button`);
+      insert(_el$10, createMaximizeIcon);
+      _el$11.$$click = () => props.onClose?.();
+      var _ref$0 = props.refs('close');
+      typeof _ref$0 === "function" && use(_ref$0, _el$11);
+      className(_el$11, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$11, createCloseIcon);
+      var _ref$1 = props.refs('content');
+      typeof _ref$1 === "function" && use(_ref$1, _el$12);
+      setAttribute(_el$12, "id", `${APP}-content`);
+      var _ref$10 = props.refs('playerWrap');
+      typeof _ref$10 === "function" && use(_ref$10, _el$13);
+      setAttribute(_el$13, "id", `${APP}-player-wrap`);
+      _el$14.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
+      var _ref$11 = props.refs('playerRoot');
+      typeof _ref$11 === "function" && use(_ref$11, _el$14);
+      setAttribute(_el$14, "id", `${APP}-player`);
+      _el$15.$$pointerdown = event => props.onResizeStart?.(event);
+      var _ref$12 = props.refs('commentsResizer');
+      typeof _ref$12 === "function" && use(_ref$12, _el$15);
+      setAttribute(_el$15, "id", `${APP}-comments-resizer`);
+      var _ref$13 = props.refs('comments');
+      typeof _ref$13 === "function" && use(_ref$13, _el$16);
+      setAttribute(_el$16, "id", `${APP}-comments`);
+      insert(_el$16, () => props.commentsTabs, _el$17);
+      var _ref$14 = props.refs('commentsPanel');
+      typeof _ref$14 === "function" && use(_ref$14, _el$17);
+      setAttribute(_el$17, "id", `${APP}-comments-panel`);
       className(_el$17, `${APP}__comments-panel`);
-      var _ref$16 = props.refs('playlistList');
-      typeof _ref$16 === "function" && use(_ref$16, _el$18);
-      setAttribute(_el$18, "id", `${APP}-playlist-list`);
-      className(_el$18, `${APP}__playlist`);
-      var _ref$17 = props.refs('playlistEmpty');
-      typeof _ref$17 === "function" && use(_ref$17, _el$19);
-      setAttribute(_el$19, "id", `${APP}-playlist-empty`);
-      className(_el$19, `${APP}__playlist-empty`);
-      var _ref$18 = props.refs('recommendPanel');
-      typeof _ref$18 === "function" && use(_ref$18, _el$20);
-      setAttribute(_el$20, "id", `${APP}-recommend-panel`);
-      className(_el$20, `${APP}__comments-panel`);
-      var _ref$19 = props.refs('recommendList');
-      typeof _ref$19 === "function" && use(_ref$19, _el$21);
-      setAttribute(_el$21, "id", `${APP}-recommend-list`);
-      className(_el$21, `${APP}__playlist`);
-      var _ref$20 = props.refs('recommendEmpty');
-      typeof _ref$20 === "function" && use(_ref$20, _el$22);
-      setAttribute(_el$22, "id", `${APP}-recommend-empty`);
-      className(_el$22, `${APP}__playlist-empty`);
-      _el$23.$$click = () => props.onBackToTop?.();
-      var _ref$21 = props.refs('backToTop');
-      typeof _ref$21 === "function" && use(_ref$21, _el$23);
-      className(_el$23, `${APP}__back-to-top`);
-      insert(_el$23, () => backToTopIcon.content.firstElementChild);
+      var _ref$15 = props.refs('commentsMount');
+      typeof _ref$15 === "function" && use(_ref$15, _el$18);
+      setAttribute(_el$18, "id", `${APP}-comments-mount`);
+      var _ref$16 = props.refs('pagesPanel');
+      typeof _ref$16 === "function" && use(_ref$16, _el$19);
+      setAttribute(_el$19, "id", `${APP}-pages-panel`);
+      className(_el$19, `${APP}__comments-panel`);
+      var _ref$17 = props.refs('pagesList');
+      typeof _ref$17 === "function" && use(_ref$17, _el$20);
+      setAttribute(_el$20, "id", `${APP}-pages-list`);
+      className(_el$20, `${APP}__playlist`);
+      var _ref$18 = props.refs('pagesEmpty');
+      typeof _ref$18 === "function" && use(_ref$18, _el$21);
+      setAttribute(_el$21, "id", `${APP}-pages-empty`);
+      className(_el$21, `${APP}__playlist-empty`);
+      var _ref$19 = props.refs('playlistPanel');
+      typeof _ref$19 === "function" && use(_ref$19, _el$22);
+      setAttribute(_el$22, "id", `${APP}-playlist-panel`);
+      className(_el$22, `${APP}__comments-panel`);
+      var _ref$20 = props.refs('playlistList');
+      typeof _ref$20 === "function" && use(_ref$20, _el$23);
+      setAttribute(_el$23, "id", `${APP}-playlist-list`);
+      className(_el$23, `${APP}__playlist`);
+      var _ref$21 = props.refs('playlistEmpty');
+      typeof _ref$21 === "function" && use(_ref$21, _el$24);
+      setAttribute(_el$24, "id", `${APP}-playlist-empty`);
+      className(_el$24, `${APP}__playlist-empty`);
+      var _ref$22 = props.refs('recommendPanel');
+      typeof _ref$22 === "function" && use(_ref$22, _el$25);
+      setAttribute(_el$25, "id", `${APP}-recommend-panel`);
+      className(_el$25, `${APP}__comments-panel`);
+      var _ref$23 = props.refs('recommendList');
+      typeof _ref$23 === "function" && use(_ref$23, _el$26);
+      setAttribute(_el$26, "id", `${APP}-recommend-list`);
+      className(_el$26, `${APP}__playlist`);
+      var _ref$24 = props.refs('recommendEmpty');
+      typeof _ref$24 === "function" && use(_ref$24, _el$27);
+      setAttribute(_el$27, "id", `${APP}-recommend-empty`);
+      className(_el$27, `${APP}__playlist-empty`);
+      _el$28.$$click = () => props.onBackToTop?.();
+      var _ref$25 = props.refs('backToTop');
+      typeof _ref$25 === "function" && use(_ref$25, _el$28);
+      className(_el$28, `${APP}__back-to-top`);
+      insert(_el$28, () => backToTopIcon.content.firstElementChild);
       return _el$;
     })();
   }
@@ -1709,33 +2913,697 @@
     const backToTopIcon = props.targetDocument.createElement('template');
     backToTopIcon.innerHTML = arrowUpIconMarkup();
     return (() => {
-      var _el$24 = _tmpl$2(),
-        _el$25 = _el$24.firstChild,
-        _el$26 = _el$25.firstChild,
-        _el$27 = _el$26.nextSibling,
-        _el$28 = _el$27.nextSibling,
-        _el$29 = _el$28.firstChild,
-        _el$30 = _el$29.nextSibling,
+      var _el$29 = _tmpl$2(),
+        _el$30 = _el$29.firstChild,
         _el$31 = _el$30.firstChild,
         _el$32 = _el$31.nextSibling,
-        _el$33 = _el$30.nextSibling,
+        _el$33 = _el$32.nextSibling,
         _el$34 = _el$33.firstChild,
         _el$35 = _el$34.nextSibling,
-        _el$36 = _el$25.nextSibling;
-      insert(_el$28, () => props.commentsTabs, _el$29);
-      className(_el$29, `${APP}__comments-panel`);
-      className(_el$30, `${APP}__comments-panel`);
-      className(_el$31, `${APP}__playlist`);
-      className(_el$32, `${APP}__playlist-empty`);
-      className(_el$33, `${APP}__comments-panel`);
-      className(_el$34, `${APP}__playlist`);
-      className(_el$35, `${APP}__playlist-empty`);
-      className(_el$36, `${APP}__back-to-top`);
-      insert(_el$36, () => backToTopIcon.content.firstElementChild);
-      return _el$24;
+        _el$36 = _el$35.firstChild,
+        _el$37 = _el$36.nextSibling,
+        _el$38 = _el$35.nextSibling,
+        _el$39 = _el$38.firstChild,
+        _el$40 = _el$39.nextSibling,
+        _el$41 = _el$38.nextSibling,
+        _el$42 = _el$41.firstChild,
+        _el$43 = _el$42.nextSibling,
+        _el$44 = _el$30.nextSibling;
+      insert(_el$33, () => props.commentsTabs, _el$34);
+      className(_el$34, `${APP}__comments-panel`);
+      className(_el$35, `${APP}__comments-panel`);
+      className(_el$36, `${APP}__playlist`);
+      className(_el$37, `${APP}__playlist-empty`);
+      className(_el$38, `${APP}__comments-panel`);
+      className(_el$39, `${APP}__playlist`);
+      className(_el$40, `${APP}__playlist-empty`);
+      className(_el$41, `${APP}__comments-panel`);
+      className(_el$42, `${APP}__playlist`);
+      className(_el$43, `${APP}__playlist-empty`);
+      className(_el$44, `${APP}__back-to-top`);
+      insert(_el$44, () => backToTopIcon.content.firstElementChild);
+      return _el$29;
     })();
   }
   delegateEvents(["pointerdown", "pointerup", "click"]);
+
+  function renderPipPlayerDocument({
+    title,
+    stylesheets,
+    themeClassMarkup,
+    commentLayoutClass
+  }) {
+    return `<!doctype html>
+<html${themeClassMarkup}>
+  <head>
+    <meta charset="utf-8">
+    <title>${escapeHtml(title || 'Bilibili 小窗播放')}</title>
+    ${renderStylesheetLinks(stylesheets)}
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+      }
+      body {
+        overflow: hidden;
+        color: var(--text1, #18191c);
+      }
+      #shell {
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+      }
+      #layout {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        height: 100vh;
+      }
+      body.comments-bottom #layout {
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      body.comments-right #layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
+        overflow: hidden;
+      }
+      body.comments-right #stage {
+        grid-column: 1;
+        grid-row: 1;
+        overflow: hidden;
+      }
+      #comments-resizer {
+        display: none;
+      }
+      body.comments-right #comments-resizer {
+        display: block;
+        position: relative;
+        grid-column: 2;
+        grid-row: 1;
+        z-index: 4;
+        width: 8px;
+        min-width: 8px;
+        height: 100vh;
+        cursor: col-resize;
+        background: var(--bg1, #fff);
+      }
+      body.comments-right #comments-resizer::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 50%;
+        width: 1px;
+        transform: translateX(-50%);
+        background: var(--line_regular, rgba(148, 153, 160, 0.36));
+      }
+      body.comments-right #comments-resizer:hover::before,
+      body.comments-right #comments-resizer:focus-visible::before,
+      body.resizing-comments #comments-resizer::before {
+        background: var(--brand_pink, #fb7299);
+      }
+      body.comments-right #comments-resizer:focus-visible {
+        outline: none;
+      }
+      #stage {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        width: 100%;
+        height: 100vh;
+        background: #000;
+      }
+      #bilibili-player {
+        position: relative;
+        width: 100% !important;
+        height: 100% !important;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #000;
+      }
+      #bilibili-player,
+      #bilibili-player > *,
+      #bilibili-player .bpx-player-container {
+        width: 100% !important;
+        height: 100% !important;
+      }
+${getPlayerThemeVariableCss('#bilibili-player')}
+      #comments {
+        display: flex;
+        flex-direction: column;
+        min-height: 520px;
+        padding: 0;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+      }
+      body.comments-right #comments {
+        display: grid;
+        grid-template-rows: 42px minmax(0, 1fr);
+        grid-column: 3;
+        grid-row: 1;
+        min-width: 0;
+        min-height: 0;
+        height: 100vh;
+        padding: 0 0 0 8px;
+        overflow: hidden;
+        border-left: 0;
+      }
+      .${APP}__back-to-top {
+        position: fixed;
+        right: 28px;
+        bottom: 26px;
+        z-index: 12;
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 999px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(6px);
+        transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+      }
+      body.comments-right .${APP}__back-to-top {
+        right: 22px;
+        bottom: 22px;
+      }
+      .${APP}__back-to-top.${APP}--visible {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+      }
+      .${APP}__back-to-top:hover,
+      .${APP}__back-to-top:focus-visible {
+        color: var(--brand_pink, #fb7299);
+        border-color: var(--brand_pink, #fb7299);
+        outline: none;
+      }
+      .${APP}__back-to-top svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+        stroke: currentColor;
+      }
+      #${APP}-pip-controls {
+        position: static !important;
+        z-index: auto !important;
+        transform: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        height: 100% !important;
+        margin: 0 14px 0 0 !important;
+        padding: 0 !important;
+        vertical-align: middle !important;
+        pointer-events: auto !important;
+        flex: 0 0 auto !important;
+      }
+      #${APP}-pip-controls a {
+        all: unset;
+        box-sizing: border-box !important;
+        position: relative !important;
+        top: -8px !important;
+        width: auto !important;
+        height: 100% !important;
+        min-width: auto !important;
+        max-width: none !important;
+        padding: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 auto !important;
+        border: 0 !important;
+        color: #fff !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        text-decoration: none !important;
+        white-space: nowrap !important;
+        font: 600 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        letter-spacing: 0 !important;
+        cursor: pointer !important;
+        opacity: 0.92 !important;
+        text-shadow: 0 0 2px rgba(0, 0, 0, 0.6) !important;
+      }
+      #${APP}-pip-controls a:hover,
+      #${APP}-pip-controls a:focus-visible {
+        color: #fff !important;
+        background: transparent !important;
+        outline: none !important;
+        opacity: 1 !important;
+      }
+      .${APP}__comments-tabs {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        box-sizing: border-box;
+        min-height: 42px;
+        margin: 0;
+        padding: 6px 0 0;
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        background: var(--bg1, #fff);
+        overflow: visible;
+      }
+      body.comments-right .${APP}__comments-tabs {
+        grid-row: 1;
+        margin: 0;
+        padding: 6px 0 0;
+      }
+      .${APP}__comments-tab {
+        box-sizing: border-box;
+        height: 36px;
+        padding: 0 4px;
+        display: inline-flex;
+        align-items: center;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        color: var(--text2, #61666d);
+        background: transparent;
+        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      .${APP}__comments-tab[hidden] {
+        display: none !important;
+      }
+      .${APP}__comments-tab:hover,
+      .${APP}__comments-tab:focus-visible,
+      .${APP}__comments-tab.${APP}--active {
+        color: var(--brand_pink, #fb7299);
+        outline: none;
+      }
+      .${APP}__comments-tab.${APP}--active {
+        border-bottom-color: var(--brand_pink, #fb7299);
+      }
+      .${APP}__comments-panel[hidden] {
+        display: none !important;
+      }
+      .${APP}__comments-panel:not([hidden]) {
+        min-width: 0;
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: visible;
+      }
+      body.comments-right .${APP}__comments-panel:not([hidden]) {
+        grid-row: 2;
+        height: 100%;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      #comments-mount {
+        box-sizing: border-box;
+        min-height: 360px;
+        padding: 8px 18px 0 0;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+      }
+      body.comments-right #comments-mount {
+        padding: 8px 16px 0 0;
+      }
+      .${APP}__playlist {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 0 28px;
+        padding: 12px 0 24px;
+      }
+      body.comments-right .${APP}__playlist {
+        grid-template-columns: 1fr;
+      }
+      .${APP}__playlist-card {
+        appearance: none;
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        display: grid;
+        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr);
+        column-gap: 12px;
+        align-items: start;
+        padding: 12px 14px;
+        border: 0;
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 0;
+        color: var(--text1, #18191c);
+        background: transparent;
+        text-align: left;
+        text-indent: 0;
+        font: inherit;
+        cursor: pointer;
+      }
+      .${APP}__playlist-card:hover,
+      .${APP}__playlist-card:focus-visible,
+      .${APP}__playlist-card.${APP}--selected {
+        outline: none;
+      }
+      .${APP}__playlist-card:last-child {
+        border-bottom: 0;
+      }
+      .${APP}__playlist-card.${APP}--selected {
+        color: var(--brand_blue, #00aeec);
+        background: transparent;
+      }
+      .${APP}__playlist-card:hover .${APP}__playlist-title,
+      .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
+        color: var(--brand_blue, #00aeec);
+      }
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-stats {
+        color: var(--text2, #61666d);
+      }
+      .${APP}__playlist-playing {
+        width: 16px;
+        height: 16px;
+        display: inline-block;
+        margin: 0 4px 0 0;
+        vertical-align: -3px;
+      }
+      .${APP}__playlist-cover {
+        position: relative;
+        z-index: 0;
+        min-width: 0;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        border-radius: 6px;
+        background: var(--bg2, #f6f7f8);
+      }
+      .${APP}__playlist-cover img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+      }
+      .${APP}__playlist-duration {
+        position: absolute;
+        right: 4px;
+        bottom: 4px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 3px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.72);
+        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__playlist-info {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        overflow: visible;
+        padding: 1px 2px 0 1px;
+        display: grid;
+        align-content: start;
+        gap: 6px;
+      }
+      .${APP}__playlist-title {
+        width: 100%;
+        min-width: 0;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        color: var(--text1, #18191c);
+        font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__playlist-title-text {
+        min-width: 0;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+      .${APP}__playlist-subtitle,
+      .${APP}__playlist-stats,
+      .${APP}__playlist-empty {
+        color: var(--text3, #9499a0);
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__playlist-subtitle,
+      .${APP}__playlist-stats {
+        max-width: 100%;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .${APP}__playlist-stats {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .${APP}__playlist-stat {
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .${APP}__playlist-stat-icon {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        color: currentColor;
+      }
+      .${APP}__playlist-card--skeleton {
+        cursor: default;
+        pointer-events: none;
+      }
+      .${APP}__playlist-skeleton-cover,
+      .${APP}__playlist-skeleton-line {
+        position: relative;
+        overflow: hidden;
+        border-radius: 6px;
+        background: var(--graph_bg_regular, var(--bg2, #f1f2f3));
+      }
+      .${APP}__playlist-skeleton-cover {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+      }
+      .${APP}__playlist-skeleton-info {
+        min-width: 0;
+        display: grid;
+        align-content: start;
+        gap: 9px;
+        padding-top: 2px;
+      }
+      .${APP}__playlist-skeleton-line {
+        height: 12px;
+      }
+      .${APP}__playlist-skeleton-line--title {
+        height: 16px;
+      }
+      .${APP}__playlist-skeleton-cover::after,
+      .${APP}__playlist-skeleton-line::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
+        animation: ${APP}-skeleton-shimmer 1.25s ease-in-out infinite;
+      }
+      @keyframes ${APP}-skeleton-shimmer {
+        100% {
+          transform: translateX(100%);
+        }
+      }
+      .${APP}__bottom-fixed-hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body class="${commentLayoutClass}"></body>
+</html>`;
+  }
+  function renderLivePipDocument({
+    title,
+    href,
+    themeClassMarkup
+  }) {
+    return `<!doctype html>
+<html${themeClassMarkup}>
+  <head>
+    <meta charset="utf-8">
+    <title>${escapeHtml(title || 'Bilibili 直播小窗')}</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+      #shell,
+      #stage,
+      #fullscreen-container,
+      #live-player {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #000;
+      }
+      #${APP}-live-original {
+        all: unset;
+        box-sizing: border-box;
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 2147482999;
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(0, 0, 0, 0.36);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.16s ease, background 0.16s ease;
+      }
+      body:hover #${APP}-live-original,
+      #${APP}-live-original:focus-visible {
+        opacity: 1;
+      }
+      #${APP}-live-original:hover,
+      #${APP}-live-original:focus-visible {
+        background: rgba(0, 0, 0, 0.62);
+        outline: none;
+      }
+      #${APP}-live-original svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+        stroke: currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="shell">
+      <div id="stage">
+        <div id="fullscreen-container">
+          <div id="live-player">
+            <div id="fullscreen-danmaku-vm"><fullscreen-danmaku></fullscreen-danmaku></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <a id="${APP}-live-original" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原直播间" aria-label="打开原直播间">${externalLinkIconMarkup()}</a>
+  </body>
+</html>`;
+  }
+  function renderPipLoadingDocument({
+    title,
+    href,
+    stylesheets,
+    themeClassMarkup
+  }) {
+    return `<!doctype html>
+<html${themeClassMarkup}>
+  <head>
+    <meta charset="utf-8">
+    <title>${escapeHtml(title || 'Bilibili 小窗播放')}</title>
+    ${renderStylesheetLinks(stylesheets)}
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      a {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 8px;
+        color: var(--text1, #18191c);
+        background: var(--bg2, #f6f7f8);
+      }
+      a svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
+      }
+    </style>
+  </head>
+  <body>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>` : ''}加载中...</body>
+</html>`;
+  }
+  function renderPipErrorDocument({
+    error,
+    href,
+    stylesheets,
+    themeClassMarkup
+  }) {
+    return `<!doctype html>
+<html${themeClassMarkup}>
+  <head>
+    <meta charset="utf-8">
+    <title>初始化失败</title>
+    ${renderStylesheetLinks(stylesheets)}
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      pre {
+        max-width: calc(100vw - 32px);
+        white-space: pre-wrap;
+      }
+      a {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 8px;
+        color: var(--text1, #18191c);
+        background: var(--bg2, #f6f7f8);
+      }
+      a svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
+      }
+    </style>
+  </head>
+  <body>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>` : ''}<pre>${escapeHtml(error?.message || String(error))}</pre></body>
+</html>`;
+  }
+  function renderStylesheetLinks(stylesheets) {
+    return [...new Set(stylesheets || [])].map(href => `<link rel="stylesheet" href="${escapeHtml(href)}">`).join('\n');
+  }
 
   function getTidInfo(channel, tid) {
     if (!channel || !tid) return null;
@@ -1759,151 +3627,202 @@
     return null;
   }
   function getUpStaffs(staffData) {
-    if (!Array.isArray(staffData)) return [];
+    if (!Array.isArray(staffData) || !staffData.length) return null;
     return staffData.map(staff => ({
       face: staff.face,
-      follower: staff.follower,
-      label: staff.label,
       mid: staff.mid,
-      name: staff.name,
-      official: staff.official,
-      title: staff.title,
-      vip: staff.vip
+      name: staff.name
     }));
   }
   function getPlayerViewInfo(initialState) {
-    const vd = initialState.videoData || {};
-    const upData = initialState.upData || {};
-    const page = vd.pages?.[Number(initialState.p || 1) - 1] || vd.pages?.[0] || {};
+    const vd = initialState?.videoData || {};
+    const upData = initialState?.upData || vd.owner || {};
+    const tidInfo = getTidInfo(initialState?.channelKv || initialState?.channel, vd.tid_v2) || getTidInfo(initialState?.channelKv || initialState?.channel, vd.tid) || {
+      subTid: vd.tid_v2 || vd.tid
+    };
     return {
-      aid: vd.aid,
-      bvid: vd.bvid,
-      cid: page.cid || initialState.cid,
-      copyright: vd.copyright,
-      ctime: vd.ctime,
-      desc: vd.desc,
-      dimension: page.dimension || vd.dimension,
-      duration: vd.duration,
-      enable_vt: vd.enable_vt,
-      honor_reply: vd.honor_reply,
-      is_360: vd.is_360,
-      is_owner: vd.is_owner,
-      is_upower_exclusive: vd.is_upower_exclusive,
-      is_upower_play: vd.is_upower_play,
-      is_upower_preview: vd.is_upower_preview,
-      mission_id: vd.mission_id,
-      no_cache: vd.no_cache,
-      owner: vd.owner || {
+      upInfo: upData?.mid ? {
         mid: upData.mid,
         name: upData.name,
-        face: upData.face
-      },
-      pages: vd.pages,
-      pic: vd.pic,
-      premiere: vd.premiere,
-      pubdate: vd.pubdate,
-      rights: vd.rights,
-      staff: getUpStaffs(vd.staff),
-      stat: vd.stat,
-      teenage_mode: vd.teenage_mode,
-      tid: vd.tid,
-      tid_info: getTidInfo(initialState.channel, vd.tid),
-      title: vd.title,
-      tname: vd.tname,
-      videos: vd.videos
+        face: upData.face,
+        fans: upData.fans,
+        staffs: getUpStaffs(initialState?.staffData || vd.staff)
+      } : null,
+      storyInfo: {
+        title: vd.title,
+        tid: tidInfo.tid,
+        subTid: tidInfo.subTid,
+        likeIcon: vd.like_icon,
+        electricStatus: initialState?.elecFullInfo?.show_info?.state,
+        stats: {
+          like: vd.stat?.like,
+          share: vd.stat?.share,
+          reply: vd.stat?.reply,
+          coin: vd.stat?.coin
+        }
+      }
     };
   }
 
   async function resolvePlaybackBootstrap(meta) {
-    const html = await fetch(meta.href, {
-      credentials: 'include'
-    }).then(res => res.text());
-    const initialState = JSON.parse(extractAssignedJson(html, 'window.__INITIAL_STATE__'));
-    const playInfoJson = extractAssignedJson(html, 'window.__playinfo__');
-    const playInfo = playInfoJson ? JSON.parse(playInfoJson) : null;
-    const vd = initialState.videoData;
-    const p = Number(initialState.p || 1);
-    const page = vd.pages?.[p - 1] || vd.pages?.[0] || {};
-    const currentBvid = vd.bvid || meta.bvid;
-    const recommendationCards = mergePlaylistCards(extractPlaylistCardsFromHtml(html, meta.href, currentBvid), extractPlaylistCardsFromInitialState(initialState, meta.href, currentBvid));
-    return {
-      title: vd.title || meta.title,
-      coreScript: extractCoreScriptUrl(html) || CORE_FALLBACK,
-      commentScript: extractCommentScriptUrl(html) || COMMENT_FALLBACK,
-      stylesheets: extractStylesheetUrls(html),
-      initialState,
-      playInfo,
-      recommendationCards,
-      playerInfo: {
-        aid: vd.aid || initialState.aid,
-        bvid: currentBvid,
-        cid: page.cid || initialState.cid,
-        p,
-        t: 0
-      },
-      href: meta.href,
-      commentInfo: {
-        params: `1,${vd.aid || initialState.aid}`,
-        spmPrefix: initialState.spmidPrefix || '333.788',
-        cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || ''
+    const apiBootstrap = await resolvePlaybackBootstrapFromApis(meta);
+    if (apiBootstrap) return apiBootstrap;
+    throw new Error('Playback API bootstrap failed');
+  }
+  async function resolvePlaybackBootstrapFromApis(meta) {
+    const bvid = meta.bvid || meta.href?.match(BV_RE)?.[1];
+    if (!bvid) return null;
+    try {
+      const [viewResult, relatedResult, pagelistResult] = await Promise.allSettled([fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`), fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/archive/related?bvid=${encodeURIComponent(bvid)}`), fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`)]);
+      if (viewResult.status !== 'fulfilled') return null;
+      const vd = normalizeVideoData(viewResult.value?.data, pagelistResult.status === 'fulfilled' ? pagelistResult.value?.data : null);
+      if (!vd?.aid || !vd?.bvid) return null;
+      const pageP = resolveCurrentPage(meta.href, {
+        p: 1,
+        videoData: vd
+      });
+      const sequence = resolvePlaybackSequence(vd, pageP);
+      const page = getVideoPage(vd, pageP);
+      const relatedItems = relatedResult.status === 'fulfilled' && Array.isArray(relatedResult.value?.data) ? relatedResult.value.data : [];
+      const initialState = buildInitialStateFromApis({
+        meta,
+        p: sequence.p,
+        relatedItems,
+        videoData: vd
+      });
+      const recommendationCards = extractPlaylistCardsFromRelatedItems(relatedItems, meta.href, vd.bvid);
+      return {
+        title: vd.title || meta.title,
+        coreScript: CORE_FALLBACK,
+        commentScript: COMMENT_FALLBACK,
+        stylesheets: [],
+        initialState,
+        playInfo: null,
+        recommendationCards,
+        playerInfo: {
+          aid: vd.aid,
+          bvid: vd.bvid,
+          cid: page.cid || vd.cid || initialState.cid,
+          p: sequence.p,
+          t: 0,
+          hasPrev: sequence.hasPrev,
+          hasNext: sequence.hasNext,
+          seasonId: sequence.seasonId
+        },
+        href: meta.href,
+        commentInfo: {
+          params: `1,${vd.aid}`,
+          spmPrefix: '333.788',
+          cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || ''
+        }
+      };
+    } catch {
+      return null;
+    }
+  }
+  async function fetchPlaybackJson(url) {
+    const response = await fetch(url, {
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*'
       }
-    };
-  }
-  function mergePlaylistCards(...groups) {
-    const byBvid = new Map();
-    groups.flat().forEach(card => {
-      if (!card?.bvid) return;
-      byBvid.set(card.bvid, mergePlaylistCard(byBvid.get(card.bvid), card));
     });
-    return [...byBvid.values()];
+    if (!response.ok) throw new Error(`Playback API request failed: ${response.status}`);
+    const payload = await response.json();
+    if (payload?.code !== 0) throw new Error(payload?.message || `Playback API error: ${payload?.code}`);
+    return payload;
   }
-  function mergePlaylistCard(base, next) {
-    if (!base) return next;
+  function normalizeVideoData(videoData, pageList) {
+    if (!videoData) return null;
+    const pages = mergeVideoPages(videoData.pages, pageList);
     return {
-      ...base,
-      href: base.href || next.href,
-      title: isUsefulTitle(base.title) ? base.title : next.title,
-      cover: base.cover || next.cover,
-      subtitle: base.subtitle || next.subtitle,
-      duration: base.duration || next.duration,
-      stats: base.stats || next.stats
+      ...videoData,
+      pages,
+      videos: videoData.videos || pages.length
     };
   }
-  function extractPlaylistCardsFromHtml(html, baseUrl, currentBvid) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const seen = new Set();
-    return [...doc.querySelectorAll(PLAYBACK_VIDEO_LINK_SELECTOR)].sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a))).map(link => buildPlaylistCard(link, baseUrl)).filter(card => {
-      if (!card || card.bvid === currentBvid || seen.has(card.bvid)) return false;
-      seen.add(card.bvid);
-      return true;
-    });
+  function mergeVideoPages(primaryPages, pageList) {
+    const byPage = new Map();
+    const addPage = page => {
+      if (!page) return;
+      const pageNo = Number(page.page || byPage.size + 1);
+      byPage.set(pageNo, {
+        ...byPage.get(pageNo),
+        ...page,
+        page: pageNo
+      });
+    };
+    (Array.isArray(primaryPages) ? primaryPages : []).forEach(addPage);
+    (Array.isArray(pageList) ? pageList : []).forEach(addPage);
+    return [...byPage.values()].sort((a, b) => Number(a.page || 0) - Number(b.page || 0));
   }
-  function buildPlaylistCard(link, baseUrl) {
-    const meta = getVideoMetaFromLink(link, baseUrl);
-    if (!meta) return null;
-    const root = getCardRoot(link);
-    const title = getPlaylistCardTitle(link, root, meta.title);
-    const cover = getPlaylistCardCover(root, baseUrl);
-    const subtitle = getPlaylistCardSubtitle(root);
-    const duration = getPlaylistCardDuration(root);
-    const stats = getPlaylistCardStats(root);
+  function buildInitialStateFromApis({
+    meta,
+    p,
+    relatedItems,
+    videoData
+  }) {
+    const page = getVideoPage(videoData, p);
+    const owner = videoData.owner || {};
     return {
-      ...meta,
-      title,
-      cover,
-      subtitle,
-      duration,
-      stats
+      aid: videoData.aid,
+      bvid: videoData.bvid || meta.bvid,
+      cid: page.cid || videoData.cid,
+      p,
+      videoData,
+      related: relatedItems,
+      spmidPrefix: '333.788',
+      upData: {
+        mid: owner.mid,
+        name: owner.name,
+        face: owner.face,
+        fans: owner.fans
+      },
+      staffData: videoData.staff || [],
+      nanoTheme: getPlayerNanoTheme()
     };
   }
-  function extractPlaylistCardsFromInitialState(initialState, baseUrl, currentBvid) {
-    return (initialState.related || []).map(item => {
+  function resolveCurrentPage(href, initialState) {
+    const parsed = new URL(href, location.href);
+    const urlPage = Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 0);
+    const statePage = Number(initialState?.p);
+    const page = urlPage || statePage || 1;
+    const pageCount = initialState?.videoData?.pages?.length || 0;
+    if (!Number.isFinite(page) || page < 1) return 1;
+    return pageCount ? Math.min(page, pageCount) : page;
+  }
+  function getVideoPage(videoData, p) {
+    return videoData?.pages?.find(page => Number(page.page) === Number(p)) || videoData?.pages?.[Number(p) - 1] || videoData?.pages?.[0] || {};
+  }
+  function resolvePlaybackSequence(videoData, pageP) {
+    const episodes = getUgcSeasonEpisodes(videoData);
+    const currentEpisodeIndex = episodes.findIndex(episode => episode?.bvid && videoData?.bvid && episode.bvid === videoData.bvid || Number(episode?.cid) && Number(videoData?.cid) && Number(episode.cid) === Number(videoData.cid));
+    if (currentEpisodeIndex >= 0 && episodes.length > 1) {
+      return {
+        p: currentEpisodeIndex + 1,
+        hasPrev: currentEpisodeIndex > 0,
+        hasNext: currentEpisodeIndex < episodes.length - 1,
+        seasonId: videoData?.ugc_season?.id || episodes[currentEpisodeIndex]?.season_id
+      };
+    }
+    const pageCount = videoData?.pages?.length || 0;
+    return {
+      p: pageP,
+      hasPrev: pageP > 1,
+      hasNext: pageCount > 0 && pageP < pageCount,
+      seasonId: videoData?.season_id
+    };
+  }
+  function getUgcSeasonEpisodes(videoData) {
+    return (Array.isArray(videoData?.ugc_season?.sections) ? videoData.ugc_season.sections : []).flatMap(section => Array.isArray(section?.episodes) ? section.episodes : []);
+  }
+  function extractPlaylistCardsFromRelatedItems(items, baseUrl, currentBvid) {
+    return (Array.isArray(items) ? items : []).map(item => {
       const bvid = item?.bvid;
       if (!bvid || bvid === currentBvid) return null;
       return {
         bvid,
-        href: normalizeVideoHref(item.uri || `/video/${bvid}`, baseUrl),
+        href: normalizeVideoHref(item.uri, baseUrl) || normalizeVideoHref(`/video/${bvid}`, baseUrl),
         title: String(item.title || 'Bilibili 视频').replace(/\s+/g, ' ').trim(),
         cover: normalizeResourceUrl(item.pic, baseUrl),
         subtitle: String(item.owner?.name || item.author || '').replace(/\s+/g, ' ').trim(),
@@ -1911,41 +3830,6 @@
         stats: formatRelatedStats(item)
       };
     }).filter(card => card?.href);
-  }
-  function getPlaylistCardTitle(link, root, fallback) {
-    const candidate = link.getAttribute('title') || link.getAttribute('aria-label') || getSafeTitleElementText(root, ['.title', '.info-title', '.bili-video-card__info--tit', '.video-page-card-small-title'].join(',')) || root?.querySelector?.('img')?.getAttribute('alt') || fallback;
-    const title = String(candidate || fallback || 'Bilibili 视频').replace(/\s+/g, ' ').trim();
-    return isUsefulTitle(title) ? title : 'Bilibili 视频';
-  }
-  function getSafeTitleElementText(root, selector) {
-    return [...(root?.querySelectorAll?.(selector) || [])].map(element => element.textContent || element.getAttribute?.('title') || '').find(isUsefulTitle) || '';
-  }
-  function getPlaylistCardCover(root, baseUrl) {
-    const img = root?.querySelector?.('img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-url]');
-    const source = root?.querySelector?.('source[srcset], source[data-srcset]');
-    const raw = img?.getAttribute('data-src') || img?.getAttribute('data-lazy-src') || img?.getAttribute('data-original') || img?.getAttribute('data-url') || img?.getAttribute('src') || getFirstSrcsetUrl(source?.getAttribute('data-srcset') || source?.getAttribute('srcset')) || '';
-    return normalizeResourceUrl(raw, baseUrl);
-  }
-  function getPlaylistCardSubtitle(root) {
-    const candidate = root?.querySelector?.(['.upname', '.name', '.bili-video-card__info--author', '.video-page-card-small-author', '[class*="author"]'].join(','))?.textContent || '';
-    return candidate.replace(/\s+/g, ' ').trim();
-  }
-  function getPlaylistCardDuration(root) {
-    const candidate = root?.querySelector?.(['.duration', '.bili-video-card__stats__duration', '[class*="duration"]'].join(','))?.textContent || '';
-    return candidate.replace(/\s+/g, ' ').trim();
-  }
-  function getPlaylistCardStats(root) {
-    const playInfo = root?.querySelector?.('.playinfo')?.textContent;
-    if (playInfo) return playInfo.replace(/\s+/g, ' ').trim();
-    const items = [...(root?.querySelectorAll?.(['.bili-video-card__stats--text', '.bili-video-card__stats--item', '[class*="stats"] [class*="text"]'].join(',')) || [])].map(element => element.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    return [...new Set(items)].slice(0, 2).join(' ');
-  }
-  function getFirstSrcsetUrl(srcset) {
-    return String(srcset || '').split(',')[0]?.trim().split(/\s+/)[0] || '';
-  }
-  function isUsefulTitle(value) {
-    const title = String(value || '').replace(/\s+/g, ' ').trim();
-    return Boolean(title && title !== '不感兴趣' && title !== '撤销' && !title.includes('将减少此类内容推荐'));
   }
   function formatRelatedStats(item) {
     const view = formatCount(item?.stat?.view ?? item?.play);
@@ -1975,51 +3859,45 @@
     if (h) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     return `${m}:${String(s).padStart(2, '0')}`;
   }
-  function extractAssignedJson(html, marker) {
-    const start = html.indexOf(`${marker}=`);
-    if (start < 0) {
-      if (marker === 'window.__playinfo__') return null;
-      throw new Error(`${marker} not found`);
+
+  function createRendererOrchestrator({
+    getActiveRenderer,
+    nextToken,
+    isCurrentToken,
+    resolveBootstrap,
+    saveLastPlayed,
+    recordPlaybackHistory
+  }) {
+    async function openByMode(meta) {
+      return openWithRenderer(getActiveRenderer(), meta);
     }
-    const jsonStart = start + marker.length + 1;
-    const first = html[jsonStart];
-    if (first !== '{' && first !== '[') throw new Error(`${marker} assignment is not JSON`);
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = jsonStart; i < html.length; i += 1) {
-      const char = html[i];
-      if (inString) {
-        if (escaped) escaped = false;else if (char === '\\') escaped = true;else if (char === '"') inString = false;
-        continue;
+    async function openWithRenderer(renderer, meta) {
+      const reusable = renderer.getReusable?.(meta);
+      if (reusable) {
+        const token = nextToken();
+        renderer.reuse(reusable, meta, token);
+        return;
       }
-      if (char === '"') inString = true;else if (char === '{' || char === '[') depth += 1;else if (char === '}' || char === ']') {
-        depth -= 1;
-        if (depth === 0) return html.slice(jsonStart, i + 1);
+      const token = nextToken();
+      const context = await renderer.prepare(meta, token);
+      if (!context || !isCurrentToken(token)) return;
+      try {
+        const bootstrap = await resolveBootstrap(meta);
+        if (!isCurrentToken(token) || renderer.isClosed(context)) return;
+        saveLastPlayed(meta, bootstrap);
+        await renderer.play(context, bootstrap, token);
+        if (!isCurrentToken(token) || renderer.isClosed(context)) return;
+        recordPlaybackHistory(meta, bootstrap);
+        renderer.done?.(context, bootstrap);
+      } catch (error) {
+        if (!isCurrentToken(token) || renderer.isClosed(context)) return;
+        renderer.fail(context, error);
       }
     }
-    throw new Error(`${marker} JSON is not closed`);
-  }
-  function extractCoreScriptUrl(html) {
-    const candidates = [...html.matchAll(/<script[^>]+src="([^"]*\/player\/main\/core\.[^"]+\.js[^"]*)"[^>]*>/g)].map(match => normalizeResourceUrl(match[1])).filter(Boolean);
-    return candidates[0] || '';
-  }
-  function extractCommentScriptUrl(html) {
-    const hash = html.match(/"comment_version_hash":"([^"]+)"/)?.[1];
-    if (hash) return `https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.${hash}.js`;
-    const src = html.match(/<script[^>]+src="([^"]*bili-comments[^"]+\.js[^"]*)"[^>]*>/)?.[1];
-    return normalizeResourceUrl(src);
-  }
-  function extractStylesheetUrls(html) {
-    const urls = [];
-    const patterns = [/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"[^>]*>/g, /<link[^>]+href="([^"]+)"[^>]+rel="stylesheet"[^>]*>/g];
-    patterns.forEach(pattern => {
-      for (const match of html.matchAll(pattern)) {
-        const href = normalizeResourceUrl(match[1]);
-        if (href && !urls.includes(href)) urls.push(href);
-      }
-    });
-    return urls;
+    return {
+      openByMode,
+      openWithRenderer
+    };
   }
 
   function createSettingsUi({
@@ -2154,7 +4032,7 @@
   }
   function getBiliThemeStylesheets() {
     const themeStyle = getThemeStyle();
-    if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/dark.css`];
+    if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/dark.css`];
     return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
   }
   function getThemeStyle() {
@@ -2181,7 +4059,7 @@
     const initialLastPlayed = (() => {
       try {
         const value = JSON.parse(localStorage.getItem(STORAGE_LAST_PLAYED) || 'null');
-        if (!value?.href || !value?.bvid) return null;
+        if (!value?.href || !value?.bvid && !value?.roomId && !value?.id) return null;
         return value;
       } catch {
         return null;
@@ -2198,6 +4076,7 @@
       scanWarmupTimer: 0,
       settingsVisibilityFrame: 0,
       bottomFixedFrame: 0,
+      homeSizeFrame: 0,
       viewportFrame: 0,
       lastFocus: null,
       lastButton: null,
@@ -2219,6 +4098,13 @@
       shadowRoot: null,
       overlay: null,
       cardEntries: [],
+      live: {
+        button: null,
+        buttonFrame: 0
+      },
+      playback: {
+        button: null
+      },
       home: {
         overlay: null,
         ui: null,
@@ -2236,8 +4122,10 @@
           session: null
         },
         playlistRefreshFrame: 0,
+        pageCards: [],
         playlistCards: [],
         recommendationCards: [],
+        selectedPageKey: '',
         selectedPlaylistBvid: ''
       },
       pip: {
@@ -2248,8 +4136,18 @@
         screenHandler: null,
         switchingWindow: false,
         activeCommentsTab: 'comments',
+        feed: {
+          error: '',
+          exhausted: false,
+          loading: false,
+          requestId: 0,
+          session: null
+        },
+        playlistRefreshFrame: 0,
+        pageCards: [],
         playlistCards: [],
         recommendationCards: [],
+        selectedPageKey: '',
         selectedPlaylistBvid: ''
       }
     };
@@ -2271,12 +4169,15 @@
       attachPipTabs: attachPipCommentsTabs,
       capturePagePlaylist,
       createTabs: createCommentsTabs,
+      renderPageParts,
       renderPlaylist,
       renderRecommendations,
       scrollSelectedPlaylistIntoView,
+      setSelectedPageKey,
       setSelectedPlaylistBvid,
       syncTabs: syncCommentsTabs
     } = commentsTabsUi;
+    let rendererOrchestrator = null;
     window.__biliPopupPlayerNano = {
       scan,
       close: closeHome,
@@ -2510,711 +4411,7 @@
       return overlay;
     }
     function ensureDocumentStyle() {
-      if (document.getElementById(DOCUMENT_STYLE_ID)) return;
-      const style = document.createElement('style');
-      style.id = DOCUMENT_STYLE_ID;
-      style.textContent = `
-      :root {
-        --${APP}-surface: var(--bg1, #fff);
-        --${APP}-surface-soft: var(--bg2, #f6f7f8);
-        --${APP}-surface-elevated: var(--bg1_float, var(--bg1, #fff));
-        --${APP}-text: var(--text1, #18191c);
-        --${APP}-text-subtle: var(--text2, #61666d);
-        --${APP}-text-muted: var(--text3, #9499a0);
-        --${APP}-border: var(--line_regular, #e3e5e7);
-        --${APP}-brand: var(--brand_pink, #fb7299);
-        --${APP}-brand-soft: var(--Pi5, rgba(251, 114, 153, 0.14));
-      }
-
-      .${BUTTON_CLASS} {
-        position: absolute !important;
-        z-index: 20;
-        right: 8px;
-        bottom: 8px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 72px;
-        height: 28px;
-        padding: 0 10px;
-        border: 1px solid var(--${APP}-border);
-        border-radius: 6px;
-        color: var(--${APP}-text);
-        background: var(--${APP}-surface-soft);
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-        opacity: 0.96;
-        pointer-events: auto;
-        transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
-      }
-
-      .${BUTTON_CLASS}:disabled {
-        color: var(--${APP}-text-muted);
-        background: var(--${APP}-surface-soft);
-        box-shadow: none;
-        cursor: default;
-      }
-
-      .${BUTTON_CLASS}:hover,
-      .${BUTTON_CLASS}:focus-visible {
-        color: #fff;
-        border-color: var(--${APP}-brand);
-        background: var(--${APP}-brand);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-        opacity: 1;
-        outline: none;
-      }
-
-      .${BADGE_CLASS} {
-        position: absolute !important;
-        z-index: 21;
-        top: 8px;
-        left: 8px;
-        display: none;
-        align-items: center;
-        height: 24px;
-        padding: 0 8px;
-        border-radius: 6px;
-        color: var(--${APP}-text-subtle);
-        border: 1px solid var(--${APP}-border);
-        background: var(--${APP}-surface-elevated);
-        backdrop-filter: blur(8px);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        pointer-events: none;
-      }
-
-      .${BADGE_CLASS}.${APP}--active {
-        display: inline-flex;
-      }
-
-      .${BADGE_CLASS}.${APP}--playing {
-        color: #fff;
-        border-color: var(--${APP}-brand);
-        background: var(--${APP}-brand);
-      }
-
-      .${APP}__control-overlay.${APP}--playback-web-fullscreen {
-        display: none;
-      }
-
-      #${APP}-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 2147483000;
-        display: grid;
-        place-items: center;
-        padding: 16px;
-        background: rgba(15, 18, 24, 0.68);
-      }
-
-      body.${APP}--modal-open > bili-photoswipe,
-      body.${APP}--modal-open > bili-modal,
-      body.${APP}--modal-open > .pswp,
-      body.${APP}--modal-open > .bili-modal,
-      body.${APP}--modal-open > .bili-photoswipe,
-      body.${APP}--modal-open > [class*="pswp"],
-      body.${APP}--modal-open > [class*="photoswipe"],
-      body.${APP}--modal-open > [class*="photo-swipe"],
-      body.${APP}--modal-open > [class*="image-preview"],
-      body.${APP}--modal-open > [class*="picture-preview"],
-      body.${APP}--modal-open > [class*="preview"][class*="modal"],
-      body.${APP}--modal-open > [class*="preview"][class*="popup"],
-      #${APP}-overlay bili-photoswipe,
-      #${APP}-overlay bili-modal,
-      #${APP}-overlay .pswp,
-      #${APP}-overlay .bili-modal,
-      #${APP}-overlay .bili-photoswipe,
-      #${APP}-overlay [class*="pswp"],
-      #${APP}-overlay [class*="photoswipe"],
-      #${APP}-overlay [class*="photo-swipe"],
-      #${APP}-overlay [class*="image-preview"],
-      #${APP}-overlay [class*="picture-preview"],
-      #${APP}-overlay [class*="preview"][class*="modal"],
-      #${APP}-overlay [class*="preview"][class*="popup"] {
-        position: fixed !important;
-        inset: 0 !important;
-        z-index: 2147483647 !important;
-      }
-
-      #${APP}-overlay.${APP}--hidden {
-        display: none;
-      }
-
-      #${APP}-dialog {
-        position: relative;
-        width: min(1360px, calc(100vw - 32px));
-        height: min(860px, calc(100vh - 32px));
-        display: grid;
-        grid-template-rows: 46px 1fr;
-        overflow: hidden;
-        border-radius: 8px;
-        background: var(--${APP}-surface);
-        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
-      }
-
-      #${APP}-overlay.${APP}--fullscreen {
-        padding: 0;
-        background: #000;
-      }
-
-      #${APP}-overlay.${APP}--fullscreen #${APP}-dialog {
-        width: 100vw;
-        height: 100vh;
-        border-radius: 0;
-        box-shadow: none;
-      }
-
-      #${APP}-header {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        padding: 0 10px 0 16px;
-        color: var(--${APP}-text);
-        background: var(--${APP}-surface-elevated);
-        border-bottom: 1px solid var(--${APP}-border);
-      }
-
-      .${APP}__header-history {
-        display: inline-grid;
-        grid-template-columns: repeat(2, 32px);
-        gap: 2px;
-        align-items: center;
-      }
-
-      #${APP}-title {
-        min-width: 0;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      #${APP}-status {
-        display: none;
-      }
-
-      .${APP}__header-button {
-        width: 32px;
-        height: 32px;
-        display: inline-grid;
-        place-items: center;
-        border: 0;
-        border-radius: 6px;
-        color: var(--${APP}-text-subtle);
-        background: transparent;
-        cursor: pointer;
-      }
-
-      .${APP}__header-button:disabled {
-        color: var(--${APP}-text-muted);
-        cursor: default;
-        opacity: 0.45;
-      }
-
-      .${APP}__header-button svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
-      }
-
-      .${APP}__header-button--text {
-        width: auto;
-        min-width: 72px;
-        padding: 0 10px;
-        font-size: 12px;
-      }
-
-      .${APP}__header-button:hover,
-      .${APP}__header-button:focus-visible,
-      .${APP}__header-button.${APP}__header-button--active {
-        color: var(--${APP}-brand);
-        background: var(--${APP}-surface-soft);
-        outline: none;
-      }
-
-      .${APP}__header-button:disabled:hover,
-      .${APP}__header-button:disabled:focus-visible {
-        color: var(--${APP}-text-muted);
-        background: transparent;
-      }
-
-      #${APP}-content {
-        position: relative;
-        min-width: 0;
-        min-height: 0;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        background: var(--${APP}-surface);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-content {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
-        overflow: hidden;
-      }
-
-      .${APP}__back-to-top {
-        position: absolute;
-        right: 34px;
-        bottom: 30px;
-        z-index: 6;
-        width: 38px;
-        height: 38px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 999px;
-        color: var(--text2, #61666d);
-        background: var(--bg1, #fff);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-        cursor: pointer;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(6px);
-        transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__back-to-top {
-        right: 24px;
-        bottom: 24px;
-      }
-
-      .${APP}__back-to-top.${APP}--visible {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-
-      .${APP}__back-to-top:hover,
-      .${APP}__back-to-top:focus-visible {
-        color: var(--${APP}-brand);
-        border-color: var(--${APP}-brand);
-        outline: none;
-      }
-
-      .${APP}__back-to-top svg {
-        width: 18px;
-        height: 18px;
-        display: block;
-        stroke: currentColor;
-      }
-
-      #${APP}-comments-resizer {
-        display: none;
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
-        display: block;
-        position: relative;
-        z-index: 2;
-        width: 8px;
-        min-width: 8px;
-        height: 100%;
-        cursor: col-resize;
-        background: transparent;
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer::before {
-        content: "";
-        position: absolute;
-        inset: 0 auto 0 50%;
-        width: 1px;
-        transform: translateX(-50%);
-        background: rgba(148, 153, 160, 0.36);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover::before,
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible::before,
-      #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer::before {
-        background: var(--${APP}-brand);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible {
-        outline: none;
-      }
-
-      #${APP}-player-wrap {
-        position: relative;
-        height: calc(min(860px, calc(100vh - 32px)) - 46px);
-        min-width: 0;
-        min-height: 0;
-        background: #000;
-      }
-
-      #${APP}-overlay.${APP}--fullscreen #${APP}-player-wrap {
-        height: calc(100vh - 46px);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap,
-      #${APP}-overlay.${APP}--fullscreen.${APP}--comments-right #${APP}-player-wrap {
-        height: 100%;
-      }
-
-      #${APP}-player,
-      #${APP}-player .bpx-player-container {
-        width: 100% !important;
-        height: 100% !important;
-      }
-
-      #${APP}-player .bpx-player-ctrl-web,
-      #${APP}-player .bpx-player-ctrl-web-enter,
-      #${APP}-player .bpx-player-ctrl-web-leave,
-      #${APP}-player .bilibili-player-video-btn-web-fullscreen {
-        display: none !important;
-      }
-
-      #${APP}-player.bpx-player-web-full,
-      #${APP}-player .bpx-player-web-full,
-      #${APP}-player.bilibili-player-video-web-fullscreen,
-      #${APP}-player .bilibili-player-video-web-fullscreen {
-        position: absolute !important;
-        inset: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        min-width: 0 !important;
-        min-height: 0 !important;
-        z-index: 1 !important;
-      }
-
-      #${APP}-comments {
-        display: flex;
-        flex-direction: column;
-        min-height: 520px;
-        padding: 0;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments {
-        min-width: 0;
-        min-height: 0;
-        height: 100%;
-        padding: 0;
-        overflow: hidden;
-        border-left: 0;
-      }
-
-      .${APP}__comments-tabs {
-        flex: 0 0 auto;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        background: var(--bg1, #fff);
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__comments-tabs {
-        margin: 0;
-        padding: 0;
-      }
-
-      .${APP}__comments-tab {
-        height: 34px;
-        padding: 0 4px;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--text2, #61666d);
-        background: transparent;
-        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-      }
-
-      .${APP}__comments-tab:hover,
-      .${APP}__comments-tab:focus-visible,
-      .${APP}__comments-tab.${APP}--active {
-        color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-
-      .${APP}__comments-tab.${APP}--active {
-        border-bottom-color: var(--brand_pink, #fb7299);
-      }
-
-      .${APP}__comments-panel[hidden] {
-        display: none !important;
-      }
-
-      .${APP}__comments-panel:not([hidden]) {
-        min-width: 0;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: visible;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__comments-panel:not([hidden]) {
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-
-      #${APP}-comments-mount {
-        box-sizing: border-box;
-        min-height: 360px;
-        padding-right: 18px;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-
-      #${APP}-overlay.${APP}--comments-right #${APP}-comments-mount {
-        padding-right: 16px;
-      }
-
-      .${APP}__playlist {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 0 28px;
-        padding: 12px 0 24px;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__playlist {
-        grid-template-columns: 1fr;
-      }
-
-      .${APP}__playlist-card {
-        appearance: none;
-        box-sizing: border-box;
-        width: 100%;
-        min-width: 0;
-        display: grid;
-        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr);
-        column-gap: 12px;
-        align-items: start;
-        padding: 12px 16px;
-        border: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 0;
-        color: var(--text1, #18191c);
-        background: transparent;
-        text-align: left;
-        text-indent: 0;
-        font: inherit;
-        cursor: pointer;
-      }
-
-      .${APP}__playlist-card:hover,
-      .${APP}__playlist-card:focus-visible,
-      .${APP}__playlist-card.${APP}--selected {
-        outline: none;
-      }
-
-      .${APP}__playlist-card:last-child {
-        border-bottom: 0;
-      }
-
-      .${APP}__playlist-card.${APP}--selected {
-        color: var(--brand_blue, #00aeec);
-        background: transparent;
-      }
-
-      .${APP}__playlist-card:hover .${APP}__playlist-title,
-      .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
-        color: var(--brand_blue, #00aeec);
-      }
-
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-stats {
-        color: var(--text2, #61666d);
-      }
-
-      .${APP}__playlist-playing {
-        width: 16px;
-        height: 16px;
-        display: inline-block;
-        margin: 0 4px 0 0;
-        vertical-align: -3px;
-      }
-
-      .${APP}__playlist-cover {
-        position: relative;
-        z-index: 0;
-        min-width: 0;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--bg2, #f6f7f8);
-      }
-
-      .${APP}__playlist-cover img {
-        width: 100%;
-        height: 100%;
-        display: block;
-        object-fit: cover;
-      }
-
-      .${APP}__playlist-duration {
-        position: absolute;
-        right: 4px;
-        bottom: 4px;
-        height: 18px;
-        padding: 0 5px;
-        border-radius: 3px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.72);
-        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .${APP}__playlist-info {
-        position: relative;
-        z-index: 1;
-        width: 100%;
-        min-width: 0;
-        max-width: 100%;
-        overflow: visible;
-        padding: 1px 2px 0 1px;
-        display: grid;
-        align-content: start;
-        gap: 6px;
-      }
-
-      .${APP}__playlist-title {
-        width: 100%;
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        color: var(--text1, #18191c);
-        font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .${APP}__playlist-title-text {
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-      }
-
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats,
-      .${APP}__playlist-empty {
-        color: var(--text3, #9499a0);
-        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats {
-        max-width: 100%;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-      }
-
-      .${APP}__playlist-stats {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .${APP}__playlist-stat {
-        min-width: 0;
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-      }
-
-      .${APP}__playlist-stat-icon {
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-        color: currentColor;
-      }
-
-      .${APP}__playlist-card--skeleton {
-        cursor: default;
-        pointer-events: none;
-      }
-
-      .${APP}__playlist-skeleton-cover,
-      .${APP}__playlist-skeleton-line {
-        position: relative;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--graph_bg_regular, var(--bg2, #f1f2f3));
-      }
-
-      .${APP}__playlist-skeleton-cover {
-        width: 100%;
-        aspect-ratio: 16 / 9;
-      }
-
-      .${APP}__playlist-skeleton-info {
-        min-width: 0;
-        display: grid;
-        align-content: start;
-        gap: 9px;
-        padding-top: 2px;
-      }
-
-      .${APP}__playlist-skeleton-line {
-        height: 12px;
-      }
-
-      .${APP}__playlist-skeleton-line--title {
-        height: 16px;
-      }
-
-      .${APP}__playlist-skeleton-cover::after,
-      .${APP}__playlist-skeleton-line::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        transform: translateX(-100%);
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
-        animation: ${APP}-skeleton-shimmer 1.25s ease-in-out infinite;
-      }
-
-      @keyframes ${APP}-skeleton-shimmer {
-        100% {
-          transform: translateX(100%);
-        }
-      }
-
-      body.${APP}--modal-open .bili-comments-bottom-fixed-wrapper,
-      body.${APP}--modal-open [class*="bottom-fixed"],
-      body.${APP}--modal-open [class*="fixed-wrapper"],
-      #${APP}-overlay .bili-comments-bottom-fixed-wrapper,
-      #${APP}-overlay [class*="bottom-fixed"],
-      #${APP}-overlay [class*="fixed-wrapper"],
-      .${APP}__bottom-fixed-hidden {
-        display: none !important;
-      }
-
-      @media (max-width: 900px) {
-        #${APP}-overlay.${APP}--comments-right #${APP}-content {
-          display: block;
-          overflow-x: hidden;
-          overflow-y: auto;
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
-          display: none;
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
-          height: calc(min(860px, calc(100vh - 32px)) - 46px);
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-comments {
-          height: auto;
-          overflow: visible;
-          border-left: 0;
-        }
-      }
-    `;
-      document.head.appendChild(style);
+      installDocumentStyle(document);
     }
     function ensureSettings() {
       settingsUi.ensure();
@@ -3315,8 +4512,10 @@
     function setPipPlaying(bootstrap) {
       state.pipPlaying = bootstrap ? {
         title: bootstrap.title,
+        kind: bootstrap.kind || 'video',
         bvid: bootstrap.playerInfo?.bvid,
-        aid: bootstrap.playerInfo?.aid
+        aid: bootstrap.playerInfo?.aid,
+        roomId: bootstrap.playerInfo?.roomId
       } : null;
       syncVideoBadges();
     }
@@ -3491,7 +4690,19 @@
         state.viewportFrame = 0;
         syncOverlayPositions();
         state.cardEntries.forEach(positionCardEntry);
+        syncLivePageButton();
+        syncPlaybackPagePipButton();
         syncSettingsVisibility();
+        scheduleHomeSizeSync();
+      });
+    }
+    function scheduleHomeSizeSync() {
+      if (!state.home.ui || state.home.overlay?.classList.contains(`${APP}--hidden`)) return;
+      if (state.homeSizeFrame) return;
+      state.homeSizeFrame = requestAnimationFrame(() => {
+        state.homeSizeFrame = 0;
+        if (!state.home.ui || state.home.overlay?.classList.contains(`${APP}--hidden`)) return;
+        syncHomeSize();
       });
     }
     function scheduleSettingsVisibilitySync() {
@@ -3502,7 +4713,7 @@
       });
     }
     function syncSettingsVisibility() {
-      const hidden = isPlaybackPageWebFullscreen();
+      const hidden = isPlaybackPageWebFullscreen() || isLivePageWebFullscreen();
       state.shadowHost?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
       state.overlay?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
     }
@@ -3527,6 +4738,147 @@
       if (!bvid) return null;
       return [...(card.querySelectorAll?.('a[href*="/video/BV"]') || [])].find(candidate => getVideoMetaFromLink(candidate)?.bvid === bvid && isCoverLink(candidate)) || null;
     }
+    function syncLivePageButton() {
+      if (!isLivePage()) {
+        removeLivePageButton();
+        return;
+      }
+      const meta = getCurrentLiveMeta();
+      if (!meta) {
+        removeLivePageButton();
+        return;
+      }
+      const overlay = ensureControlOverlay();
+      let button = state.live.button;
+      if (!button?.isConnected) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = `${BUTTON_CLASS} ${APP}__fixed-pip-button ${APP}__live-button`;
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.lastFocus = button;
+          state.lastButton = button;
+          const nextMeta = getCurrentLiveMeta();
+          if (nextMeta) {
+            pauseLivePagePlayer();
+            openWithRenderer(pipRenderer, nextMeta);
+          }
+        });
+        state.live.button = button;
+        overlay.appendChild(button);
+      }
+      button.dataset.roomId = meta.roomId;
+      button.dataset.href = meta.href;
+      button.dataset.title = meta.title;
+      button.title = `Document PiP：${meta.title}`;
+      button.setAttribute('aria-label', button.title);
+      if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
+    }
+    function syncPlaybackPagePipButton() {
+      if (!isPlaybackPage()) {
+        removePlaybackPagePipButton();
+        return;
+      }
+      const meta = getCurrentPlaybackPageMeta();
+      if (!meta) {
+        removePlaybackPagePipButton();
+        return;
+      }
+      const overlay = ensureControlOverlay();
+      let button = state.playback.button;
+      if (!button?.isConnected) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = `${BUTTON_CLASS} ${APP}__fixed-pip-button ${APP}__playback-pip-button`;
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.lastFocus = button;
+          state.lastButton = button;
+          const nextMeta = getCurrentPlaybackPageMeta();
+          if (nextMeta) {
+            pausePlaybackPagePlayer();
+            openWithRenderer(pipRenderer, nextMeta);
+          }
+        });
+        state.playback.button = button;
+        overlay.appendChild(button);
+      }
+      button.dataset.bvid = meta.bvid;
+      button.dataset.href = meta.href;
+      button.dataset.title = meta.title;
+      button.title = `Document PiP：${meta.title}`;
+      button.setAttribute('aria-label', button.title);
+      if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
+    }
+    function removeLivePageButton() {
+      state.live.button?.remove();
+      state.live.button = null;
+    }
+    function removePlaybackPagePipButton() {
+      state.playback.button?.remove();
+      state.playback.button = null;
+    }
+    function getCurrentPlaybackPageMeta() {
+      const bvid = getCurrentPageBvid();
+      if (!bvid) return null;
+      const href = location.href;
+      const title = cleanCurrentPageTitle(document.querySelector('meta[property="og:title"]')?.getAttribute('content') || document.querySelector('h1[title]')?.getAttribute('title') || document.querySelector('h1')?.textContent || document.title || bvid);
+      return {
+        bvid,
+        href,
+        title
+      };
+    }
+    function cleanCurrentPageTitle(value) {
+      return String(value || '').replace(/\s+/g, ' ').replace(/_哔哩哔哩_bilibili$/u, '').replace(/- 哔哩哔哩.*$/u, '').trim() || 'Bilibili 视频';
+    }
+    function getLivePlayerAnchor() {
+      return document.getElementById('live-player') || document.getElementById('player-ctnr') || document.querySelector('.live-player-ctnr, .player-section, [class*="player"]');
+    }
+    function pauseLivePagePlayer() {
+      const candidates = [window.__PLAYER_GLOBAL_INSTANCE__, window.EmbedPlayer?.instance, window.Player?.instance];
+      for (const player of candidates) {
+        if (tryPauseLivePlayer(player)) return true;
+      }
+      return [...document.querySelectorAll('video')].some(video => {
+        try {
+          video.pause();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
+    function pausePlaybackPagePlayer() {
+      const candidates = [...PLAYER_GLOBAL_KEYS.map(key => window[key]), window.playerAgent?.player, window.bilibili?.player, window.__PLAYER_GLOBAL_INSTANCE__, window.EmbedPlayer?.instance];
+      for (const player of candidates) {
+        if (tryPauseLivePlayer(player)) return true;
+      }
+      return [...document.querySelectorAll('video')].some(video => {
+        try {
+          video.pause();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
+    function tryPauseLivePlayer(player) {
+      if (!player) return false;
+      const methods = ['pause', 'stop', 'destroyPause'];
+      for (const method of methods) {
+        if (typeof player[method] !== 'function') continue;
+        try {
+          player[method]();
+          return true;
+        } catch {
+          // Try the next known pause surface.
+        }
+      }
+      return false;
+    }
     function scan() {
       ensureControlOverlay();
       [...document.querySelectorAll(getVideoLinkSelector())].sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a))).forEach(link => {
@@ -3535,6 +4887,8 @@
         bindLink(link, meta);
       });
       ensureSettings();
+      syncLivePageButton();
+      syncPlaybackPagePipButton();
       syncSettingsVisibility();
       syncVideoBadges();
       syncOverlayPositions();
@@ -3546,13 +4900,13 @@
       if (mutations.some(shouldRescanMutation)) scheduleScan();
     }
     function shouldSyncSettingsVisibilityMutation(mutation) {
-      if (!isPlaybackPage()) return false;
+      if (!isPlaybackPage() && !isLivePage()) return false;
       if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
       if (mutation.type !== 'attributes') return false;
       const target = mutation.target;
       if (!(target instanceof Element)) return false;
       if (target === document.documentElement || target === document.body) return true;
-      return Boolean(target.closest?.(getPlaybackPlayerSelector()));
+      return Boolean(target.closest?.(isLivePage() ? '#live-player, #player-ctnr, .live-player-ctnr, .player-section' : getPlaybackPlayerSelector()));
     }
     function shouldRescanMutation(mutation) {
       if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
@@ -3577,6 +4931,23 @@
       }
       const rootClassName = `${document.documentElement.className || ''} ${document.body.className || ''}`;
       return /\b(?:bpx-player-(?:web-full|mode-webscreen|webscreen)|player-mode-webfullscreen|web-fullscreen|webscreen)\b/.test(rootClassName);
+    }
+    function isLivePageWebFullscreen() {
+      if (!isLivePage()) return false;
+      if (document.body.classList.contains(`${APP}--modal-open`)) return false;
+      const player = getLivePlayerAnchor();
+      if (!player) return false;
+      const fullscreen = document.fullscreenElement;
+      if (fullscreen && (fullscreen === player || player.contains(fullscreen) || fullscreen.contains(player))) return true;
+      const rect = player.getBoundingClientRect();
+      const coversViewport = rect.width >= innerWidth * 0.9 && rect.height >= innerHeight * 0.9 && rect.top <= 2 && rect.left <= 2;
+      if (!coversViewport) return false;
+      for (let current = player; current && current !== document.documentElement; current = current.parentElement) {
+        const marker = [current.className || '', current.getAttribute?.('data-screen') || '', current.getAttribute?.('data-mode') || ''].join(' ');
+        if (/(?:web.*full|full.*web|full-?screen|fullscreen|player-full|webscreen)/i.test(marker)) return true;
+      }
+      const pageMarker = `${document.documentElement.className || ''} ${document.body.className || ''}`;
+      return /(?:web.*full|full.*web|full-?screen|fullscreen|player-full|webscreen)/i.test(pageMarker);
     }
     function getPlaybackPlayerSelector() {
       return '#bilibili-player, #bofqi, .bpx-player-container, .bilibili-player-video';
@@ -3620,33 +4991,16 @@
       openByMode(meta);
     }
     function openByMode(meta) {
-      openWithRenderer(getActiveRenderer(), meta);
+      rendererOrchestrator.openByMode(meta);
     }
     function getActiveRenderer() {
       return state.mode === 'pip' ? pipRenderer : homeRenderer;
     }
-    async function openWithRenderer(renderer, meta) {
-      const reusable = renderer.getReusable?.(meta);
-      if (reusable) {
-        const token = ++state.switchToken;
-        renderer.reuse(reusable, meta, token);
-        return;
-      }
-      const token = ++state.switchToken;
-      const context = await renderer.prepare(meta, token);
-      if (!context || token !== state.switchToken) return;
-      try {
-        const bootstrap = await resolvePlaybackBootstrap(meta);
-        if (token !== state.switchToken || renderer.isClosed(context)) return;
-        saveLastPlayed(meta, bootstrap);
-        await renderer.play(context, bootstrap, token);
-        if (token !== state.switchToken || renderer.isClosed(context)) return;
-        recordPlaybackHistory(meta, bootstrap);
-        renderer.done?.(context, bootstrap);
-      } catch (error) {
-        if (token !== state.switchToken || renderer.isClosed(context)) return;
-        renderer.fail(context, error);
-      }
+    function openWithRenderer(renderer, meta) {
+      return rendererOrchestrator.openWithRenderer(renderer, meta);
+    }
+    function resolveBootstrap(meta) {
+      return isLiveMeta(meta) ? resolveLiveBootstrap(meta) : resolvePlaybackBootstrap(meta);
     }
     const homeRenderer = {
       getReusable: getReusableHome,
@@ -3672,6 +5026,7 @@
       recordPlaybackHistory(meta, bootstrap);
       setSelectedPlaylistBvid('home', meta.bvid || bootstrap.playerInfo?.bvid);
       renderPlaylist('home');
+      renderPageParts('home', bootstrap);
       renderRecommendations('home', bootstrap);
       bindHomeScreenChange(state.home.player);
       syncHomeSize();
@@ -3680,15 +5035,22 @@
     }
     async function prepareHome(meta) {
       const ui = ensureHomeShell();
-      showHomeShell(meta.title || meta.bvid);
+      showHomeShell(meta.title || meta.bvid, {
+        preserveScroll: Boolean(meta.fromPagePart)
+      });
       ui.openOriginal.dataset.href = meta.href;
       ui.status.textContent = state.home.player ? '播放页参数：解析中，准备 reload' : '播放页参数：解析中';
       if (meta.fromPlaylist && state.home.playlistCards.length) {
         setSelectedPlaylistBvid('home', meta.bvid);
         renderPlaylist('home');
       } else {
-        resetHomePlaylistFeed();
+        resetPlaylistFeed('home');
         capturePagePlaylist('home', meta.bvid);
+      }
+      if (meta.fromPagePart && state.home.pageCards.length) {
+        setSelectedPageKey('home', meta.pageKey);
+      } else {
+        renderPageParts('home', null);
       }
       renderRecommendations('home', null);
       return {
@@ -3705,6 +5067,7 @@
       ui.status.textContent = `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
       setSelectedPlaylistBvid('home', bootstrap.playerInfo?.bvid);
       renderPlaylist('home');
+      renderPageParts('home', bootstrap);
       renderRecommendations('home', bootstrap);
       await loadScriptOnce(document, bootstrap.coreScript, () => window.nano);
       if (token !== state.switchToken || !window.nano || homeRenderer.isClosed()) return;
@@ -3729,6 +5092,7 @@
         onHistoryNext: () => openPlaybackHistoryOffset(1),
         onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
         onOpenOriginal: href => openOriginalPlaybackPage(href, state.home.player),
+        onOpenPip: openCurrentHomeInPip,
         onPlayerControlClick: onHomePlayerControlClick,
         onResizeStart: event => startCommentWidthDrag(event, window)
       });
@@ -3739,7 +5103,9 @@
       syncCommentsTabs('home');
       return state.home.ui;
     }
-    function showHomeShell(title) {
+    function showHomeShell(title, {
+      preserveScroll = false
+    } = {}) {
       const ui = state.home.ui;
       state.home.overlay.classList.remove(`${APP}--hidden`);
       state.home.overlay.removeAttribute('aria-hidden');
@@ -3748,18 +5114,33 @@
       setHomePlayerFeatureBlocked(false);
       ui.title.textContent = title;
       syncPlaybackHistoryButtons();
-      ui.content.scrollTop = 0;
+      if (!preserveScroll) ui.content.scrollTop = 0;
       syncHomeCommentLayout();
       syncCommentsTabs('home');
       document.documentElement.style.overflow = 'hidden';
       document.addEventListener('keydown', onKeydown, true);
       ui.close.focus();
       syncHomeSize();
-      scheduleHomePlaylistAutoRefreshCheck();
+      schedulePlaylistAutoRefreshCheck('home');
     }
     function onCommentsTabChange(kind, tab) {
-      if (kind !== 'home' || tab !== 'playlist') return;
-      scheduleHomePlaylistAutoRefreshCheck();
+      if (tab !== 'playlist') return;
+      schedulePlaylistAutoRefreshCheck(kind);
+    }
+    function openCurrentHomeInPip() {
+      const bootstrap = state.home.bootstrap;
+      const ui = state.home.ui;
+      const info = bootstrap?.playerInfo;
+      const href = bootstrap?.href || ui?.openOriginal?.dataset.href || '';
+      const bvid = info?.bvid || getCurrentPageBvid();
+      if (!bootstrap || !href || !bvid) return;
+      pausePlayer(state.home.player);
+      if (ui?.status) ui.status.textContent = '已暂停，正在打开 PiP';
+      openWithRenderer(pipRenderer, {
+        bvid,
+        href,
+        title: bootstrap.title || ui?.title?.textContent || bvid
+      });
     }
     function onHomePlayerControlClick(event) {
       const target = event.target;
@@ -3785,6 +5166,9 @@
         bvid: info.bvid,
         p: info.p,
         t: info.t,
+        hasPrev: Boolean(info.hasPrev),
+        hasNext: Boolean(info.hasNext),
+        seasonId: info.seasonId,
         kind: nano.GroupKind.Ugc,
         featureList: new Set(['blackGap']),
         stats: {
@@ -3857,6 +5241,14 @@
       },
       isClosed: context => !context?.pipWindow || context.pipWindow.closed
     };
+    rendererOrchestrator = createRendererOrchestrator({
+      getActiveRenderer,
+      nextToken: () => ++state.switchToken,
+      isCurrentToken: token => token === state.switchToken,
+      resolveBootstrap,
+      saveLastPlayed,
+      recordPlaybackHistory
+    });
     function getReusablePip(meta) {
       if (!state.pip.win || state.pip.win.closed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
       return {
@@ -3872,6 +5264,7 @@
       attachPipCommentsTabs(context.pipWindow);
       setSelectedPlaylistBvid('pip', meta.bvid || bootstrap.playerInfo?.bvid);
       renderPlaylist('pip');
+      renderPageParts('pip', bootstrap);
       renderRecommendations('pip', bootstrap);
       syncPipCommentLayout(context.pipWindow);
       syncPipSize(context.pipWindow);
@@ -3906,14 +5299,24 @@
         }
         state.pip.win = pipWindow;
       }
-      if (meta.fromPlaylist && state.pip.playlistCards.length) {
+      if (isLiveMeta(meta)) {
+        state.pip.pageCards = [];
+        state.pip.playlistCards = [];
+        state.pip.recommendationCards = [];
+        state.pip.selectedPageKey = '';
+        state.pip.selectedPlaylistBvid = '';
+      } else if (meta.fromPlaylist && state.pip.playlistCards.length) {
         setSelectedPlaylistBvid('pip', meta.bvid);
         renderPlaylist('pip');
       } else {
+        resetPlaylistFeed('pip');
         capturePagePlaylist('pip', meta.bvid);
       }
-      if (state.pip.win && !state.pip.win.closed) renderRecommendations('pip', null);
-      if (canReloadPip(pipWindow)) setPipStatus('换源中');else {
+      if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) {
+        if (meta.fromPagePart && state.pip.pageCards.length) setSelectedPageKey('pip', meta.pageKey);else renderPageParts('pip', null);
+      }
+      if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) renderRecommendations('pip', null);
+      if (!isLiveMeta(meta) && canReloadPip(pipWindow)) setPipStatus('换源中');else {
         disposePipPlayer();
         disposePipComments();
         writePipLoading(pipWindow, meta.title, meta.href);
@@ -3932,468 +5335,23 @@
     }
     async function bootPipWindow(pipWindow, bootstrap, token) {
       state.pip.bootstrap = bootstrap;
+      if (isLiveBootstrap(bootstrap)) {
+        await bootLivePipWindow(pipWindow, bootstrap, token);
+        return;
+      }
       if (canReloadPip(pipWindow)) {
         await reloadPipPlayer(pipWindow, bootstrap, token);
         return;
       }
       disposePipPlayer();
       disposePipComments();
-      const stylesheetLinks = [...new Set([...bootstrap.stylesheets, ...getBiliThemeStylesheets()])].map(href => `<link rel="stylesheet" href="${escapeHtml(href)}">`).join('\n');
       const commentLayoutClass = state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom';
-      writePipDocument(pipWindow, `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>${escapeHtml(bootstrap.title || 'Bilibili 小窗播放')}</title>
-    ${stylesheetLinks}
-    <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        background: #000;
-      }
-      body {
-        overflow: hidden;
-        color: var(--text1, #18191c);
-      }
-      #shell {
-        width: 100vw;
-        height: 100vh;
-        background: #000;
-      }
-      #layout {
-        position: relative;
-        min-width: 0;
-        min-height: 0;
-        height: 100vh;
-      }
-      body.comments-bottom #layout {
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-      body.comments-right #layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
-        overflow: hidden;
-      }
-      body.comments-right #stage {
-        grid-column: 1;
-        grid-row: 1;
-        overflow: hidden;
-      }
-      #comments-resizer {
-        display: none;
-      }
-      body.comments-right #comments-resizer {
-        display: block;
-        position: relative;
-        grid-column: 2;
-        grid-row: 1;
-        z-index: 4;
-        width: 8px;
-        min-width: 8px;
-        height: 100vh;
-        cursor: col-resize;
-        background: var(--bg1, #fff);
-      }
-      body.comments-right #comments-resizer::before {
-        content: "";
-        position: absolute;
-        inset: 0 auto 0 50%;
-        width: 1px;
-        transform: translateX(-50%);
-        background: var(--line_regular, rgba(148, 153, 160, 0.36));
-      }
-      body.comments-right #comments-resizer:hover::before,
-      body.comments-right #comments-resizer:focus-visible::before,
-      body.resizing-comments #comments-resizer::before {
-        background: var(--brand_pink, #fb7299);
-      }
-      body.comments-right #comments-resizer:focus-visible {
-        outline: none;
-      }
-      #stage {
-        position: relative;
-        min-width: 0;
-        min-height: 0;
-        width: 100%;
-        height: 100vh;
-        background: #000;
-      }
-      #bilibili-player {
-        position: relative;
-        width: 100% !important;
-        height: 100% !important;
-        min-width: 0;
-        min-height: 0;
-        overflow: hidden;
-        background: #000;
-      }
-      #bilibili-player,
-      #bilibili-player > *,
-      #bilibili-player .bpx-player-container {
-        width: 100% !important;
-        height: 100% !important;
-      }
-      #comments {
-        display: flex;
-        flex-direction: column;
-        min-height: 520px;
-        padding: 0;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-      body.comments-right #comments {
-        grid-column: 3;
-        grid-row: 1;
-        min-width: 0;
-        min-height: 0;
-        height: 100vh;
-        padding: 0 0 0 8px;
-        overflow: hidden;
-        border-left: 0;
-      }
-      .${APP}__back-to-top {
-        position: fixed;
-        right: 28px;
-        bottom: 26px;
-        z-index: 12;
-        width: 38px;
-        height: 38px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 999px;
-        color: var(--text2, #61666d);
-        background: var(--bg1, #fff);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-        cursor: pointer;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(6px);
-        transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-      }
-      body.comments-right .${APP}__back-to-top {
-        right: 22px;
-        bottom: 22px;
-      }
-      .${APP}__back-to-top.${APP}--visible {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .${APP}__back-to-top:hover,
-      .${APP}__back-to-top:focus-visible {
-        color: var(--brand_pink, #fb7299);
-        border-color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-      .${APP}__back-to-top svg {
-        width: 18px;
-        height: 18px;
-        display: block;
-        stroke: currentColor;
-      }
-      #${APP}-pip-controls {
-        position: static !important;
-        z-index: auto !important;
-        transform: none !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        height: 100% !important;
-        margin: 0 14px 0 0 !important;
-        padding: 0 !important;
-        vertical-align: middle !important;
-        pointer-events: auto !important;
-        flex: 0 0 auto !important;
-      }
-      #${APP}-pip-controls a {
-        all: unset;
-        box-sizing: border-box !important;
-        position: relative !important;
-        top: -8px !important;
-        width: auto !important;
-        height: 100% !important;
-        min-width: auto !important;
-        max-width: none !important;
-        padding: 0 !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        flex: 0 0 auto !important;
-        border: 0 !important;
-        color: #fff !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        text-decoration: none !important;
-        white-space: nowrap !important;
-        font: 600 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-        letter-spacing: 0 !important;
-        cursor: pointer !important;
-        opacity: 0.92 !important;
-        text-shadow: 0 0 2px rgba(0, 0, 0, 0.6) !important;
-      }
-      #${APP}-pip-controls a:hover,
-      #${APP}-pip-controls a:focus-visible {
-        color: #fff !important;
-        background: transparent !important;
-        outline: none !important;
-        opacity: 1 !important;
-      }
-      .${APP}__comments-tabs {
-        flex: 0 0 auto;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        background: var(--bg1, #fff);
-      }
-      body.comments-right .${APP}__comments-tabs {
-        margin: 0;
-        padding: 0;
-      }
-      .${APP}__comments-tab {
-        height: 34px;
-        padding: 0 4px;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--text2, #61666d);
-        background: transparent;
-        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-      }
-      .${APP}__comments-tab:hover,
-      .${APP}__comments-tab:focus-visible,
-      .${APP}__comments-tab.${APP}--active {
-        color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-      .${APP}__comments-tab.${APP}--active {
-        border-bottom-color: var(--brand_pink, #fb7299);
-      }
-      .${APP}__comments-panel[hidden] {
-        display: none !important;
-      }
-      .${APP}__comments-panel:not([hidden]) {
-        min-width: 0;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: visible;
-      }
-      body.comments-right .${APP}__comments-panel:not([hidden]) {
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-      #comments-mount {
-        box-sizing: border-box;
-        min-height: 360px;
-        padding-right: 18px;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-      }
-      body.comments-right #comments-mount {
-        padding-right: 16px;
-      }
-      .${APP}__playlist {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 0 28px;
-        padding: 12px 0 24px;
-      }
-      body.comments-right .${APP}__playlist {
-        grid-template-columns: 1fr;
-      }
-      .${APP}__playlist-card {
-        appearance: none;
-        box-sizing: border-box;
-        width: 100%;
-        min-width: 0;
-        display: grid;
-        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr);
-        column-gap: 12px;
-        align-items: start;
-        padding: 12px 14px;
-        border: 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 0;
-        color: var(--text1, #18191c);
-        background: transparent;
-        text-align: left;
-        text-indent: 0;
-        font: inherit;
-        cursor: pointer;
-      }
-      .${APP}__playlist-card:hover,
-      .${APP}__playlist-card:focus-visible,
-      .${APP}__playlist-card.${APP}--selected {
-        outline: none;
-      }
-      .${APP}__playlist-card:last-child {
-        border-bottom: 0;
-      }
-      .${APP}__playlist-card.${APP}--selected {
-        color: var(--brand_blue, #00aeec);
-        background: transparent;
-      }
-      .${APP}__playlist-card:hover .${APP}__playlist-title,
-      .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
-        color: var(--brand_blue, #00aeec);
-      }
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-stats {
-        color: var(--text2, #61666d);
-      }
-      .${APP}__playlist-playing {
-        width: 16px;
-        height: 16px;
-        display: inline-block;
-        margin: 0 4px 0 0;
-        vertical-align: -3px;
-      }
-      .${APP}__playlist-cover {
-        position: relative;
-        z-index: 0;
-        min-width: 0;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--bg2, #f6f7f8);
-      }
-      .${APP}__playlist-cover img {
-        width: 100%;
-        height: 100%;
-        display: block;
-        object-fit: cover;
-      }
-      .${APP}__playlist-duration {
-        position: absolute;
-        right: 4px;
-        bottom: 4px;
-        height: 18px;
-        padding: 0 5px;
-        border-radius: 3px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.72);
-        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      .${APP}__playlist-info {
-        position: relative;
-        z-index: 1;
-        width: 100%;
-        min-width: 0;
-        max-width: 100%;
-        overflow: visible;
-        padding: 1px 2px 0 1px;
-        display: grid;
-        align-content: start;
-        gap: 6px;
-      }
-      .${APP}__playlist-title {
-        width: 100%;
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        color: var(--text1, #18191c);
-        font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      .${APP}__playlist-title-text {
-        min-width: 0;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-      }
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats,
-      .${APP}__playlist-empty {
-        color: var(--text3, #9499a0);
-        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      .${APP}__playlist-subtitle,
-      .${APP}__playlist-stats {
-        max-width: 100%;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-      }
-      .${APP}__playlist-stats {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .${APP}__playlist-stat {
-        min-width: 0;
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-      }
-      .${APP}__playlist-stat-icon {
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-        color: currentColor;
-      }
-      .${APP}__playlist-card--skeleton {
-        cursor: default;
-        pointer-events: none;
-      }
-      .${APP}__playlist-skeleton-cover,
-      .${APP}__playlist-skeleton-line {
-        position: relative;
-        overflow: hidden;
-        border-radius: 6px;
-        background: var(--graph_bg_regular, var(--bg2, #f1f2f3));
-      }
-      .${APP}__playlist-skeleton-cover {
-        width: 100%;
-        aspect-ratio: 16 / 9;
-      }
-      .${APP}__playlist-skeleton-info {
-        min-width: 0;
-        display: grid;
-        align-content: start;
-        gap: 9px;
-        padding-top: 2px;
-      }
-      .${APP}__playlist-skeleton-line {
-        height: 12px;
-      }
-      .${APP}__playlist-skeleton-line--title {
-        height: 16px;
-      }
-      .${APP}__playlist-skeleton-cover::after,
-      .${APP}__playlist-skeleton-line::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        transform: translateX(-100%);
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
-        animation: ${APP}-skeleton-shimmer 1.25s ease-in-out infinite;
-      }
-      @keyframes ${APP}-skeleton-shimmer {
-        100% {
-          transform: translateX(100%);
-        }
-      }
-      .${APP}__bottom-fixed-hidden {
-        display: none !important;
-      }
-    </style>
-  </head>
-  <body class="${commentLayoutClass}"></body>
-</html>`);
+      writePipDocument(pipWindow, renderPipPlayerDocument({
+        title: bootstrap.title,
+        stylesheets: [...bootstrap.stylesheets, ...getBiliThemeStylesheets()],
+        themeClassMarkup: getPipThemeClassMarkup(),
+        commentLayoutClass
+      }));
       mountPipPlayerPage({
         targetDocument: pipWindow.document,
         createCommentsTabs
@@ -4401,18 +5359,84 @@
       attachPipCommentsTabs(pipWindow);
       setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
       renderPlaylist('pip');
+      renderPageParts('pip', bootstrap);
       renderRecommendations('pip', bootstrap);
       syncCommentsTabs('pip');
+      attachPipPlaylistAutoRefresh(pipWindow);
       await loadScriptOnce(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
       if (token !== state.switchToken || pipWindow.closed) return;
       if (!pipWindow.nano) throw new Error('nano not available after core load');
       attachPipCommentResizer(pipWindow);
+      attachPipWindowResizeSync(pipWindow);
       syncCommentWidth();
       connectPipPlayer(pipWindow, bootstrap, token);
       mountPipComments(pipWindow, bootstrap, token);
     }
+    async function bootLivePipWindow(pipWindow, bootstrap, token) {
+      disposePipPlayer();
+      disposePipComments();
+      writeLivePipDocument(pipWindow, bootstrap);
+      installLivePipGlobals(pipWindow, bootstrap);
+      await loadScriptOnce(pipWindow.document, bootstrap.playerScript, () => pipWindow.Player);
+      if (token !== state.switchToken || pipWindow.closed) return;
+      if (!pipWindow.Player) throw new Error('live Player not available after load');
+      connectLivePipPlayer(pipWindow, bootstrap, token);
+    }
+    function writeLivePipDocument(pipWindow, bootstrap) {
+      writePipDocument(pipWindow, renderLivePipDocument({
+        title: bootstrap.title,
+        href: bootstrap.href,
+        themeClassMarkup: getPipThemeClassMarkup()
+      }));
+    }
+    function connectLivePipPlayer(targetWindow, bootstrap, token) {
+      if (token !== state.switchToken || targetWindow.closed) return;
+      const playerRoot = targetWindow.document.getElementById('live-player');
+      if (!playerRoot) throw new Error('live-player container not found');
+      const player = new targetWindow.Player(playerRoot, buildLivePipPlayerOptions(targetWindow, bootstrap));
+      targetWindow.EmbedPlayer = {
+        instance: player
+      };
+      targetWindow.__PLAYER_GLOBAL_INSTANCE__ = player;
+      targetWindow.__biliPopupPlayerNanoDebug = {
+        getPlayer: () => player,
+        getBootstrap: () => bootstrap,
+        getPrimarySetting: () => buildLivePipPlayerOptions(targetWindow, bootstrap)
+      };
+      state.pip.player = createLivePipPlayerAdapter(targetWindow, player);
+      attachPipWindowResizeSync(targetWindow);
+      syncPipSize(targetWindow);
+      targetWindow.setTimeout(() => syncPipSize(targetWindow), 600);
+      targetWindow.setTimeout(() => syncPipSize(targetWindow), 1600);
+      setPipStatus('播放中');
+      targetWindow.addEventListener('pagehide', () => {
+        if (state.pip.switchingWindow) return;
+        if (state.pip.player) disposePipPlayer();
+        if (state.pip.win === targetWindow) state.pip.win = null;
+      });
+    }
+    function attachPipWindowResizeSync(targetWindow) {
+      if (!targetWindow || targetWindow.closed) return;
+      if (targetWindow.__biliPopupPlayerNanoResizeSyncBound) return;
+      targetWindow.__biliPopupPlayerNanoResizeSyncBound = true;
+      const onResize = () => schedulePipLayoutSync(targetWindow);
+      targetWindow.addEventListener('resize', onResize);
+      targetWindow.__biliPopupPlayerNanoResizeSyncCleanup = () => {
+        targetWindow.removeEventListener('resize', onResize);
+        targetWindow.__biliPopupPlayerNanoResizeObserver?.disconnect?.();
+        delete targetWindow.__biliPopupPlayerNanoResizeObserver;
+        delete targetWindow.__biliPopupPlayerNanoResizeSyncCleanup;
+        delete targetWindow.__biliPopupPlayerNanoResizeSyncBound;
+      };
+      const stage = targetWindow.document?.getElementById('stage');
+      if (stage && targetWindow.ResizeObserver) {
+        const observer = new targetWindow.ResizeObserver(onResize);
+        observer.observe(stage);
+        targetWindow.__biliPopupPlayerNanoResizeObserver = observer;
+      }
+    }
     function canReloadPip(pipWindow) {
-      return Boolean(pipWindow && !pipWindow.closed && state.pip.win === pipWindow && state.pip.player && typeof state.pip.player.reload === 'function' && pipWindow.document?.getElementById('bilibili-player') && pipWindow.nano);
+      return Boolean(pipWindow && !pipWindow.closed && state.pip.win === pipWindow && !isLiveBootstrap(state.pip.bootstrap) && state.pip.player && typeof state.pip.player.reload === 'function' && pipWindow.document?.getElementById('bilibili-player') && pipWindow.nano);
     }
     async function reloadPipPlayer(targetWindow, bootstrap, token) {
       if (token !== state.switchToken || targetWindow.closed) return;
@@ -4424,8 +5448,11 @@
       attachPipCommentsTabs(targetWindow);
       setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
       renderPlaylist('pip');
+      renderPageParts('pip', bootstrap);
       renderRecommendations('pip', bootstrap);
+      attachPipPlaylistAutoRefresh(targetWindow);
       attachPipCommentResizer(targetWindow);
+      attachPipWindowResizeSync(targetWindow);
       syncCommentWidth();
       syncPipSize(targetWindow);
       setPipStatus('换源中');
@@ -4501,6 +5528,9 @@
         bvid: info.bvid,
         p: info.p,
         t: info.t,
+        hasPrev: Boolean(info.hasPrev),
+        hasNext: Boolean(info.hasNext),
+        seasonId: info.seasonId,
         kind: targetWindow.nano.GroupKind.Ugc,
         featureList: new targetWindow.Set(['blackGap']),
         stats: {
@@ -4590,7 +5620,7 @@
       }, {
         passive: true
       });
-      [ui.commentsPanel, ui.playlistPanel, ui.recommendPanel].forEach(panel => {
+      [ui.commentsPanel, ui.pagesPanel, ui.playlistPanel, ui.recommendPanel].forEach(panel => {
         panel?.addEventListener('scroll', () => {
           syncHomeBackToTopButton();
           scheduleHomeBottomFixedWrapperSync();
@@ -4607,40 +5637,55 @@
       [ui.content, ui.playlistPanel].forEach(container => {
         if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
         container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
-        container.addEventListener('scroll', scheduleHomePlaylistAutoRefreshCheck, {
+        container.addEventListener('scroll', () => schedulePlaylistAutoRefreshCheck('home'), {
           passive: true
         });
       });
     }
-    function scheduleHomePlaylistAutoRefreshCheck() {
-      if (state.home.playlistRefreshFrame) return;
-      state.home.playlistRefreshFrame = window.requestAnimationFrame(() => {
-        state.home.playlistRefreshFrame = 0;
-        void maybeLoadMoreHomePlaylist();
+    function attachPipPlaylistAutoRefresh(targetWindow) {
+      if (!targetWindow || targetWindow.closed) return;
+      const doc = targetWindow.document;
+      const layout = doc?.getElementById('layout');
+      const playlistPanel = doc?.getElementById('playlist-panel');
+      [layout, playlistPanel].forEach(container => {
+        if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
+        container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
+        container.addEventListener('scroll', () => schedulePlaylistAutoRefreshCheck('pip'), {
+          passive: true
+        });
       });
     }
-    async function maybeLoadMoreHomePlaylist({
+    function schedulePlaylistAutoRefreshCheck(kind) {
+      const scope = state[kind];
+      if (!scope || scope.playlistRefreshFrame) return;
+      const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+      scope.playlistRefreshFrame = targetWindow.requestAnimationFrame(() => {
+        scope.playlistRefreshFrame = 0;
+        void maybeLoadMorePlaylist(kind);
+      });
+    }
+    async function maybeLoadMorePlaylist(kind, {
       force = false
     } = {}) {
-      const feed = state.home.feed;
+      const scope = state[kind];
+      const feed = scope?.feed;
       if (!feed || feed.loading || feed.exhausted) return;
       if (!isHomeFeedPage()) return;
-      if (!state.home.ui || !state.home.overlay || state.home.overlay.classList.contains(`${APP}--hidden`)) return;
-      if (state.home.activeCommentsTab !== 'playlist') return;
-      if (!force && !isHomePlaylistNearBottom()) return;
+      if (!isPlaylistAutoRefreshActive(kind)) return;
+      if (!force && !isPlaylistNearBottom(kind)) return;
       const requestId = feed.requestId + 1;
       feed.requestId = requestId;
       feed.loading = true;
       feed.error = '';
       feed.session ||= createHomeFeedSession();
-      renderPlaylist('home', {
-        appendLoading: state.home.playlistCards.length > 0,
+      renderPlaylist(kind, {
+        appendLoading: scope.playlistCards.length > 0,
         autoScrollSelected: false,
-        loading: state.home.playlistCards.length === 0
+        loading: scope.playlistCards.length === 0
       });
       try {
         const cards = await fetchHomeFeedCards({
-          existingCards: state.home.playlistCards,
+          existingCards: scope.playlistCards,
           session: feed.session
         });
         if (requestId !== feed.requestId) return;
@@ -4648,7 +5693,7 @@
           feed.exhausted = true;
           return;
         }
-        appendHomePlaylistCards(cards);
+        appendPlaylistCards(kind, cards);
       } catch (error) {
         if (requestId !== feed.requestId) return;
         feed.error = error?.message || String(error);
@@ -4656,33 +5701,46 @@
       } finally {
         if (requestId === feed.requestId) {
           feed.loading = false;
-          renderPlaylist('home', getHomePlaylistEmptyText(), {
+          renderPlaylist(kind, getPlaylistEmptyText(kind), {
             autoScrollSelected: false
           });
         }
       }
     }
-    function appendHomePlaylistCards(cards) {
-      const seen = new Set(state.home.playlistCards.map(card => card?.bvid).filter(Boolean));
+    function appendPlaylistCards(kind, cards) {
+      const scope = state[kind];
+      if (!scope) return;
+      const seen = new Set(scope.playlistCards.map(card => card?.bvid).filter(Boolean));
       const nextCards = cards.filter(card => {
         if (!card?.bvid || seen.has(card.bvid)) return false;
         seen.add(card.bvid);
         return true;
       });
-      if (nextCards.length) state.home.playlistCards = [...state.home.playlistCards, ...nextCards];
+      if (nextCards.length) scope.playlistCards = [...scope.playlistCards, ...nextCards];
     }
-    function isHomePlaylistNearBottom() {
-      const container = getHomePlaylistScrollContainer();
+    function isPlaylistNearBottom(kind) {
+      const container = getPlaylistScrollContainer(kind);
       if (!container) return false;
       return container.scrollHeight - container.scrollTop - container.clientHeight <= 320;
     }
-    function getHomePlaylistScrollContainer() {
-      const ui = state.home.ui;
-      if (!ui) return null;
-      return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+    function getPlaylistScrollContainer(kind) {
+      if (kind === 'home') {
+        const ui = state.home.ui;
+        if (!ui) return null;
+        return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+      }
+      const doc = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
+      if (!doc) return null;
+      return state.commentLayout === 'right' ? doc.getElementById('playlist-panel') : doc.getElementById('layout');
     }
-    function resetHomePlaylistFeed() {
-      const feed = state.home.feed;
+    function isPlaylistAutoRefreshActive(kind) {
+      if (kind === 'home') {
+        return Boolean(state.home.ui && state.home.overlay && !state.home.overlay.classList.contains(`${APP}--hidden`) && state.home.activeCommentsTab === 'playlist');
+      }
+      return Boolean(state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'playlist');
+    }
+    function resetPlaylistFeed(kind) {
+      const feed = state[kind]?.feed;
       if (!feed) return;
       feed.error = '';
       feed.exhausted = false;
@@ -4690,8 +5748,8 @@
       feed.requestId += 1;
       feed.session = null;
     }
-    function getHomePlaylistEmptyText() {
-      if (state.home.feed?.error) return '首页推荐加载失败，继续滚动可重试';
+    function getPlaylistEmptyText(kind) {
+      if (state[kind]?.feed?.error) return '首页推荐加载失败，继续滚动可重试';
       return '当前页面没有扫到可播放卡片';
     }
     function attachPipBackToTopSync(targetWindow) {
@@ -4804,6 +5862,7 @@
     function getHomeActiveCommentsPanel() {
       const ui = state.home.ui;
       if (!ui) return null;
+      if (state.home.activeCommentsTab === 'pages') return ui.pagesPanel;
       if (state.home.activeCommentsTab === 'playlist') return ui.playlistPanel;
       if (state.home.activeCommentsTab === 'recommend') return ui.recommendPanel;
       return ui.commentsPanel;
@@ -4852,6 +5911,7 @@
     }
     function getPipActiveCommentsPanel(doc) {
       if (!doc) return null;
+      if (state.pip.activeCommentsTab === 'pages') return doc.getElementById('pages-panel');
       if (state.pip.activeCommentsTab === 'playlist') return doc.getElementById('playlist-panel');
       if (state.pip.activeCommentsTab === 'recommend') return doc.getElementById('recommend-panel');
       return doc.getElementById('comments-panel');
@@ -4931,7 +5991,7 @@
           passive: true
         });
       }
-      const panels = [...(targetWindow.document?.querySelectorAll?.('#comments-panel, #playlist-panel, #recommend-panel') || [])];
+      const panels = [...(targetWindow.document?.querySelectorAll?.('#comments-panel, #pages-panel, #playlist-panel, #recommend-panel') || [])];
       panels.forEach(panel => {
         if (panel.__biliPopupPlayerNanoScrollSyncBound) return;
         panel.__biliPopupPlayerNanoScrollSyncBound = true;
@@ -5088,8 +6148,13 @@
       };
     }
     function saveLastPlayed(meta, bootstrap) {
+      const playbackId = getPlaybackIdentity(meta, bootstrap);
+      if (!playbackId || !meta.href) return;
       const next = {
+        id: playbackId,
+        kind: bootstrap.kind || meta.kind || 'video',
         bvid: bootstrap.playerInfo?.bvid || meta.bvid,
+        roomId: bootstrap.playerInfo?.roomId || meta.roomId,
         href: meta.href,
         title: bootstrap.title || meta.title,
         savedAt: Date.now()
@@ -5100,22 +6165,27 @@
       syncVideoBadges();
     }
     function recordPlaybackHistory(meta, bootstrap) {
+      const playbackId = getPlaybackIdentity(meta, bootstrap);
       const bvid = bootstrap.playerInfo?.bvid || meta.bvid;
+      const roomId = bootstrap.playerInfo?.roomId || meta.roomId;
       const href = bootstrap.href || meta.href;
-      if (!bvid || !href) return;
+      if (!playbackId || !href) return;
       if (meta.fromHistory && Number.isInteger(meta.historyIndex)) {
         state.playbackHistory.index = clampHistoryIndex(meta.historyIndex);
         syncPlaybackHistoryButtons();
         return;
       }
       const next = {
+        id: playbackId,
+        kind: bootstrap.kind || meta.kind || 'video',
         bvid,
+        roomId,
         href,
-        title: bootstrap.title || meta.title || bvid
+        title: bootstrap.title || meta.title || bvid || `直播 ${roomId}`
       };
       const history = state.playbackHistory;
       const current = history.entries[history.index];
-      if (current?.bvid === next.bvid) {
+      if (current?.id === next.id || next.bvid && current?.bvid === next.bvid || next.roomId && current?.roomId === next.roomId) {
         history.entries[history.index] = {
           ...current,
           ...next
@@ -5136,7 +6206,7 @@
       if (!entry) return;
       history.index = nextIndex;
       syncPlaybackHistoryButtons();
-      openWithRenderer(homeRenderer, {
+      openWithRenderer(entry.kind === 'live' ? pipRenderer : homeRenderer, {
         ...entry,
         fromHistory: true,
         historyIndex: nextIndex
@@ -5162,7 +6232,20 @@
       return Math.max(-1, Math.min(max, index));
     }
     function isSamePlayback(meta, bootstrap) {
+      if (isLiveMeta(meta) || isLiveBootstrap(bootstrap)) {
+        const roomId = String(meta?.roomId || '');
+        const info = bootstrap?.playerInfo || {};
+        return Boolean(roomId && (roomId === String(info.roomId || '') || roomId === String(info.shortId || '')));
+      }
       return Boolean(meta?.bvid && bootstrap?.playerInfo?.bvid && meta.bvid === bootstrap.playerInfo.bvid);
+    }
+    function getPlaybackIdentity(meta, bootstrap) {
+      if (isLiveMeta(meta) || isLiveBootstrap(bootstrap)) {
+        const roomId = bootstrap?.playerInfo?.roomId || meta?.roomId;
+        return roomId ? `live:${roomId}` : '';
+      }
+      const bvid = bootstrap?.playerInfo?.bvid || meta?.bvid;
+      return bvid ? `video:${bvid}` : '';
     }
     function updateDebug(primarySetting, bootstrap) {
       window.__biliPopupPlayerNanoDebug = {
@@ -5195,7 +6278,6 @@
         // Ignore resize failures.
       }
       scheduleHomeBottomFixedWrapperSync();
-      window.dispatchEvent(new Event('resize'));
     }
     function syncHomePlayerFrame() {
       const ui = state.home.ui;
@@ -5233,7 +6315,7 @@
       ui.fullscreen.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
     }
     function syncPipSize(targetWindow) {
-      const root = targetWindow.document?.getElementById('bilibili-player');
+      const root = targetWindow.document?.getElementById('bilibili-player') || targetWindow.document?.getElementById('live-player');
       if (!root) return;
       const stage = targetWindow.document.getElementById('stage');
       const rect = stage?.getBoundingClientRect();
@@ -5243,13 +6325,13 @@
       root.style.height = `${height}px`;
       root.style.minWidth = '0px';
       root.style.minHeight = '0px';
+      targetWindow.dispatchEvent(new targetWindow.Event('resize'));
       try {
         state.pip.player?.resize?.();
       } catch {
         // Ignore resize failures.
       }
       schedulePipBottomFixedWrapperSync(targetWindow);
-      targetWindow.dispatchEvent(new targetWindow.Event('resize'));
       targetWindow.requestAnimationFrame(() => {
         const nextRect = stage?.getBoundingClientRect();
         const nextWidth = Math.max(1, Math.floor(nextRect?.width || targetWindow.innerWidth));
@@ -5258,109 +6340,36 @@
         root.style.height = `${nextHeight}px`;
         root.style.minWidth = '0px';
         root.style.minHeight = '0px';
+        targetWindow.dispatchEvent(new targetWindow.Event('resize'));
         try {
           state.pip.player?.resize?.();
         } catch {
           // Ignore resize failures.
         }
-        targetWindow.dispatchEvent(new targetWindow.Event('resize'));
       });
     }
     function writePipLoading(pipWindow, title, href) {
-      const stylesheetLinks = getBiliThemeStylesheets().map(href => `<link rel="stylesheet" href="${escapeHtml(href)}">`).join('\n');
-      writePipDocument(pipWindow, `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>${escapeHtml(title || 'Bilibili 小窗播放')}</title>
-    ${stylesheetLinks}
-    <style>
-      html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        display: grid;
-        place-items: center;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      a {
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        width: 34px;
-        height: 34px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 8px;
-        color: var(--text1, #18191c);
-        background: var(--bg2, #f6f7f8);
-      }
-      a svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
-      }
-    </style>
-  </head>
-  <body>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>` : ''}加载中...</body>
-</html>`);
+      writePipDocument(pipWindow, renderPipLoadingDocument({
+        title,
+        href,
+        stylesheets: getBiliThemeStylesheets(),
+        themeClassMarkup: getPipThemeClassMarkup()
+      }));
     }
     function writePipError(pipWindow, error, href) {
       disposePipPlayer();
       disposePipComments();
-      const stylesheetLinks = getBiliThemeStylesheets().map(href => `<link rel="stylesheet" href="${escapeHtml(href)}">`).join('\n');
-      writePipDocument(pipWindow, `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>初始化失败</title>
-    ${stylesheetLinks}
-    <style>
-      html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        display: grid;
-        place-items: center;
-        color: var(--text1, #18191c);
-        background: var(--bg1, #fff);
-        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      pre {
-        max-width: calc(100vw - 32px);
-        white-space: pre-wrap;
-      }
-      a {
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        width: 34px;
-        height: 34px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line_regular, #e3e5e7);
-        border-radius: 8px;
-        color: var(--text1, #18191c);
-        background: var(--bg2, #f6f7f8);
-      }
-      a svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
-      }
-    </style>
-  </head>
-  <body>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>` : ''}<pre>${escapeHtml(error?.message || String(error))}</pre></body>
-</html>`);
+      writePipDocument(pipWindow, renderPipErrorDocument({
+        error,
+        href,
+        stylesheets: getBiliThemeStylesheets(),
+        themeClassMarkup: getPipThemeClassMarkup()
+      }));
     }
     function writePipDocument(pipWindow, html) {
       state.pip.switchingWindow = true;
       pipWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
+      pipWindow.__biliPopupPlayerNanoResizeSyncCleanup?.();
       delete pipWindow.__biliPopupPlayerNanoControlsObserver;
       pipWindow.__biliPopupPlayerNanoControlsToken = (pipWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
       pipWindow.document.open();
@@ -5370,6 +6379,9 @@
         state.pip.switchingWindow = false;
       }, 0);
     }
+    function getPipThemeClassMarkup() {
+      return getThemeStyle() === 'dark' ? ' class="night-mode"' : '';
+    }
     function setPipStatus(message) {
       setLastButtonStatus(message);
     }
@@ -5377,7 +6389,13 @@
       if (!state.lastButton?.isConnected) return;
       state.lastButton.textContent = message;
       window.setTimeout(() => {
-        if (state.lastButton?.isConnected) state.lastButton.textContent = '小窗播放';
+        if (state.lastButton?.isConnected) {
+          if (state.lastButton.classList.contains(`${APP}__fixed-pip-button`)) {
+            state.lastButton.replaceChildren(createPictureInPictureIcon());
+          } else {
+            state.lastButton.textContent = '小窗播放';
+          }
+        }
       }, 1800);
     }
     function closeHome() {
@@ -5441,6 +6459,7 @@
       state.observer?.disconnect();
       if (state.scanTimer) window.clearTimeout(state.scanTimer);
       if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
+      if (state.homeSizeFrame) cancelAnimationFrame(state.homeSizeFrame);
       if (state.settingsVisibilityFrame) cancelAnimationFrame(state.settingsVisibilityFrame);
       if (state.bottomFixedFrame) cancelAnimationFrame(state.bottomFixedFrame);
       stopScanWarmup();
@@ -5452,6 +6471,8 @@
       state.home.ui?.dispose?.();
       state.home.ui = null;
       state.home.overlay = null;
+      removeLivePageButton();
+      removePlaybackPagePipButton();
       settingsUi.destroy();
       document.removeEventListener('mousemove', onDocumentMouseMove, true);
       document.removeEventListener('mouseleave', onDocumentMouseLeave, true);

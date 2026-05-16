@@ -7,6 +7,7 @@ import {
   createHistoryBackIcon,
   createHistoryForwardIcon,
   createMaximizeIcon,
+  createPictureInPictureIcon,
 } from './icons.js';
 
 export function mountHomePlayerPage({
@@ -19,6 +20,7 @@ export function mountHomePlayerPage({
   onHistoryNext,
   onHistoryPrevious,
   onOpenOriginal,
+  onOpenPip,
   onPlayerControlClick,
   onResizeStart,
 }) {
@@ -41,6 +43,7 @@ export function mountHomePlayerPage({
       onHistoryNext={onHistoryNext}
       onHistoryPrevious={onHistoryPrevious}
       onOpenOriginal={onOpenOriginal}
+      onOpenPip={onOpenPip}
       onPlayerControlClick={onPlayerControlClick}
       onResizeStart={onResizeStart}
       targetDocument={targetDocument}
@@ -134,36 +137,48 @@ function HomePlayerPage(props) {
           </div>
           <div id={`${APP}-title`} ref={props.refs('title')} />
           <div id={`${APP}-status`} ref={props.refs('status')} />
-          <button
-            type="button"
-            class={`${APP}__header-button`}
-            title="打开原播放页"
-            aria-label="打开原播放页"
-            ref={props.refs('openOriginal')}
-            onClick={(event) => props.onOpenOriginal?.(event.currentTarget.dataset.href)}
-          >
-            {createExternalLinkIcon()}
-          </button>
-          <button
-            type="button"
-            class={`${APP}__header-button`}
-            title="网页内全屏"
-            aria-label="网页内全屏"
-            ref={props.refs('fullscreen')}
-            onClick={() => props.onFullscreen?.()}
-          >
-            {createMaximizeIcon()}
-          </button>
-          <button
-            type="button"
-            class={`${APP}__header-button ${APP}__header-button--close`}
-            title="关闭"
-            aria-label="关闭首页播放器"
-            ref={props.refs('close')}
-            onClick={() => props.onClose?.()}
-          >
-            {createCloseIcon()}
-          </button>
+          <div class={`${APP}__header-actions`}>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="在 Document PiP 打开"
+              aria-label="在 Document PiP 打开"
+              ref={props.refs('openPip')}
+              onClick={() => props.onOpenPip?.()}
+            >
+              {createPictureInPictureIcon()}
+            </button>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="打开原播放页"
+              aria-label="打开原播放页"
+              ref={props.refs('openOriginal')}
+              onClick={(event) => props.onOpenOriginal?.(event.currentTarget.dataset.href)}
+            >
+              {createExternalLinkIcon()}
+            </button>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="网页内全屏"
+              aria-label="网页内全屏"
+              ref={props.refs('fullscreen')}
+              onClick={() => props.onFullscreen?.()}
+            >
+              {createMaximizeIcon()}
+            </button>
+            <button
+              type="button"
+              class={`${APP}__header-button ${APP}__header-button--close`}
+              title="关闭"
+              aria-label="关闭首页播放器"
+              ref={props.refs('close')}
+              onClick={() => props.onClose?.()}
+            >
+              {createCloseIcon()}
+            </button>
+          </div>
         </header>
         <div id={`${APP}-content`} ref={props.refs('content')}>
           <div id={`${APP}-player-wrap`} ref={props.refs('playerWrap')}>
@@ -186,6 +201,12 @@ function HomePlayerPage(props) {
             {props.commentsTabs}
             <div id={`${APP}-comments-panel`} class={`${APP}__comments-panel`} ref={props.refs('commentsPanel')}>
               <div id={`${APP}-comments-mount`} ref={props.refs('commentsMount')} />
+            </div>
+            <div id={`${APP}-pages-panel`} class={`${APP}__comments-panel`} ref={props.refs('pagesPanel')}>
+              <div id={`${APP}-pages-list`} class={`${APP}__playlist`} ref={props.refs('pagesList')} />
+              <div id={`${APP}-pages-empty`} class={`${APP}__playlist-empty`} ref={props.refs('pagesEmpty')}>
+                合集加载中...
+              </div>
             </div>
             <div id={`${APP}-playlist-panel`} class={`${APP}__comments-panel`} ref={props.refs('playlistPanel')}>
               <div id={`${APP}-playlist-list`} class={`${APP}__playlist`} ref={props.refs('playlistList')} />
@@ -237,6 +258,10 @@ function PipPlayerPage(props) {
           {props.commentsTabs}
           <div id="comments-panel" class={`${APP}__comments-panel`}>
             <div id="comments-mount">评论加载中...</div>
+          </div>
+          <div id="pages-panel" class={`${APP}__comments-panel`}>
+            <div id="pages-list" class={`${APP}__playlist`} />
+            <div id="pages-empty" class={`${APP}__playlist-empty`}>合集加载中...</div>
           </div>
           <div id="playlist-panel" class={`${APP}__comments-panel`}>
             <div id="playlist-list" class={`${APP}__playlist`} />
