@@ -602,7 +602,7 @@ import {
       state.lastFocus = button;
       state.lastButton = button;
       if (state.directClick) {
-        location.href = button.dataset.href;
+        openOriginalPage(button.dataset.href);
         return;
       }
       openByMode({

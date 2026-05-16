@@ -7,8 +7,8 @@
 
 ## 发布地址
 
-- 入口页：https://bilibili-popup-player-nano.pages.dev/
-- Userscript 直链：https://bilibili-popup-player-nano.pages.dev/bilibili-popup-player-nano.user.js
+- 入口页：https://pop-player.nanachi.moe/
+- Userscript 直链：https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
 
 安装方式：先安装下面任意一个用户脚本管理器，再打开 Userscript 直链。
 
