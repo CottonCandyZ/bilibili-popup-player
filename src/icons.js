@@ -36,15 +36,13 @@ export function createExternalLinkIcon() {
 
 export function createHistoryBackIcon() {
   return createIconFromMarkup(lucideIconMarkup([
-    'm11 17-5-5 5-5',
-    'm18 17-5-5 5-5',
+    'm15 18-6-6 6-6',
   ]));
 }
 
 export function createHistoryForwardIcon() {
   return createIconFromMarkup(lucideIconMarkup([
-    'm6 17 5-5-5-5',
-    'm13 17 5-5-5-5',
+    'm9 18 6-6-6-6',
   ]));
 }
 

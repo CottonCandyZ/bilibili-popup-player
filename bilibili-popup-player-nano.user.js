@@ -1225,10 +1225,10 @@
     return createIconFromMarkup(externalLinkIconMarkup());
   }
   function createHistoryBackIcon() {
-    return createIconFromMarkup(lucideIconMarkup(['m11 17-5-5 5-5', 'm18 17-5-5 5-5']));
+    return createIconFromMarkup(lucideIconMarkup(['m15 18-6-6 6-6']));
   }
   function createHistoryForwardIcon() {
-    return createIconFromMarkup(lucideIconMarkup(['m6 17 5-5-5-5', 'm13 17 5-5-5-5']));
+    return createIconFromMarkup(lucideIconMarkup(['m9 18 6-6-6-6']));
   }
   function createMaximizeIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M8 3H5a2 2 0 0 0-2 2v3', 'M21 8V5a2 2 0 0 0-2-2h-3', 'M3 16v3a2 2 0 0 0 2 2h3', 'M16 21h3a2 2 0 0 0 2-2v-3']));
@@ -2195,6 +2195,7 @@
       observer: null,
       scanTimer: 0,
       scanWarmupTimer: 0,
+      settingsVisibilityFrame: 0,
       viewportFrame: 0,
       lastFocus: null,
       lastButton: null,
@@ -2286,6 +2287,7 @@
     document.addEventListener('mousemove', onDocumentMouseMove, true);
     document.addEventListener('mouseleave', onDocumentMouseLeave, true);
     document.addEventListener('click', onDirectCoverClick, true);
+    document.addEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
     window.addEventListener('scroll', scheduleViewportSync, true);
     window.addEventListener('resize', scheduleViewportSync, true);
     state.observer = new MutationObserver(onDomMutated);
@@ -2293,7 +2295,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['href', 'title', 'aria-label']
+      attributeFilter: ['href', 'title', 'aria-label', 'class', 'style']
     });
     startScanWarmup();
     function ensureShadowUi() {
@@ -2389,6 +2391,10 @@
         --${APP}-settings-border: var(--line_regular, #e3e5e7);
         --${APP}-settings-brand: var(--brand_pink, #fb7299);
         --${APP}-settings-shadow: rgba(0, 0, 0, 0.18);
+      }
+
+      :host(.${APP}--playback-web-fullscreen) {
+        display: none;
       }
 
       .${SETTINGS_CLASS} {
@@ -3463,7 +3469,18 @@
         state.viewportFrame = 0;
         syncOverlayPositions();
         state.cardEntries.forEach(positionCardEntry);
+        syncSettingsVisibility();
       });
+    }
+    function scheduleSettingsVisibilitySync() {
+      if (state.settingsVisibilityFrame) return;
+      state.settingsVisibilityFrame = requestAnimationFrame(() => {
+        state.settingsVisibilityFrame = 0;
+        syncSettingsVisibility();
+      });
+    }
+    function syncSettingsVisibility() {
+      state.shadowHost?.classList.toggle(`${APP}--playback-web-fullscreen`, isPlaybackPageWebFullscreen());
     }
     function ensureCardHost(card) {
       const style = getComputedStyle(card);
@@ -3493,12 +3510,23 @@
         bindLink(link, meta);
       });
       ensureSettings();
+      syncSettingsVisibility();
       syncVideoBadges();
       syncOverlayPositions();
       state.cardEntries.forEach(positionCardEntry);
     }
     function onDomMutated(mutations) {
+      if (mutations.some(shouldSyncSettingsVisibilityMutation)) scheduleSettingsVisibilitySync();
       if (mutations.some(shouldRescanMutation)) scheduleScan();
+    }
+    function shouldSyncSettingsVisibilityMutation(mutation) {
+      if (!isPlaybackPage()) return false;
+      if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
+      if (mutation.type !== 'attributes') return false;
+      const target = mutation.target;
+      if (!(target instanceof Element)) return false;
+      if (target === document.documentElement || target === document.body) return true;
+      return Boolean(target.closest?.(getPlaybackPlayerSelector()));
     }
     function shouldRescanMutation(mutation) {
       if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
@@ -3506,6 +3534,26 @@
       const target = mutation.target;
       if (!(target instanceof Element)) return false;
       return target.matches?.('a[href*="/video/"], a[href], [title], [aria-label]') || target.closest?.('.bili-video-card, .feed-card, .video-card, [class*="video-card"], [class*="feed-card"]');
+    }
+    function isPlaybackPageWebFullscreen() {
+      if (!isPlaybackPage()) return false;
+      if (document.body.classList.contains(`${APP}--modal-open`)) return false;
+      const player = document.querySelector(getPlaybackPlayerSelector());
+      if (!player) return false;
+      return hasWebFullscreenMarker(player) || Boolean(player.querySelector?.(['.bpx-player-web-full', '.bpx-player-mode-webscreen', '.bpx-player-webscreen', '.bilibili-player-video-web-fullscreen'].join(',')));
+    }
+    function hasWebFullscreenMarker(element) {
+      for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
+        const className = String(current.className || '');
+        if (/\b(?:bpx-player-(?:web-full|mode-webscreen|webscreen)|bilibili-player-video-web-fullscreen|player-mode-webfullscreen)\b/.test(className)) return true;
+        const screen = current.getAttribute?.('data-screen') || current.getAttribute?.('data-mode') || '';
+        if (/web(?:screen|fullscreen|full)/i.test(screen)) return true;
+      }
+      const rootClassName = `${document.documentElement.className || ''} ${document.body.className || ''}`;
+      return /\b(?:bpx-player-(?:web-full|mode-webscreen|webscreen)|player-mode-webfullscreen|web-fullscreen|webscreen)\b/.test(rootClassName);
+    }
+    function getPlaybackPlayerSelector() {
+      return '#bilibili-player, #bofqi, .bpx-player-container, .bilibili-player-video';
     }
     function scheduleScan() {
       if (state.scanTimer) return;
@@ -5300,6 +5348,7 @@
       state.observer?.disconnect();
       if (state.scanTimer) window.clearTimeout(state.scanTimer);
       if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
+      if (state.settingsVisibilityFrame) cancelAnimationFrame(state.settingsVisibilityFrame);
       stopScanWarmup();
       closeHome();
       disposeHomePlayer();
@@ -5313,6 +5362,7 @@
       document.removeEventListener('mousemove', onDocumentMouseMove, true);
       document.removeEventListener('mouseleave', onDocumentMouseLeave, true);
       document.removeEventListener('click', onDirectCoverClick, true);
+      document.removeEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
       window.removeEventListener('scroll', scheduleViewportSync, true);
       window.removeEventListener('resize', scheduleViewportSync, true);
       state.shadowHost?.remove();
