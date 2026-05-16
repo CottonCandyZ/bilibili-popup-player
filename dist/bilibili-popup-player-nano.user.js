@@ -21,6 +21,7 @@
   const STORAGE_MODE = `${APP}:mode`;
   const STORAGE_DIRECT_CLICK = `${APP}:direct-click`;
   const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
+  const STORAGE_COMMENT_WIDTH = `${APP}:comment-width`;
   const STORAGE_LAST_PLAYED = `${APP}:last-played`;
   const ENABLED_URL_RE = /^https?:\/\/www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV)/;
   const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
@@ -1060,7 +1061,7 @@
       state.commentLayout = value === 'right' ? 'right' : 'bottom';
       localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
       setCommentLayoutSignal(state.commentLayout);
-      syncCommentLayout({ remount: true });
+      syncCommentLayout();
     }
 
     function setDirectCoverClick(value) {
@@ -1126,6 +1127,9 @@
     }
 
     function bootstrap() {
+    const COMMENT_WIDTH_DEFAULT = 420;
+    const COMMENT_WIDTH_MIN = 300;
+    const COMMENT_WIDTH_MAX = 720;
 
     const initialLastPlayed = (() => {
       try {
@@ -1137,6 +1141,11 @@
       }
     })();
 
+    const initialCommentWidth = (() => {
+      const value = Number(localStorage.getItem(STORAGE_COMMENT_WIDTH));
+      return clampCommentWidth(Number.isFinite(value) ? value : COMMENT_WIDTH_DEFAULT);
+    })();
+
     const state = {
       observer: null,
       scanTimer: 0,
@@ -1145,6 +1154,7 @@
       mode: localStorage.getItem(STORAGE_MODE) === 'pip' ? 'pip' : 'home',
       directClick: localStorage.getItem(STORAGE_DIRECT_CLICK) === '1',
       commentLayout: localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'right' ? 'right' : 'bottom',
+      commentWidth: initialCommentWidth,
       lastPlayed: initialLastPlayed,
       pipPlaying: null,
       switchToken: 0,
@@ -1490,8 +1500,28 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-content {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
-        overflow: hidden;
+        grid-template-columns: minmax(0, 1fr) 6px var(--${APP}-comments-width, 420px);
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+
+      #${APP}-comments-resizer {
+        display: none;
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
+        display: block;
+        min-width: 6px;
+        height: 100%;
+        cursor: col-resize;
+        background: var(--line_regular, #e3e5e7);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover,
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible,
+      #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer {
+        background: #fb7299;
+        outline: none;
       }
 
       #${APP}-player-wrap {
@@ -1508,6 +1538,8 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap,
       #${APP}-overlay.${APP}--fullscreen.${APP}--comments-right #${APP}-player-wrap {
+        position: sticky;
+        top: 0;
         height: 100%;
       }
 
@@ -1526,12 +1558,10 @@
 
       #${APP}-overlay.${APP}--comments-right #${APP}-comments {
         min-width: 0;
-        min-height: 0;
-        height: 100%;
+        min-height: 100%;
+        height: auto;
         padding: 18px 22px 40px;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
+        overflow: visible;
         border-left: 1px solid var(--line_regular, #e3e5e7);
       }
 
@@ -1552,6 +1582,10 @@
           display: block;
           overflow-x: hidden;
           overflow-y: auto;
+        }
+
+        #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
+          display: none;
         }
 
         #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
@@ -1884,6 +1918,14 @@
       const playerRoot = document.createElement('div');
       playerRoot.id = `${APP}-player`;
 
+      const commentsResizer = document.createElement('div');
+      commentsResizer.id = `${APP}-comments-resizer`;
+      commentsResizer.tabIndex = 0;
+      commentsResizer.setAttribute('role', 'separator');
+      commentsResizer.setAttribute('aria-orientation', 'vertical');
+      commentsResizer.setAttribute('aria-label', '调整评论区宽度');
+      commentsResizer.addEventListener('pointerdown', (event) => startCommentWidthDrag(event, window));
+
       const comments = document.createElement('section');
       comments.id = `${APP}-comments`;
 
@@ -1896,7 +1938,7 @@
 
       playerWrap.append(playerRoot);
       comments.append(commentsTitle, commentsMount);
-      content.append(playerWrap, comments);
+      content.append(playerWrap, commentsResizer, comments);
       header.append(title, status, commentsToggle, openOriginal, fullscreen, close);
       dialog.append(header, content);
       overlay.appendChild(dialog);
@@ -1918,7 +1960,7 @@
       });
 
       state.home.overlay = overlay;
-      state.home.ui = { overlay, dialog, title, status, commentsToggle, openOriginal, fullscreen, close, content, playerWrap, playerRoot, comments, commentsMount };
+      state.home.ui = { overlay, dialog, title, status, commentsToggle, openOriginal, fullscreen, close, content, playerWrap, playerRoot, commentsResizer, comments, commentsMount };
       syncHomeCommentLayout();
       return state.home.ui;
     }
@@ -2101,8 +2143,26 @@
       }
       body.comments-right #layout {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(300px, min(420px, 38vw));
-        overflow: hidden;
+        grid-template-columns: minmax(0, 1fr) 6px var(--${APP}-comments-width, 420px);
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      #comments-resizer {
+        display: none;
+      }
+      body.comments-right #comments-resizer {
+        display: block;
+        min-width: 6px;
+        height: 100vh;
+        cursor: col-resize;
+        background: var(--line_regular, #e3e5e7);
+      }
+      body.comments-right #comments-resizer:hover,
+      body.comments-right #comments-resizer:focus-visible,
+      body.resizing-comments #comments-resizer {
+        background: #fb7299;
+        outline: none;
       }
       #stage {
         position: relative;
@@ -2111,6 +2171,10 @@
         width: 100%;
         height: 100vh;
         background: #000;
+      }
+      body.comments-right #stage {
+        position: sticky;
+        top: 0;
       }
       #bilibili-player {
         position: relative;
@@ -2135,12 +2199,10 @@
       }
       body.comments-right #comments {
         min-width: 0;
-        min-height: 0;
-        height: 100vh;
+        min-height: 100vh;
+        height: auto;
         padding: 18px 20px 40px;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
+        overflow: visible;
         border-left: 1px solid var(--line_regular, #e3e5e7);
       }
       #${APP}-pip-controls {
@@ -2189,6 +2251,7 @@
     <div id="shell">
       <main id="layout">
         <div id="stage"><div id="bilibili-player"></div></div>
+        <div id="comments-resizer" tabindex="0" role="separator" aria-orientation="vertical" aria-label="调整评论区宽度"></div>
         <section id="comments"><h2>评论</h2><div id="comments-mount">评论加载中...</div></section>
       </main>
     </div>
@@ -2198,6 +2261,8 @@
       await loadScriptOnce(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
       if (token !== state.switchToken || pipWindow.closed) return;
       if (!pipWindow.nano) throw new Error('nano not available after core load');
+      attachPipCommentResizer(pipWindow);
+      syncCommentWidth();
       connectPipPlayer(pipWindow, bootstrap, token);
       mountPipComments(pipWindow, bootstrap, token);
     }
@@ -2222,6 +2287,8 @@
       targetWindow.document.title = bootstrap.title || 'Bilibili 小窗播放';
       syncPipCommentLayout(targetWindow);
       ensurePipPlayerControls(targetWindow, bootstrap.href);
+      attachPipCommentResizer(targetWindow);
+      syncCommentWidth();
       syncPipSize(targetWindow);
       setPipStatus('换源中');
 
@@ -2333,17 +2400,35 @@
 
     function setCommentLayout(value) {
       const next = value === 'right' ? 'right' : 'bottom';
-      const changed = state.commentLayout !== next;
       state.commentLayout = next;
       localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
       settingsUi.sync();
-      if (changed) syncCommentLayout({ remount: true });
     }
 
-    function syncCommentLayout(options = {}) {
+    function syncCommentLayout() {
       syncHomeCommentLayout();
       if (state.pip.win && !state.pip.win.closed) syncPipCommentLayout(state.pip.win);
-      if (options.remount) remountCommentsForLayout();
+    }
+
+    function syncCommentWidth() {
+      state.commentWidth = clampCommentWidth(state.commentWidth);
+      const value = `${state.commentWidth}px`;
+      state.home.ui?.overlay?.style.setProperty(`--${APP}-comments-width`, value);
+      if (state.home.ui?.commentsResizer) {
+        state.home.ui.commentsResizer.setAttribute('aria-valuenow', String(state.commentWidth));
+        state.home.ui.commentsResizer.setAttribute('aria-valuemin', String(COMMENT_WIDTH_MIN));
+        state.home.ui.commentsResizer.setAttribute('aria-valuemax', String(COMMENT_WIDTH_MAX));
+      }
+      const pipDocument = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
+      pipDocument?.documentElement?.style.setProperty(`--${APP}-comments-width`, value);
+      const pipResizer = pipDocument?.getElementById('comments-resizer');
+      if (pipResizer) {
+        pipResizer.setAttribute('aria-valuenow', String(state.commentWidth));
+        pipResizer.setAttribute('aria-valuemin', String(COMMENT_WIDTH_MIN));
+        pipResizer.setAttribute('aria-valuemax', String(COMMENT_WIDTH_MAX));
+      }
+      syncHomeSize();
+      if (state.pip.win && !state.pip.win.closed) syncPipSize(state.pip.win);
     }
 
     function syncHomeCommentLayout() {
@@ -2353,14 +2438,10 @@
       ui.commentsToggle.textContent = state.commentLayout === 'right' ? '评论在下' : '评论在右';
       ui.commentsToggle.title = state.commentLayout === 'right' ? '移动评论到下方' : '移动评论到右侧';
       ui.commentsToggle.setAttribute('aria-label', ui.commentsToggle.title);
-      applyCommentScrollContainer(state.home.comments, getHomeCommentsScrollContainer());
-      syncHomeSize();
+      syncCommentWidth();
     }
 
     function getHomeCommentsScrollContainer() {
-      if (state.commentLayout === 'right' && !window.matchMedia('(max-width: 900px)').matches) {
-        return state.home.ui?.comments;
-      }
       return state.home.ui?.content;
     }
 
@@ -2377,29 +2458,78 @@
         toggle.title = state.commentLayout === 'right' ? '移动评论到下方' : '移动评论到右侧';
         toggle.setAttribute('aria-label', toggle.title);
       }
-      applyCommentScrollContainer(state.pip.comments, getPipCommentsScrollContainer(targetWindow));
+      syncCommentWidth();
       if (resize) syncPipSize(targetWindow);
-    }
-
-    function remountCommentsForLayout() {
-      const token = state.switchToken;
-      if (state.home.bootstrap && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) {
-        disposeHomeComments();
-        if (state.home.ui.commentsMount) state.home.ui.commentsMount.textContent = '评论加载中...';
-        mountHomeComments(state.home.bootstrap, token);
-      }
-      if (state.pip.bootstrap && state.pip.win && !state.pip.win.closed) {
-        disposePipComments();
-        const mount = state.pip.win.document?.getElementById('comments-mount');
-        if (mount) mount.textContent = '评论加载中...';
-        mountPipComments(state.pip.win, state.pip.bootstrap, token);
-      }
     }
 
     function getPipCommentsScrollContainer(targetWindow) {
       if (!targetWindow || targetWindow.closed) return null;
       const doc = targetWindow.document;
-      return state.commentLayout === 'right' ? doc.getElementById('comments') : doc.getElementById('layout');
+      return doc.getElementById('layout');
+    }
+
+    function attachPipCommentResizer(targetWindow) {
+      if (!targetWindow || targetWindow.closed) return;
+      const resizer = targetWindow.document?.getElementById('comments-resizer');
+      if (!resizer || resizer.__biliPopupPlayerNanoResizeBound) return;
+      resizer.__biliPopupPlayerNanoResizeBound = true;
+      resizer.addEventListener('pointerdown', (event) => startCommentWidthDrag(event, targetWindow));
+    }
+
+    function startCommentWidthDrag(event, targetWindow) {
+      if (state.commentLayout !== 'right') return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const doc = targetWindow.document;
+      const resizer = event.currentTarget;
+      const overlay = targetWindow === window ? state.home.overlay : null;
+      overlay?.classList.add(`${APP}--resizing`);
+      doc.body?.classList.add('resizing-comments');
+      resizer?.setPointerCapture?.(event.pointerId);
+
+      const onMove = (moveEvent) => {
+        moveEvent.preventDefault();
+        setCommentWidth(calculateCommentWidthFromPointer(moveEvent.clientX, targetWindow));
+      };
+      const onEnd = () => {
+        overlay?.classList.remove(`${APP}--resizing`);
+        doc.body?.classList.remove('resizing-comments');
+        doc.removeEventListener('pointermove', onMove, true);
+        doc.removeEventListener('pointerup', onEnd, true);
+        doc.removeEventListener('pointercancel', onEnd, true);
+        localStorage.setItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
+      };
+
+      doc.addEventListener('pointermove', onMove, true);
+      doc.addEventListener('pointerup', onEnd, true);
+      doc.addEventListener('pointercancel', onEnd, true);
+      onMove(event);
+    }
+
+    function calculateCommentWidthFromPointer(clientX, targetWindow) {
+      const container = targetWindow === window
+        ? state.home.ui?.content
+        : targetWindow.document?.getElementById('layout');
+      const rect = container?.getBoundingClientRect();
+      if (!rect) return state.commentWidth;
+      return clampCommentWidth(rect.right - clientX, rect.width);
+    }
+
+    function setCommentWidth(width) {
+      const next = clampCommentWidth(width);
+      if (next === state.commentWidth) return;
+      state.commentWidth = next;
+      syncCommentWidth();
+    }
+
+    function clampCommentWidth(width, containerWidth) {
+      const numeric = Number(width);
+      const fallback = Number.isFinite(numeric) ? numeric : COMMENT_WIDTH_DEFAULT;
+      const maxByContainer = Number.isFinite(containerWidth)
+        ? Math.max(COMMENT_WIDTH_MIN, containerWidth - 366)
+        : COMMENT_WIDTH_MAX;
+      return Math.round(Math.min(COMMENT_WIDTH_MAX, maxByContainer, Math.max(COMMENT_WIDTH_MIN, fallback)));
     }
 
     function ensurePipPlayerControls(targetWindow, href) {

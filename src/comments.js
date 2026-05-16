@@ -55,7 +55,7 @@ function mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollC
   }
 }
 
-export function applyCommentScrollContainer(instance, scrollContainer) {
+function applyCommentScrollContainer(instance, scrollContainer) {
   if (!instance || !scrollContainer) return;
   const element = instance.el?.current;
   if (element) element.scrollContainer = scrollContainer;

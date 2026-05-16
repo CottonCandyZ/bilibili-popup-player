@@ -129,7 +129,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, syncCo
     state.commentLayout = value === 'right' ? 'right' : 'bottom';
     localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
     setCommentLayoutSignal(state.commentLayout);
-    syncCommentLayout({ remount: true });
+    syncCommentLayout();
   }
 
   function setDirectCoverClick(value) {
