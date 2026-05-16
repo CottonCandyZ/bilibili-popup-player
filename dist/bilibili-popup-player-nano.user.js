@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.3.10
+// @version      3.3.15
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -26,6 +26,7 @@
   const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
   const STORAGE_COMMENT_WIDTH = `${APP}:comment-width`;
   const STORAGE_LAST_PLAYED = `${APP}:last-played`;
+  const STORAGE_MODAL_SIZE = `${APP}:modal-size`;
   const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/)/;
   const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
   const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
@@ -1129,11 +1130,25 @@
     return item;
   }
   function createStatIcon(targetDocument, type) {
-    const template = targetDocument.createElement('template');
-    template.innerHTML = type === 'danmaku' ? danmakuIconMarkup() : viewIconMarkup();
-    const icon = template.content.firstElementChild;
-    icon.classList.add(`${APP}__playlist-stat-icon`);
-    return icon;
+    const markup = type === 'danmaku' ? danmakuIconMarkup() : viewIconMarkup();
+    const paths = [...markup.matchAll(/<path\s+d="([^"]+)"\s+fill="([^"]+)"><\/path>/g)];
+    if (!paths.length) {
+      const fallback = targetDocument.createElement('span');
+      fallback.className = `${APP}__playlist-stat-icon`;
+      fallback.setAttribute('aria-hidden', 'true');
+      return fallback;
+    }
+    const svg = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.classList.add(`${APP}__playlist-stat-icon`);
+    paths.forEach(([, d, fill]) => {
+      const path = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', fill);
+      svg.appendChild(path);
+    });
+    return svg;
   }
   function normalizeStats(stats) {
     if (!stats) return {
@@ -1407,6 +1422,9 @@
   }
   function createPictureInPictureIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M21 9V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4', 'M21 13v5a2 2 0 0 1-2 2h-5', 'M15 15h6v5h-6z']));
+  }
+  function createResetSizeIcon() {
+    return createIconFromMarkup(lucideIconMarkup(['M3 12a9 9 0 1 0 3-6.7', 'M3 3v6h6']));
   }
   function createCloseIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M18 6 6 18', 'm6 6 12 12']));
@@ -1828,8 +1846,8 @@
 
       #${APP}-dialog {
         position: relative;
-        width: min(1360px, calc(100vw - 32px));
-        height: min(860px, calc(100vh - 32px));
+        width: calc(100vw - clamp(128px, 16vw, 440px));
+        height: min(960px, calc(100vh - clamp(96px, 12vh, 220px)));
         display: grid;
         grid-template-rows: 46px 1fr;
         overflow: hidden;
@@ -1848,6 +1866,10 @@
         height: 100vh;
         border-radius: 0;
         box-shadow: none;
+      }
+
+      #${APP}-overlay.${APP}--fullscreen .${APP}__modal-resize-handle {
+        display: none;
       }
 
       #${APP}-header {
@@ -1871,7 +1893,7 @@
 
       .${APP}__header-actions {
         display: inline-grid;
-        grid-template-columns: repeat(4, 32px);
+        grid-template-columns: repeat(5, 32px);
         gap: 4px;
         align-items: center;
         justify-content: end;
@@ -1934,6 +1956,32 @@
       .${APP}__header-button:disabled:focus-visible {
         color: var(--${APP}-text-muted);
         background: transparent;
+      }
+
+      .${APP}__modal-resize-handle {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        z-index: 20;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: 0 0 8px 0;
+        color: var(--${APP}-text-muted);
+        background:
+          linear-gradient(135deg, transparent 0 52%, currentColor 52% 57%, transparent 57%),
+          linear-gradient(135deg, transparent 0 68%, currentColor 68% 73%, transparent 73%);
+        cursor: nwse-resize;
+        opacity: 0.72;
+      }
+
+      .${APP}__modal-resize-handle:hover,
+      .${APP}__modal-resize-handle:focus-visible,
+      #${APP}-overlay.${APP}--modal-resizing .${APP}__modal-resize-handle {
+        color: var(--${APP}-brand);
+        opacity: 1;
+        outline: none;
       }
 
       #${APP}-content {
@@ -2010,15 +2058,14 @@
         min-width: 8px;
         height: 100%;
         cursor: col-resize;
-        background: transparent;
+        background: var(--bg1, #fff);
       }
 
       #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer::before {
         content: "";
         position: absolute;
-        inset: 0 auto 0 50%;
+        inset: 0 auto 0 0;
         width: 1px;
-        transform: translateX(-50%);
         background: rgba(148, 153, 160, 0.36);
       }
 
@@ -2034,7 +2081,7 @@
 
       #${APP}-player-wrap {
         position: relative;
-        height: calc(min(860px, calc(100vh - 32px)) - 46px);
+        height: calc(min(960px, calc(100vh - clamp(96px, 12vh, 220px))) - 46px);
         min-width: 0;
         min-height: 0;
         background: #000;
@@ -2413,7 +2460,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         }
 
         #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
-          height: calc(min(860px, calc(100vh - 32px)) - 46px);
+          height: calc(min(960px, calc(100vh - clamp(96px, 12vh, 220px))) - 46px);
         }
 
         #${APP}-overlay.${APP}--comments-right #${APP}-comments {
@@ -2680,7 +2727,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><button type=button title="在 Document PiP 打开"aria-label="在 Document PiP 打开"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><button type=button title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
     _tmpl$2 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>推荐列表加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
     targetDocument = document,
@@ -2694,6 +2741,8 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     onOpenOriginal,
     onOpenPip,
     onPlayerControlClick,
+    onResetSize,
+    onModalResizeStart,
     onResizeStart
   }) {
     const mount = targetDocument.createElement('div');
@@ -2715,6 +2764,8 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       onOpenOriginal: onOpenOriginal,
       onOpenPip: onOpenPip,
       onPlayerControlClick: onPlayerControlClick,
+      onResetSize: onResetSize,
+      onModalResizeStart: onModalResizeStart,
       onResizeStart: onResizeStart,
       targetDocument: targetDocument
     }), mount);
@@ -2764,23 +2815,25 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         _el$1 = _el$0.nextSibling,
         _el$10 = _el$1.nextSibling,
         _el$11 = _el$10.nextSibling,
-        _el$12 = _el$3.nextSibling,
-        _el$13 = _el$12.firstChild,
+        _el$12 = _el$11.nextSibling,
+        _el$13 = _el$3.nextSibling,
         _el$14 = _el$13.firstChild,
-        _el$15 = _el$13.nextSibling,
-        _el$16 = _el$15.nextSibling,
-        _el$17 = _el$16.firstChild,
+        _el$15 = _el$14.firstChild,
+        _el$16 = _el$14.nextSibling,
+        _el$17 = _el$16.nextSibling,
         _el$18 = _el$17.firstChild,
-        _el$19 = _el$17.nextSibling,
-        _el$20 = _el$19.firstChild,
-        _el$21 = _el$20.nextSibling,
-        _el$22 = _el$19.nextSibling,
-        _el$23 = _el$22.firstChild,
-        _el$24 = _el$23.nextSibling,
-        _el$25 = _el$22.nextSibling,
-        _el$26 = _el$25.firstChild,
-        _el$27 = _el$26.nextSibling,
-        _el$28 = _el$12.nextSibling;
+        _el$19 = _el$18.firstChild,
+        _el$20 = _el$18.nextSibling,
+        _el$21 = _el$20.firstChild,
+        _el$22 = _el$21.nextSibling,
+        _el$23 = _el$20.nextSibling,
+        _el$24 = _el$23.firstChild,
+        _el$25 = _el$24.nextSibling,
+        _el$26 = _el$23.nextSibling,
+        _el$27 = _el$26.firstChild,
+        _el$28 = _el$27.nextSibling,
+        _el$29 = _el$13.nextSibling,
+        _el$30 = _el$29.nextSibling;
       _el$.addEventListener("pointercancel", event => {
         backdropPointer = '0';
         event.currentTarget.dataset.backdropPointer = '0';
@@ -2835,77 +2888,86 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       typeof _ref$9 === "function" && use(_ref$9, _el$10);
       className(_el$10, `${APP}__header-button`);
       insert(_el$10, createMaximizeIcon);
-      _el$11.$$click = () => props.onClose?.();
-      var _ref$0 = props.refs('close');
+      _el$11.$$click = () => props.onResetSize?.();
+      var _ref$0 = props.refs('resetSize');
       typeof _ref$0 === "function" && use(_ref$0, _el$11);
-      className(_el$11, `${APP}__header-button ${APP}__header-button--close`);
-      insert(_el$11, createCloseIcon);
-      var _ref$1 = props.refs('content');
+      className(_el$11, `${APP}__header-button`);
+      insert(_el$11, createResetSizeIcon);
+      _el$12.$$click = () => props.onClose?.();
+      var _ref$1 = props.refs('close');
       typeof _ref$1 === "function" && use(_ref$1, _el$12);
-      setAttribute(_el$12, "id", `${APP}-content`);
-      var _ref$10 = props.refs('playerWrap');
+      className(_el$12, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$12, createCloseIcon);
+      var _ref$10 = props.refs('content');
       typeof _ref$10 === "function" && use(_ref$10, _el$13);
-      setAttribute(_el$13, "id", `${APP}-player-wrap`);
-      _el$14.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
-      var _ref$11 = props.refs('playerRoot');
+      setAttribute(_el$13, "id", `${APP}-content`);
+      var _ref$11 = props.refs('playerWrap');
       typeof _ref$11 === "function" && use(_ref$11, _el$14);
-      setAttribute(_el$14, "id", `${APP}-player`);
-      _el$15.$$pointerdown = event => props.onResizeStart?.(event);
-      var _ref$12 = props.refs('commentsResizer');
+      setAttribute(_el$14, "id", `${APP}-player-wrap`);
+      _el$15.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
+      var _ref$12 = props.refs('playerRoot');
       typeof _ref$12 === "function" && use(_ref$12, _el$15);
-      setAttribute(_el$15, "id", `${APP}-comments-resizer`);
-      var _ref$13 = props.refs('comments');
+      setAttribute(_el$15, "id", `${APP}-player`);
+      _el$16.$$pointerdown = event => props.onResizeStart?.(event);
+      var _ref$13 = props.refs('commentsResizer');
       typeof _ref$13 === "function" && use(_ref$13, _el$16);
-      setAttribute(_el$16, "id", `${APP}-comments`);
-      insert(_el$16, () => props.commentsTabs, _el$17);
-      var _ref$14 = props.refs('commentsPanel');
+      setAttribute(_el$16, "id", `${APP}-comments-resizer`);
+      var _ref$14 = props.refs('comments');
       typeof _ref$14 === "function" && use(_ref$14, _el$17);
-      setAttribute(_el$17, "id", `${APP}-comments-panel`);
-      className(_el$17, `${APP}__comments-panel`);
-      var _ref$15 = props.refs('commentsMount');
+      setAttribute(_el$17, "id", `${APP}-comments`);
+      insert(_el$17, () => props.commentsTabs, _el$18);
+      var _ref$15 = props.refs('commentsPanel');
       typeof _ref$15 === "function" && use(_ref$15, _el$18);
-      setAttribute(_el$18, "id", `${APP}-comments-mount`);
-      var _ref$16 = props.refs('pagesPanel');
+      setAttribute(_el$18, "id", `${APP}-comments-panel`);
+      className(_el$18, `${APP}__comments-panel`);
+      var _ref$16 = props.refs('commentsMount');
       typeof _ref$16 === "function" && use(_ref$16, _el$19);
-      setAttribute(_el$19, "id", `${APP}-pages-panel`);
-      className(_el$19, `${APP}__comments-panel`);
-      var _ref$17 = props.refs('pagesList');
+      setAttribute(_el$19, "id", `${APP}-comments-mount`);
+      var _ref$17 = props.refs('pagesPanel');
       typeof _ref$17 === "function" && use(_ref$17, _el$20);
-      setAttribute(_el$20, "id", `${APP}-pages-list`);
-      className(_el$20, `${APP}__playlist`);
-      var _ref$18 = props.refs('pagesEmpty');
+      setAttribute(_el$20, "id", `${APP}-pages-panel`);
+      className(_el$20, `${APP}__comments-panel`);
+      var _ref$18 = props.refs('pagesList');
       typeof _ref$18 === "function" && use(_ref$18, _el$21);
-      setAttribute(_el$21, "id", `${APP}-pages-empty`);
-      className(_el$21, `${APP}__playlist-empty`);
-      var _ref$19 = props.refs('playlistPanel');
+      setAttribute(_el$21, "id", `${APP}-pages-list`);
+      className(_el$21, `${APP}__playlist`);
+      var _ref$19 = props.refs('pagesEmpty');
       typeof _ref$19 === "function" && use(_ref$19, _el$22);
-      setAttribute(_el$22, "id", `${APP}-playlist-panel`);
-      className(_el$22, `${APP}__comments-panel`);
-      var _ref$20 = props.refs('playlistList');
+      setAttribute(_el$22, "id", `${APP}-pages-empty`);
+      className(_el$22, `${APP}__playlist-empty`);
+      var _ref$20 = props.refs('playlistPanel');
       typeof _ref$20 === "function" && use(_ref$20, _el$23);
-      setAttribute(_el$23, "id", `${APP}-playlist-list`);
-      className(_el$23, `${APP}__playlist`);
-      var _ref$21 = props.refs('playlistEmpty');
+      setAttribute(_el$23, "id", `${APP}-playlist-panel`);
+      className(_el$23, `${APP}__comments-panel`);
+      var _ref$21 = props.refs('playlistList');
       typeof _ref$21 === "function" && use(_ref$21, _el$24);
-      setAttribute(_el$24, "id", `${APP}-playlist-empty`);
-      className(_el$24, `${APP}__playlist-empty`);
-      var _ref$22 = props.refs('recommendPanel');
+      setAttribute(_el$24, "id", `${APP}-playlist-list`);
+      className(_el$24, `${APP}__playlist`);
+      var _ref$22 = props.refs('playlistEmpty');
       typeof _ref$22 === "function" && use(_ref$22, _el$25);
-      setAttribute(_el$25, "id", `${APP}-recommend-panel`);
-      className(_el$25, `${APP}__comments-panel`);
-      var _ref$23 = props.refs('recommendList');
+      setAttribute(_el$25, "id", `${APP}-playlist-empty`);
+      className(_el$25, `${APP}__playlist-empty`);
+      var _ref$23 = props.refs('recommendPanel');
       typeof _ref$23 === "function" && use(_ref$23, _el$26);
-      setAttribute(_el$26, "id", `${APP}-recommend-list`);
-      className(_el$26, `${APP}__playlist`);
-      var _ref$24 = props.refs('recommendEmpty');
+      setAttribute(_el$26, "id", `${APP}-recommend-panel`);
+      className(_el$26, `${APP}__comments-panel`);
+      var _ref$24 = props.refs('recommendList');
       typeof _ref$24 === "function" && use(_ref$24, _el$27);
-      setAttribute(_el$27, "id", `${APP}-recommend-empty`);
-      className(_el$27, `${APP}__playlist-empty`);
-      _el$28.$$click = () => props.onBackToTop?.();
-      var _ref$25 = props.refs('backToTop');
+      setAttribute(_el$27, "id", `${APP}-recommend-list`);
+      className(_el$27, `${APP}__playlist`);
+      var _ref$25 = props.refs('recommendEmpty');
       typeof _ref$25 === "function" && use(_ref$25, _el$28);
-      className(_el$28, `${APP}__back-to-top`);
-      insert(_el$28, () => backToTopIcon.content.firstElementChild);
+      setAttribute(_el$28, "id", `${APP}-recommend-empty`);
+      className(_el$28, `${APP}__playlist-empty`);
+      _el$29.$$click = () => props.onBackToTop?.();
+      var _ref$26 = props.refs('backToTop');
+      typeof _ref$26 === "function" && use(_ref$26, _el$29);
+      className(_el$29, `${APP}__back-to-top`);
+      insert(_el$29, () => backToTopIcon.content.firstElementChild);
+      _el$30.$$pointerdown = event => props.onModalResizeStart?.(event);
+      var _ref$27 = props.refs('modalResizeHandle');
+      typeof _ref$27 === "function" && use(_ref$27, _el$30);
+      className(_el$30, `${APP}__modal-resize-handle`);
       return _el$;
     })();
   }
@@ -2913,36 +2975,36 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     const backToTopIcon = props.targetDocument.createElement('template');
     backToTopIcon.innerHTML = arrowUpIconMarkup();
     return (() => {
-      var _el$29 = _tmpl$2(),
-        _el$30 = _el$29.firstChild,
-        _el$31 = _el$30.firstChild,
-        _el$32 = _el$31.nextSibling,
-        _el$33 = _el$32.nextSibling,
-        _el$34 = _el$33.firstChild,
+      var _el$31 = _tmpl$2(),
+        _el$32 = _el$31.firstChild,
+        _el$33 = _el$32.firstChild,
+        _el$34 = _el$33.nextSibling,
         _el$35 = _el$34.nextSibling,
         _el$36 = _el$35.firstChild,
         _el$37 = _el$36.nextSibling,
-        _el$38 = _el$35.nextSibling,
-        _el$39 = _el$38.firstChild,
-        _el$40 = _el$39.nextSibling,
-        _el$41 = _el$38.nextSibling,
-        _el$42 = _el$41.firstChild,
-        _el$43 = _el$42.nextSibling,
-        _el$44 = _el$30.nextSibling;
-      insert(_el$33, () => props.commentsTabs, _el$34);
-      className(_el$34, `${APP}__comments-panel`);
-      className(_el$35, `${APP}__comments-panel`);
-      className(_el$36, `${APP}__playlist`);
-      className(_el$37, `${APP}__playlist-empty`);
-      className(_el$38, `${APP}__comments-panel`);
-      className(_el$39, `${APP}__playlist`);
-      className(_el$40, `${APP}__playlist-empty`);
-      className(_el$41, `${APP}__comments-panel`);
-      className(_el$42, `${APP}__playlist`);
-      className(_el$43, `${APP}__playlist-empty`);
-      className(_el$44, `${APP}__back-to-top`);
-      insert(_el$44, () => backToTopIcon.content.firstElementChild);
-      return _el$29;
+        _el$38 = _el$37.firstChild,
+        _el$39 = _el$38.nextSibling,
+        _el$40 = _el$37.nextSibling,
+        _el$41 = _el$40.firstChild,
+        _el$42 = _el$41.nextSibling,
+        _el$43 = _el$40.nextSibling,
+        _el$44 = _el$43.firstChild,
+        _el$45 = _el$44.nextSibling,
+        _el$46 = _el$32.nextSibling;
+      insert(_el$35, () => props.commentsTabs, _el$36);
+      className(_el$36, `${APP}__comments-panel`);
+      className(_el$37, `${APP}__comments-panel`);
+      className(_el$38, `${APP}__playlist`);
+      className(_el$39, `${APP}__playlist-empty`);
+      className(_el$40, `${APP}__comments-panel`);
+      className(_el$41, `${APP}__playlist`);
+      className(_el$42, `${APP}__playlist-empty`);
+      className(_el$43, `${APP}__comments-panel`);
+      className(_el$44, `${APP}__playlist`);
+      className(_el$45, `${APP}__playlist-empty`);
+      className(_el$46, `${APP}__back-to-top`);
+      insert(_el$46, () => backToTopIcon.content.firstElementChild);
+      return _el$31;
     })();
   }
   delegateEvents(["pointerdown", "pointerup", "click"]);
@@ -3015,9 +3077,8 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       body.comments-right #comments-resizer::before {
         content: "";
         position: absolute;
-        inset: 0 auto 0 50%;
+        inset: 0 auto 0 0;
         width: 1px;
-        transform: translateX(-50%);
         background: var(--line_regular, rgba(148, 153, 160, 0.36));
       }
       body.comments-right #comments-resizer:hover::before,
@@ -3933,7 +3994,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       button.appendChild(createSettingsIcon());
       const menu = document.createElement('div');
       menu.className = `${SETTINGS_CLASS}__menu`;
-      menu.append(createSettingsLabel('播放模式'), createSettingsOption('mode', 'home', '网页内弹窗'), createSettingsOption('mode', 'pip', 'Document PiP'), createSettingsLabel('封面点击'), createSettingsOption('direct', 'off', '按钮起播'), createSettingsOption('direct', 'on', '封面起播'));
+      menu.append(createSettingsLabel('播放模式'), createSettingsOption('mode', 'home', '网页内弹窗'), createSettingsOption('mode', 'pip', 'Document PiP'), createPipModeHint(), createSettingsLabel('封面点击'), createSettingsOption('direct', 'off', '按钮起播'), createSettingsOption('direct', 'on', '封面起播'));
       button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -3968,6 +4029,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       option.className = `${SETTINGS_CLASS}__option`;
       option.dataset.type = type;
       option.dataset.value = value;
+      if (type === 'mode' && value === 'pip') {
+        option.title = '建议保持 PiP 窗口常开，后续切视频会更快';
+        option.setAttribute('aria-describedby', `${APP}-pip-mode-hint`);
+      }
       option.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -3979,6 +4044,16 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         option.textContent = active ? `✓ ${text}` : text;
       });
       return option;
+    }
+    function createPipModeHint() {
+      const hint = document.createElement('div');
+      hint.id = `${APP}-pip-mode-hint`;
+      hint.className = `${SETTINGS_CLASS}__hint`;
+      hint.textContent = '建议保持 PiP 窗口常开，后续切视频会直接换源，关闭后再打开会重新初始化。';
+      createEffect(() => {
+        hint.hidden = modeSignal() !== 'pip';
+      });
+      return hint;
     }
     function sync() {
       setModeSignal(state.mode);
@@ -4053,6 +4128,17 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     const COMMENT_WIDTH_DEFAULT = 420;
     const COMMENT_WIDTH_MIN = 300;
     const COMMENT_WIDTH_MAX = 720;
+    const MODAL_HEIGHT_DEFAULT = 960;
+    const MODAL_WIDTH_MIN = 720;
+    const MODAL_HEIGHT_MIN = 420;
+    const MODAL_INLINE_MARGIN_MIN = 64;
+    const MODAL_INLINE_MARGIN_MAX = 220;
+    const MODAL_INLINE_MARGIN_RATIO = 0.08;
+    const MODAL_BLOCK_MARGIN_MIN = 96;
+    const MODAL_BLOCK_MARGIN_MAX = 220;
+    const MODAL_BLOCK_MARGIN_RATIO = 0.12;
+    const MODAL_HEADER_HEIGHT = 46;
+    const MODAL_COMMENTS_RESIZER_WIDTH = 8;
     const PLAYER_CHROME_HEIGHT = 48;
     const PLAYER_CHROME_HEIGHT_WIDE = 56;
     const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
@@ -4070,6 +4156,15 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       return clampCommentWidth(Number.isFinite(value) ? value : COMMENT_WIDTH_DEFAULT);
     })();
     const initialCommentLayout = localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'bottom' ? 'bottom' : 'right';
+    const initialModalSize = (() => {
+      try {
+        const value = JSON.parse(localStorage.getItem(STORAGE_MODAL_SIZE) || 'null');
+        if (!value) return null;
+        return clampHomeModalSize(value);
+      } catch {
+        return null;
+      }
+    })();
     const state = {
       observer: null,
       scanTimer: 0,
@@ -4084,6 +4179,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       directClick: localStorage.getItem(STORAGE_DIRECT_CLICK) === '1',
       commentLayout: initialCommentLayout,
       commentWidth: initialCommentWidth,
+      modalSize: initialModalSize,
       lastPlayed: initialLastPlayed,
       pipPlaying: null,
       switchToken: 0,
@@ -4360,6 +4456,17 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         margin: 4px 6px 6px;
         color: var(--${APP}-settings-muted);
         font-size: 12px;
+      }
+
+      .${SETTINGS_CLASS}__hint {
+        margin: 4px 6px 8px;
+        color: var(--${APP}-settings-muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .${SETTINGS_CLASS}__hint[hidden] {
+        display: none;
       }
 
       .${SETTINGS_CLASS}__option {
@@ -5091,9 +5198,11 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
         onHistoryNext: () => openPlaybackHistoryOffset(1),
         onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
+        onModalResizeStart: startHomeModalResize,
         onOpenOriginal: href => openOriginalPlaybackPage(href, state.home.player),
         onOpenPip: openCurrentHomeInPip,
         onPlayerControlClick: onHomePlayerControlClick,
+        onResetSize: resetHomeModalSize,
         onResizeStart: event => startCommentWidthDrag(event, window)
       });
       state.home.overlay = state.home.ui.overlay;
@@ -5121,6 +5230,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       document.addEventListener('keydown', onKeydown, true);
       ui.close.focus();
       syncHomeSize();
+      syncHomeModalSizeButton();
       schedulePlaylistAutoRefreshCheck('home');
     }
     function onCommentsTabChange(kind, tab) {
@@ -5155,6 +5265,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (!state.home.overlay) return;
       state.home.overlay.classList.toggle(`${APP}--fullscreen`, Boolean(active));
       syncHomeFullscreenButton();
+      syncHomeModalSizeButton();
       syncHomeSize();
     }
     function buildHomePrimarySetting(bootstrap) {
@@ -5250,7 +5361,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       recordPlaybackHistory
     });
     function getReusablePip(meta) {
-      if (!state.pip.win || state.pip.win.closed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
+      if (!state.pip.win || state.pip.win.closed || state.pip.win.__biliPopupPlayerNanoClosed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
       return {
         pipWindow: state.pip.win,
         bootstrap: state.pip.bootstrap
@@ -5283,7 +5394,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         return null;
       }
       let pipWindow;
-      if (state.pip.win && !state.pip.win.closed) {
+      if (state.pip.win && !state.pip.win.closed && !state.pip.win.__biliPopupPlayerNanoClosed) {
         pipWindow = state.pip.win;
         setLastButtonStatus('换源中');
       } else {
@@ -5299,6 +5410,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         }
         state.pip.win = pipWindow;
       }
+      attachPipWindowCloseSync(pipWindow);
       if (isLiveMeta(meta)) {
         state.pip.pageCards = [];
         state.pip.playlistCards = [];
@@ -5435,8 +5547,20 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         targetWindow.__biliPopupPlayerNanoResizeObserver = observer;
       }
     }
+    function attachPipWindowCloseSync(targetWindow) {
+      if (!targetWindow || targetWindow.closed || targetWindow.__biliPopupPlayerNanoCloseSyncBound) return;
+      targetWindow.__biliPopupPlayerNanoCloseSyncBound = true;
+      targetWindow.__biliPopupPlayerNanoClosed = false;
+      targetWindow.addEventListener('pagehide', () => {
+        if (state.pip.switchingWindow) return;
+        targetWindow.__biliPopupPlayerNanoClosed = true;
+        if (state.pip.win === targetWindow) state.pip.win = null;
+      }, {
+        capture: true
+      });
+    }
     function canReloadPip(pipWindow) {
-      return Boolean(pipWindow && !pipWindow.closed && state.pip.win === pipWindow && !isLiveBootstrap(state.pip.bootstrap) && state.pip.player && typeof state.pip.player.reload === 'function' && pipWindow.document?.getElementById('bilibili-player') && pipWindow.nano);
+      return Boolean(pipWindow && !pipWindow.closed && !pipWindow.__biliPopupPlayerNanoClosed && state.pip.win === pipWindow && !isLiveBootstrap(state.pip.bootstrap) && state.pip.player && typeof state.pip.player.reload === 'function' && pipWindow.document?.getElementById('bilibili-player') && pipWindow.nano);
     }
     async function reloadPipPlayer(targetWindow, bootstrap, token) {
       if (token !== state.switchToken || targetWindow.closed) return;
@@ -6269,6 +6393,137 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         }
       }, delay);
     }
+    function startHomeModalResize(event) {
+      if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) return;
+      const ui = state.home.ui;
+      const rect = ui?.dialog?.getBoundingClientRect();
+      if (!rect) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget?.setPointerCapture?.(event.pointerId);
+      state.home.overlay?.classList.add(`${APP}--modal-resizing`);
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startWidth = rect.width;
+      const startHeight = rect.height;
+      const onMove = moveEvent => {
+        moveEvent.preventDefault();
+        const axis = Math.abs(moveEvent.clientY - startY) > Math.abs(moveEvent.clientX - startX) ? 'height' : 'width';
+        setHomeModalSize({
+          width: startWidth + moveEvent.clientX - startX,
+          height: startHeight + moveEvent.clientY - startY
+        }, axis);
+      };
+      const onEnd = () => {
+        state.home.overlay?.classList.remove(`${APP}--modal-resizing`);
+        document.removeEventListener('pointermove', onMove, true);
+        document.removeEventListener('pointerup', onEnd, true);
+        document.removeEventListener('pointercancel', onEnd, true);
+        if (state.modalSize) localStorage.setItem(STORAGE_MODAL_SIZE, JSON.stringify(state.modalSize));
+      };
+      document.addEventListener('pointermove', onMove, true);
+      document.addEventListener('pointerup', onEnd, true);
+      document.addEventListener('pointercancel', onEnd, true);
+      onMove(event);
+    }
+    function setHomeModalSize(size, axis = 'width') {
+      state.modalSize = fitHomeModalSizeToPlayerRatio(size, axis);
+      syncHomeSize();
+      syncHomeModalSizeButton();
+    }
+    function resetHomeModalSize() {
+      state.modalSize = null;
+      localStorage.removeItem(STORAGE_MODAL_SIZE);
+      syncHomeSize();
+      syncHomeModalSizeButton();
+    }
+    function clampHomeModalSize(size) {
+      const width = Number(size?.width);
+      const height = Number(size?.height);
+      const fallbackWidth = Number.isFinite(width) ? width : getDefaultHomeModalWidth();
+      const fallbackHeight = Number.isFinite(height) ? height : MODAL_HEIGHT_DEFAULT;
+      const {
+        minWidth,
+        maxWidth,
+        minHeight,
+        maxHeight
+      } = getHomeModalSizeBounds();
+      return {
+        width: Math.round(Math.min(maxWidth, Math.max(minWidth, fallbackWidth))),
+        height: Math.round(Math.min(maxHeight, Math.max(minHeight, fallbackHeight)))
+      };
+    }
+    function fitHomeModalSizeToPlayerRatio(size, axis = 'width') {
+      const bounds = getHomeModalSizeBounds();
+      const extraWidth = getHomeModalExtraWidth();
+      const extraHeight = MODAL_HEADER_HEIGHT + getHomePlayerChromeHeight();
+      const width = Number(size?.width);
+      const height = Number(size?.height);
+      const fallbackPlayerWidth = Math.max(1, getDefaultHomeModalWidth() - extraWidth);
+      const requestedPlayerWidth = axis === 'height' ? ((Number.isFinite(height) ? height : MODAL_HEIGHT_DEFAULT) - extraHeight) * 16 / 9 : (Number.isFinite(width) ? width : getDefaultHomeModalWidth()) - extraWidth;
+      const playerMinByWidth = Math.max(1, bounds.minWidth - extraWidth);
+      const playerMaxByWidth = Math.max(1, bounds.maxWidth - extraWidth);
+      const playerMinByHeight = Math.max(1, (bounds.minHeight - extraHeight) * 16 / 9);
+      const playerMaxByHeight = Math.max(1, (bounds.maxHeight - extraHeight) * 16 / 9);
+      const playerMax = Math.max(1, Math.min(playerMaxByWidth, playerMaxByHeight));
+      const playerMin = Math.min(playerMax, Math.max(playerMinByWidth, playerMinByHeight));
+      const playerWidth = Math.min(playerMax, Math.max(playerMin, Number.isFinite(requestedPlayerWidth) ? requestedPlayerWidth : fallbackPlayerWidth));
+      return {
+        width: Math.round(playerWidth + extraWidth),
+        height: Math.round(playerWidth * 9 / 16 + extraHeight)
+      };
+    }
+    function getHomeModalSizeBounds() {
+      const maxWidth = Math.max(1, window.innerWidth - getHomeModalInlineMargin() * 2);
+      const maxHeight = Math.max(1, window.innerHeight - getHomeModalBlockMargin());
+      return {
+        maxWidth,
+        maxHeight,
+        minWidth: Math.min(MODAL_WIDTH_MIN, maxWidth),
+        minHeight: Math.min(MODAL_HEIGHT_MIN, maxHeight)
+      };
+    }
+    function getHomeModalInlineMargin() {
+      return Math.min(MODAL_INLINE_MARGIN_MAX, Math.max(MODAL_INLINE_MARGIN_MIN, window.innerWidth * MODAL_INLINE_MARGIN_RATIO));
+    }
+    function getHomeModalBlockMargin() {
+      return Math.min(MODAL_BLOCK_MARGIN_MAX, Math.max(MODAL_BLOCK_MARGIN_MIN, window.innerHeight * MODAL_BLOCK_MARGIN_RATIO));
+    }
+    function getDefaultHomeModalWidth() {
+      return Math.max(1, window.innerWidth - getHomeModalInlineMargin() * 2);
+    }
+    function getHomeModalExtraWidth() {
+      return state.commentLayout === 'right' && window.innerWidth > 900 ? state.commentWidth + MODAL_COMMENTS_RESIZER_WIDTH : 0;
+    }
+    function applyHomeModalSize() {
+      const ui = state.home.ui;
+      if (!ui?.dialog) return null;
+      if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) {
+        ui.dialog.style.width = '';
+        ui.dialog.style.height = '';
+        return null;
+      }
+      if (!state.modalSize) {
+        const size = fitHomeModalSizeToPlayerRatio({
+          width: getDefaultHomeModalWidth(),
+          height: MODAL_HEIGHT_DEFAULT
+        }, 'width');
+        ui.dialog.style.width = `${size.width}px`;
+        ui.dialog.style.height = `${size.height}px`;
+        return size;
+      }
+      const size = clampHomeModalSize(state.modalSize);
+      state.modalSize = size;
+      ui.dialog.style.width = `${size.width}px`;
+      ui.dialog.style.height = `${size.height}px`;
+      return size;
+    }
+    function syncHomeModalSizeButton() {
+      const ui = state.home.ui;
+      if (!ui?.resetSize) return;
+      const disabled = !state.modalSize || state.home.overlay?.classList.contains(`${APP}--fullscreen`);
+      ui.resetSize.disabled = Boolean(disabled);
+    }
     function syncHomeSize() {
       if (!state.home.ui?.playerRoot?.isConnected) return;
       syncHomePlayerFrame();
@@ -6282,25 +6537,20 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     function syncHomePlayerFrame() {
       const ui = state.home.ui;
       if (!ui?.dialog || !ui.content || !ui.playerWrap) return;
+      const modalSize = applyHomeModalSize();
+      const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
       if (state.commentLayout === 'right') {
-        ui.dialog.style.height = '';
         ui.playerWrap.style.height = '';
+        syncHomeModalSizeButton();
         return;
       }
       const availableWidth = ui.content.clientWidth;
       if (!availableWidth) return;
       const headerHeight = 46;
       const desiredHeight = Math.round(availableWidth * 9 / 16 + getHomePlayerChromeHeight());
-      const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
-      if (!fullscreen) {
-        const desiredDialogHeight = desiredHeight + headerHeight;
-        const maxDialogHeight = Math.max(320, window.innerHeight - 32);
-        ui.dialog.style.height = `${Math.min(desiredDialogHeight, maxDialogHeight)}px`;
-      } else {
-        ui.dialog.style.height = '';
-      }
-      const availableHeight = fullscreen ? ui.content.clientHeight || window.innerHeight : Math.max(1, Math.min(desiredHeight, window.innerHeight - 32 - headerHeight));
+      const availableHeight = fullscreen ? ui.content.clientHeight || window.innerHeight : Math.max(1, modalSize.height - headerHeight);
       ui.playerWrap.style.height = `${Math.min(desiredHeight, availableHeight)}px`;
+      syncHomeModalSizeButton();
     }
     function getHomePlayerChromeHeight() {
       return window.innerWidth >= PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT ? PLAYER_CHROME_HEIGHT_WIDE : PLAYER_CHROME_HEIGHT;

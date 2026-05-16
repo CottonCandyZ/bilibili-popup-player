@@ -610,11 +610,26 @@ function createStatItem(targetDocument, type, value, label) {
 }
 
 function createStatIcon(targetDocument, type) {
-  const template = targetDocument.createElement('template');
-  template.innerHTML = type === 'danmaku' ? danmakuIconMarkup() : viewIconMarkup();
-  const icon = template.content.firstElementChild;
-  icon.classList.add(`${APP}__playlist-stat-icon`);
-  return icon;
+  const markup = type === 'danmaku' ? danmakuIconMarkup() : viewIconMarkup();
+  const paths = [...markup.matchAll(/<path\s+d="([^"]+)"\s+fill="([^"]+)"><\/path>/g)];
+  if (!paths.length) {
+    const fallback = targetDocument.createElement('span');
+    fallback.className = `${APP}__playlist-stat-icon`;
+    fallback.setAttribute('aria-hidden', 'true');
+    return fallback;
+  }
+
+  const svg = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add(`${APP}__playlist-stat-icon`);
+  paths.forEach(([, d, fill]) => {
+    const path = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', fill);
+    svg.appendChild(path);
+  });
+  return svg;
 }
 
 function normalizeStats(stats) {

@@ -167,8 +167,8 @@ export function installDocumentStyle(targetDocument = document) {
 
       #${APP}-dialog {
         position: relative;
-        width: min(1360px, calc(100vw - 32px));
-        height: min(860px, calc(100vh - 32px));
+        width: calc(100vw - clamp(128px, 16vw, 440px));
+        height: min(960px, calc(100vh - clamp(96px, 12vh, 220px)));
         display: grid;
         grid-template-rows: 46px 1fr;
         overflow: hidden;
@@ -187,6 +187,10 @@ export function installDocumentStyle(targetDocument = document) {
         height: 100vh;
         border-radius: 0;
         box-shadow: none;
+      }
+
+      #${APP}-overlay.${APP}--fullscreen .${APP}__modal-resize-handle {
+        display: none;
       }
 
       #${APP}-header {
@@ -210,7 +214,7 @@ export function installDocumentStyle(targetDocument = document) {
 
       .${APP}__header-actions {
         display: inline-grid;
-        grid-template-columns: repeat(4, 32px);
+        grid-template-columns: repeat(5, 32px);
         gap: 4px;
         align-items: center;
         justify-content: end;
@@ -273,6 +277,32 @@ export function installDocumentStyle(targetDocument = document) {
       .${APP}__header-button:disabled:focus-visible {
         color: var(--${APP}-text-muted);
         background: transparent;
+      }
+
+      .${APP}__modal-resize-handle {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        z-index: 20;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: 0 0 8px 0;
+        color: var(--${APP}-text-muted);
+        background:
+          linear-gradient(135deg, transparent 0 52%, currentColor 52% 57%, transparent 57%),
+          linear-gradient(135deg, transparent 0 68%, currentColor 68% 73%, transparent 73%);
+        cursor: nwse-resize;
+        opacity: 0.72;
+      }
+
+      .${APP}__modal-resize-handle:hover,
+      .${APP}__modal-resize-handle:focus-visible,
+      #${APP}-overlay.${APP}--modal-resizing .${APP}__modal-resize-handle {
+        color: var(--${APP}-brand);
+        opacity: 1;
+        outline: none;
       }
 
       #${APP}-content {
@@ -349,15 +379,14 @@ export function installDocumentStyle(targetDocument = document) {
         min-width: 8px;
         height: 100%;
         cursor: col-resize;
-        background: transparent;
+        background: var(--bg1, #fff);
       }
 
       #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer::before {
         content: "";
         position: absolute;
-        inset: 0 auto 0 50%;
+        inset: 0 auto 0 0;
         width: 1px;
-        transform: translateX(-50%);
         background: rgba(148, 153, 160, 0.36);
       }
 
@@ -373,7 +402,7 @@ export function installDocumentStyle(targetDocument = document) {
 
       #${APP}-player-wrap {
         position: relative;
-        height: calc(min(860px, calc(100vh - 32px)) - 46px);
+        height: calc(min(960px, calc(100vh - clamp(96px, 12vh, 220px))) - 46px);
         min-width: 0;
         min-height: 0;
         background: #000;
@@ -752,7 +781,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         }
 
         #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
-          height: calc(min(860px, calc(100vh - 32px)) - 46px);
+          height: calc(min(960px, calc(100vh - clamp(96px, 12vh, 220px))) - 46px);
         }
 
         #${APP}-overlay.${APP}--comments-right #${APP}-comments {

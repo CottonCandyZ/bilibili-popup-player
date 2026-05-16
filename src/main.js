@@ -10,6 +10,7 @@ import {
   STORAGE_COMMENT_WIDTH,
   STORAGE_DIRECT_CLICK,
   STORAGE_LAST_PLAYED,
+  STORAGE_MODAL_SIZE,
   STORAGE_MODE,
   STYLE_ID,
 } from './constants.js';
@@ -75,6 +76,17 @@ import {
   const COMMENT_WIDTH_DEFAULT = 420;
   const COMMENT_WIDTH_MIN = 300;
   const COMMENT_WIDTH_MAX = 720;
+  const MODAL_HEIGHT_DEFAULT = 960;
+  const MODAL_WIDTH_MIN = 720;
+  const MODAL_HEIGHT_MIN = 420;
+  const MODAL_INLINE_MARGIN_MIN = 64;
+  const MODAL_INLINE_MARGIN_MAX = 220;
+  const MODAL_INLINE_MARGIN_RATIO = 0.08;
+  const MODAL_BLOCK_MARGIN_MIN = 96;
+  const MODAL_BLOCK_MARGIN_MAX = 220;
+  const MODAL_BLOCK_MARGIN_RATIO = 0.12;
+  const MODAL_HEADER_HEIGHT = 46;
+  const MODAL_COMMENTS_RESIZER_WIDTH = 8;
   const PLAYER_CHROME_HEIGHT = 48;
   const PLAYER_CHROME_HEIGHT_WIDE = 56;
   const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
@@ -96,6 +108,15 @@ import {
   })();
 
   const initialCommentLayout = localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'bottom' ? 'bottom' : 'right';
+  const initialModalSize = (() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(STORAGE_MODAL_SIZE) || 'null');
+      if (!value) return null;
+      return clampHomeModalSize(value);
+    } catch {
+      return null;
+    }
+  })();
 
   const state = {
     observer: null,
@@ -111,6 +132,7 @@ import {
     directClick: localStorage.getItem(STORAGE_DIRECT_CLICK) === '1',
     commentLayout: initialCommentLayout,
     commentWidth: initialCommentWidth,
+    modalSize: initialModalSize,
     lastPlayed: initialLastPlayed,
     pipPlaying: null,
     switchToken: 0,
@@ -394,6 +416,17 @@ import {
         margin: 4px 6px 6px;
         color: var(--${APP}-settings-muted);
         font-size: 12px;
+      }
+
+      .${SETTINGS_CLASS}__hint {
+        margin: 4px 6px 8px;
+        color: var(--${APP}-settings-muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .${SETTINGS_CLASS}__hint[hidden] {
+        display: none;
       }
 
       .${SETTINGS_CLASS}__option {
@@ -1245,9 +1278,11 @@ import {
       onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
       onHistoryNext: () => openPlaybackHistoryOffset(1),
       onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
+      onModalResizeStart: startHomeModalResize,
       onOpenOriginal: (href) => openOriginalPlaybackPage(href, state.home.player),
       onOpenPip: openCurrentHomeInPip,
       onPlayerControlClick: onHomePlayerControlClick,
+      onResetSize: resetHomeModalSize,
       onResizeStart: (event) => startCommentWidthDrag(event, window),
     });
     state.home.overlay = state.home.ui.overlay;
@@ -1274,6 +1309,7 @@ import {
     document.addEventListener('keydown', onKeydown, true);
     ui.close.focus();
     syncHomeSize();
+    syncHomeModalSizeButton();
     schedulePlaylistAutoRefreshCheck('home');
   }
 
@@ -1315,6 +1351,7 @@ import {
     if (!state.home.overlay) return;
     state.home.overlay.classList.toggle(`${APP}--fullscreen`, Boolean(active));
     syncHomeFullscreenButton();
+    syncHomeModalSizeButton();
     syncHomeSize();
   }
 
@@ -1411,7 +1448,7 @@ import {
   });
 
   function getReusablePip(meta) {
-    if (!state.pip.win || state.pip.win.closed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
+    if (!state.pip.win || state.pip.win.closed || state.pip.win.__biliPopupPlayerNanoClosed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
     return { pipWindow: state.pip.win, bootstrap: state.pip.bootstrap };
   }
 
@@ -1444,7 +1481,7 @@ import {
     }
 
     let pipWindow;
-    if (state.pip.win && !state.pip.win.closed) {
+    if (state.pip.win && !state.pip.win.closed && !state.pip.win.__biliPopupPlayerNanoClosed) {
       pipWindow = state.pip.win;
       setLastButtonStatus('换源中');
     } else {
@@ -1460,6 +1497,7 @@ import {
       }
       state.pip.win = pipWindow;
     }
+    attachPipWindowCloseSync(pipWindow);
 
     if (isLiveMeta(meta)) {
       state.pip.pageCards = [];
@@ -1616,10 +1654,22 @@ import {
     }
   }
 
+  function attachPipWindowCloseSync(targetWindow) {
+    if (!targetWindow || targetWindow.closed || targetWindow.__biliPopupPlayerNanoCloseSyncBound) return;
+    targetWindow.__biliPopupPlayerNanoCloseSyncBound = true;
+    targetWindow.__biliPopupPlayerNanoClosed = false;
+    targetWindow.addEventListener('pagehide', () => {
+      if (state.pip.switchingWindow) return;
+      targetWindow.__biliPopupPlayerNanoClosed = true;
+      if (state.pip.win === targetWindow) state.pip.win = null;
+    }, { capture: true });
+  }
+
   function canReloadPip(pipWindow) {
     return Boolean(
       pipWindow &&
       !pipWindow.closed &&
+      !pipWindow.__biliPopupPlayerNanoClosed &&
       state.pip.win === pipWindow &&
       !isLiveBootstrap(state.pip.bootstrap) &&
       state.pip.player &&
@@ -2539,6 +2589,164 @@ import {
     }, delay);
   }
 
+  function startHomeModalResize(event) {
+    if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) return;
+    const ui = state.home.ui;
+    const rect = ui?.dialog?.getBoundingClientRect();
+    if (!rect) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
+    state.home.overlay?.classList.add(`${APP}--modal-resizing`);
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = rect.width;
+    const startHeight = rect.height;
+
+    const onMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      const axis = Math.abs(moveEvent.clientY - startY) > Math.abs(moveEvent.clientX - startX) ? 'height' : 'width';
+      setHomeModalSize({
+        width: startWidth + moveEvent.clientX - startX,
+        height: startHeight + moveEvent.clientY - startY,
+      }, axis);
+    };
+    const onEnd = () => {
+      state.home.overlay?.classList.remove(`${APP}--modal-resizing`);
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerup', onEnd, true);
+      document.removeEventListener('pointercancel', onEnd, true);
+      if (state.modalSize) localStorage.setItem(STORAGE_MODAL_SIZE, JSON.stringify(state.modalSize));
+    };
+
+    document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('pointerup', onEnd, true);
+    document.addEventListener('pointercancel', onEnd, true);
+    onMove(event);
+  }
+
+  function setHomeModalSize(size, axis = 'width') {
+    state.modalSize = fitHomeModalSizeToPlayerRatio(size, axis);
+    syncHomeSize();
+    syncHomeModalSizeButton();
+  }
+
+  function resetHomeModalSize() {
+    state.modalSize = null;
+    localStorage.removeItem(STORAGE_MODAL_SIZE);
+    syncHomeSize();
+    syncHomeModalSizeButton();
+  }
+
+  function clampHomeModalSize(size) {
+    const width = Number(size?.width);
+    const height = Number(size?.height);
+    const fallbackWidth = Number.isFinite(width) ? width : getDefaultHomeModalWidth();
+    const fallbackHeight = Number.isFinite(height) ? height : MODAL_HEIGHT_DEFAULT;
+    const { minWidth, maxWidth, minHeight, maxHeight } = getHomeModalSizeBounds();
+    return {
+      width: Math.round(Math.min(maxWidth, Math.max(minWidth, fallbackWidth))),
+      height: Math.round(Math.min(maxHeight, Math.max(minHeight, fallbackHeight))),
+    };
+  }
+
+  function fitHomeModalSizeToPlayerRatio(size, axis = 'width') {
+    const bounds = getHomeModalSizeBounds();
+    const extraWidth = getHomeModalExtraWidth();
+    const extraHeight = MODAL_HEADER_HEIGHT + getHomePlayerChromeHeight();
+    const width = Number(size?.width);
+    const height = Number(size?.height);
+    const fallbackPlayerWidth = Math.max(1, getDefaultHomeModalWidth() - extraWidth);
+    const requestedPlayerWidth = axis === 'height'
+      ? ((Number.isFinite(height) ? height : MODAL_HEIGHT_DEFAULT) - extraHeight) * 16 / 9
+      : (Number.isFinite(width) ? width : getDefaultHomeModalWidth()) - extraWidth;
+    const playerMinByWidth = Math.max(1, bounds.minWidth - extraWidth);
+    const playerMaxByWidth = Math.max(1, bounds.maxWidth - extraWidth);
+    const playerMinByHeight = Math.max(1, (bounds.minHeight - extraHeight) * 16 / 9);
+    const playerMaxByHeight = Math.max(1, (bounds.maxHeight - extraHeight) * 16 / 9);
+    const playerMax = Math.max(1, Math.min(playerMaxByWidth, playerMaxByHeight));
+    const playerMin = Math.min(playerMax, Math.max(playerMinByWidth, playerMinByHeight));
+    const playerWidth = Math.min(
+      playerMax,
+      Math.max(playerMin, Number.isFinite(requestedPlayerWidth) ? requestedPlayerWidth : fallbackPlayerWidth),
+    );
+    return {
+      width: Math.round(playerWidth + extraWidth),
+      height: Math.round((playerWidth * 9) / 16 + extraHeight),
+    };
+  }
+
+  function getHomeModalSizeBounds() {
+    const maxWidth = Math.max(1, window.innerWidth - getHomeModalInlineMargin() * 2);
+    const maxHeight = Math.max(1, window.innerHeight - getHomeModalBlockMargin());
+    return {
+      maxWidth,
+      maxHeight,
+      minWidth: Math.min(MODAL_WIDTH_MIN, maxWidth),
+      minHeight: Math.min(MODAL_HEIGHT_MIN, maxHeight),
+    };
+  }
+
+  function getHomeModalInlineMargin() {
+    return Math.min(
+      MODAL_INLINE_MARGIN_MAX,
+      Math.max(MODAL_INLINE_MARGIN_MIN, window.innerWidth * MODAL_INLINE_MARGIN_RATIO),
+    );
+  }
+
+  function getHomeModalBlockMargin() {
+    return Math.min(
+      MODAL_BLOCK_MARGIN_MAX,
+      Math.max(MODAL_BLOCK_MARGIN_MIN, window.innerHeight * MODAL_BLOCK_MARGIN_RATIO),
+    );
+  }
+
+  function getDefaultHomeModalWidth() {
+    return Math.max(1, window.innerWidth - getHomeModalInlineMargin() * 2);
+  }
+
+  function getHomeModalExtraWidth() {
+    return state.commentLayout === 'right' && window.innerWidth > 900
+      ? state.commentWidth + MODAL_COMMENTS_RESIZER_WIDTH
+      : 0;
+  }
+
+  function applyHomeModalSize() {
+    const ui = state.home.ui;
+    if (!ui?.dialog) return null;
+
+    if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) {
+      ui.dialog.style.width = '';
+      ui.dialog.style.height = '';
+      return null;
+    }
+
+    if (!state.modalSize) {
+      const size = fitHomeModalSizeToPlayerRatio({
+        width: getDefaultHomeModalWidth(),
+        height: MODAL_HEIGHT_DEFAULT,
+      }, 'width');
+      ui.dialog.style.width = `${size.width}px`;
+      ui.dialog.style.height = `${size.height}px`;
+      return size;
+    }
+
+    const size = clampHomeModalSize(state.modalSize);
+    state.modalSize = size;
+    ui.dialog.style.width = `${size.width}px`;
+    ui.dialog.style.height = `${size.height}px`;
+    return size;
+  }
+
+  function syncHomeModalSizeButton() {
+    const ui = state.home.ui;
+    if (!ui?.resetSize) return;
+    const disabled = !state.modalSize || state.home.overlay?.classList.contains(`${APP}--fullscreen`);
+    ui.resetSize.disabled = Boolean(disabled);
+  }
+
   function syncHomeSize() {
     if (!state.home.ui?.playerRoot?.isConnected) return;
     syncHomePlayerFrame();
@@ -2553,9 +2761,11 @@ import {
   function syncHomePlayerFrame() {
     const ui = state.home.ui;
     if (!ui?.dialog || !ui.content || !ui.playerWrap) return;
+    const modalSize = applyHomeModalSize();
+    const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
     if (state.commentLayout === 'right') {
-      ui.dialog.style.height = '';
       ui.playerWrap.style.height = '';
+      syncHomeModalSizeButton();
       return;
     }
 
@@ -2564,19 +2774,12 @@ import {
 
     const headerHeight = 46;
     const desiredHeight = Math.round((availableWidth * 9) / 16 + getHomePlayerChromeHeight());
-    const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
-    if (!fullscreen) {
-      const desiredDialogHeight = desiredHeight + headerHeight;
-      const maxDialogHeight = Math.max(320, window.innerHeight - 32);
-      ui.dialog.style.height = `${Math.min(desiredDialogHeight, maxDialogHeight)}px`;
-    } else {
-      ui.dialog.style.height = '';
-    }
 
     const availableHeight = fullscreen
       ? ui.content.clientHeight || window.innerHeight
-      : Math.max(1, Math.min(desiredHeight, window.innerHeight - 32 - headerHeight));
+      : Math.max(1, modalSize.height - headerHeight);
     ui.playerWrap.style.height = `${Math.min(desiredHeight, availableHeight)}px`;
+    syncHomeModalSizeButton();
   }
 
   function getHomePlayerChromeHeight() {

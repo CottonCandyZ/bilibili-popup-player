@@ -8,6 +8,7 @@ import {
   createHistoryForwardIcon,
   createMaximizeIcon,
   createPictureInPictureIcon,
+  createResetSizeIcon,
 } from './icons.js';
 
 export function mountHomePlayerPage({
@@ -22,6 +23,8 @@ export function mountHomePlayerPage({
   onOpenOriginal,
   onOpenPip,
   onPlayerControlClick,
+  onResetSize,
+  onModalResizeStart,
   onResizeStart,
 }) {
   const mount = targetDocument.createElement('div');
@@ -45,6 +48,8 @@ export function mountHomePlayerPage({
       onOpenOriginal={onOpenOriginal}
       onOpenPip={onOpenPip}
       onPlayerControlClick={onPlayerControlClick}
+      onResetSize={onResetSize}
+      onModalResizeStart={onModalResizeStart}
       onResizeStart={onResizeStart}
       targetDocument={targetDocument}
     />
@@ -141,8 +146,8 @@ function HomePlayerPage(props) {
             <button
               type="button"
               class={`${APP}__header-button`}
-              title="在 Document PiP 打开"
-              aria-label="在 Document PiP 打开"
+              title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
+              aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
               ref={props.refs('openPip')}
               onClick={() => props.onOpenPip?.()}
             >
@@ -167,6 +172,16 @@ function HomePlayerPage(props) {
               onClick={() => props.onFullscreen?.()}
             >
               {createMaximizeIcon()}
+            </button>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="重置窗口尺寸"
+              aria-label="重置窗口尺寸"
+              ref={props.refs('resetSize')}
+              onClick={() => props.onResetSize?.()}
+            >
+              {createResetSizeIcon()}
             </button>
             <button
               type="button"
@@ -232,6 +247,14 @@ function HomePlayerPage(props) {
         >
           {backToTopIcon.content.firstElementChild}
         </button>
+        <button
+          type="button"
+          class={`${APP}__modal-resize-handle`}
+          title="调整窗口尺寸"
+          aria-label="调整窗口尺寸"
+          ref={props.refs('modalResizeHandle')}
+          onPointerDown={(event) => props.onModalResizeStart?.(event)}
+        />
       </section>
     </div>
   );

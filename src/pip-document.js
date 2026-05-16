@@ -66,9 +66,8 @@ export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, 
       body.comments-right #comments-resizer::before {
         content: "";
         position: absolute;
-        inset: 0 auto 0 50%;
+        inset: 0 auto 0 0;
         width: 1px;
-        transform: translateX(-50%);
         background: var(--line_regular, rgba(148, 153, 160, 0.36));
       }
       body.comments-right #comments-resizer:hover::before,

@@ -72,6 +72,13 @@ export function createPictureInPictureIcon() {
   ]));
 }
 
+export function createResetSizeIcon() {
+  return createIconFromMarkup(lucideIconMarkup([
+    'M3 12a9 9 0 1 0 3-6.7',
+    'M3 3v6h6',
+  ]));
+}
+
 export function createCloseIcon() {
   return createIconFromMarkup(lucideIconMarkup([
     'M18 6 6 18',

@@ -39,6 +39,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
       createSettingsLabel('播放模式'),
       createSettingsOption('mode', 'home', '网页内弹窗'),
       createSettingsOption('mode', 'pip', 'Document PiP'),
+      createPipModeHint(),
       createSettingsLabel('封面点击'),
       createSettingsOption('direct', 'off', '按钮起播'),
       createSettingsOption('direct', 'on', '封面起播'),
@@ -84,6 +85,10 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
     option.className = `${SETTINGS_CLASS}__option`;
     option.dataset.type = type;
     option.dataset.value = value;
+    if (type === 'mode' && value === 'pip') {
+      option.title = '建议保持 PiP 窗口常开，后续切视频会更快';
+      option.setAttribute('aria-describedby', `${APP}-pip-mode-hint`);
+    }
     option.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -100,6 +105,17 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
       option.textContent = active ? `✓ ${text}` : text;
     });
     return option;
+  }
+
+  function createPipModeHint() {
+    const hint = document.createElement('div');
+    hint.id = `${APP}-pip-mode-hint`;
+    hint.className = `${SETTINGS_CLASS}__hint`;
+    hint.textContent = '建议保持 PiP 窗口常开，后续切视频会直接换源，关闭后再打开会重新初始化。';
+    createEffect(() => {
+      hint.hidden = modeSignal() !== 'pip';
+    });
+    return hint;
   }
 
   function sync() {
