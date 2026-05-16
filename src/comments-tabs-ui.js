@@ -421,6 +421,7 @@ export function createCommentsTabsUi({
     createTabs,
     renderPlaylist,
     renderRecommendations,
+    scrollSelectedPlaylistIntoView,
     setSelectedPlaylistBvid,
     syncTabs,
   };

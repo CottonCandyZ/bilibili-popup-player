@@ -82,6 +82,7 @@ import {
     scanTimer: 0,
     scanWarmupTimer: 0,
     settingsVisibilityFrame: 0,
+    bottomFixedFrame: 0,
     viewportFrame: 0,
     lastFocus: null,
     lastButton: null,
@@ -160,6 +161,7 @@ import {
     createTabs: createCommentsTabs,
     renderPlaylist,
     renderRecommendations,
+    scrollSelectedPlaylistIntoView,
     setSelectedPlaylistBvid,
     syncTabs: syncCommentsTabs,
   } = commentsTabsUi;
@@ -1076,10 +1078,13 @@ import {
         }
       }
 
-      #${APP}-content .bili-comments-bottom-fixed-wrapper,
-      #${APP}-comments .bili-comments-bottom-fixed-wrapper,
-      #${APP}-comments-mount [class*="bottom-fixed"],
-      #${APP}-comments-mount [class*="fixed-wrapper"] {
+      body.${APP}--modal-open .bili-comments-bottom-fixed-wrapper,
+      body.${APP}--modal-open [class*="bottom-fixed"],
+      body.${APP}--modal-open [class*="fixed-wrapper"],
+      #${APP}-overlay .bili-comments-bottom-fixed-wrapper,
+      #${APP}-overlay [class*="bottom-fixed"],
+      #${APP}-overlay [class*="fixed-wrapper"],
+      .${APP}__bottom-fixed-hidden {
         display: none !important;
       }
 
@@ -1474,6 +1479,7 @@ import {
 
   function onDomMutated(mutations) {
     if (mutations.some(shouldSyncSettingsVisibilityMutation)) scheduleSettingsVisibilitySync();
+    if (state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) scheduleHomeBottomFixedWrapperSync();
     if (mutations.some(shouldRescanMutation)) scheduleScan();
   }
 
@@ -1797,7 +1803,7 @@ import {
 
   async function mountHomeComments(bootstrap, token) {
     state.home.bootstrap = bootstrap;
-    return mountComments({
+    const result = await mountComments({
       slot: state.home,
       mount: state.home.ui?.commentsMount,
       targetDocument: document,
@@ -1807,6 +1813,8 @@ import {
       getScrollContainer: getHomeCommentInstanceScrollContainer,
       isActive: () => token === state.switchToken && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`),
     }, bootstrap, token);
+    scheduleHomeBottomFixedWrapperSync();
+    return result;
   }
 
   const pipRenderer = {
@@ -2361,10 +2369,7 @@ import {
           transform: translateX(100%);
         }
       }
-      #layout .bili-comments-bottom-fixed-wrapper,
-      #comments .bili-comments-bottom-fixed-wrapper,
-      #comments-mount [class*="bottom-fixed"],
-      #comments-mount [class*="fixed-wrapper"] {
+      .${APP}__bottom-fixed-hidden {
         display: none !important;
       }
     </style>
@@ -2525,6 +2530,7 @@ import {
     }, bootstrap, token);
     attachPipCommentScrollSync(targetWindow);
     schedulePipLayoutSync(targetWindow);
+    schedulePipBottomFixedWrapperSync(targetWindow);
     return result;
   }
 
@@ -2540,6 +2546,19 @@ import {
   function syncCommentLayout() {
     syncHomeCommentLayout();
     if (state.pip.win && !state.pip.win.closed) syncPipCommentLayout(state.pip.win);
+    scheduleSelectedPlaylistScrollForLayout();
+    scheduleHomeBottomFixedWrapperSync();
+    if (state.pip.win && !state.pip.win.closed) schedulePipBottomFixedWrapperSync(state.pip.win);
+  }
+
+  function scheduleSelectedPlaylistScrollForLayout() {
+    window.requestAnimationFrame(() => {
+      if (state.commentLayout !== 'right') return;
+      if (state.home.activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView('home');
+      if (state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'playlist') {
+        scrollSelectedPlaylistIntoView('pip');
+      }
+    });
   }
 
   function syncCommentWidth() {
@@ -2567,11 +2586,18 @@ import {
     const ui = state.home.ui;
     if (!ui?.content || !ui.comments || ui.backToTop?.__biliPopupPlayerNanoScrollBound) return;
     ui.backToTop.__biliPopupPlayerNanoScrollBound = true;
-    ui.content.addEventListener('scroll', syncHomeBackToTopButton, { passive: true });
+    ui.content.addEventListener('scroll', () => {
+      syncHomeBackToTopButton();
+      scheduleHomeBottomFixedWrapperSync();
+    }, { passive: true });
     [ui.commentsPanel, ui.playlistPanel, ui.recommendPanel].forEach((panel) => {
-      panel?.addEventListener('scroll', syncHomeBackToTopButton, { passive: true });
+      panel?.addEventListener('scroll', () => {
+        syncHomeBackToTopButton();
+        scheduleHomeBottomFixedWrapperSync();
+      }, { passive: true });
     });
     syncHomeBackToTopButton();
+    scheduleHomeBottomFixedWrapperSync();
   }
 
   function attachHomePlaylistAutoRefresh() {
@@ -2695,6 +2721,55 @@ import {
     button.classList.toggle(`${APP}--visible`, scrollContainer.scrollTop > 240);
   }
 
+  function scheduleHomeBottomFixedWrapperSync() {
+    if (state.bottomFixedFrame) return;
+    state.bottomFixedFrame = window.requestAnimationFrame(() => {
+      state.bottomFixedFrame = 0;
+      syncBottomFixedWrappers({
+        doc: document,
+        root: state.home.ui?.overlay,
+      });
+    });
+  }
+
+  function schedulePipBottomFixedWrapperSync(targetWindow) {
+    if (!targetWindow || targetWindow.closed) return;
+    if (targetWindow.__biliPopupPlayerNanoBottomFixedFrame) return;
+    targetWindow.__biliPopupPlayerNanoBottomFixedFrame = targetWindow.requestAnimationFrame(() => {
+      targetWindow.__biliPopupPlayerNanoBottomFixedFrame = 0;
+      syncBottomFixedWrappers({
+        doc: targetWindow.document,
+        root: targetWindow.document?.body,
+      });
+    });
+  }
+
+  function syncBottomFixedWrappers({ doc, root }) {
+    if (!doc || !root) return;
+    const wrappers = getBottomFixedWrappers(doc, root);
+    if (!wrappers.length) return;
+    wrappers.forEach((wrapper) => {
+      wrapper.classList.add(`${APP}__bottom-fixed-hidden`);
+    });
+  }
+
+  function getBottomFixedWrappers(doc, root) {
+    const selectors = [
+      '.bili-comments-bottom-fixed-wrapper',
+      '[class*="bottom-fixed"]',
+      '[class*="fixed-wrapper"]',
+    ];
+    const scoped = [...(root.querySelectorAll?.(selectors.join(',')) || [])];
+    const bodyPortals = [...(doc.body?.querySelectorAll?.(selectors.join(',')) || [])]
+      .filter((element) => !root.contains(element) && isLikelyCommentFixedWrapper(element));
+    return [...new Set([...scoped, ...bodyPortals])];
+  }
+
+  function isLikelyCommentFixedWrapper(element) {
+    const text = `${element.className || ''} ${element.id || ''}`.toLowerCase();
+    return text.includes('comment') || text.includes('reply') || text.includes('bottom-fixed') || text.includes('fixed-wrapper');
+  }
+
   function syncPipBackToTopButton(targetWindow) {
     if (!targetWindow || targetWindow.closed) return;
     const button = targetWindow.document?.getElementById('back-to-top');
@@ -2728,6 +2803,7 @@ import {
     ui.overlay.classList.toggle(`${APP}--comments-right`, state.commentLayout === 'right');
     syncCommentWidth();
     syncHomeBackToTopButton();
+    scheduleHomeBottomFixedWrapperSync();
   }
 
   function getHomeCommentsScrollContainer() {
@@ -2759,6 +2835,7 @@ import {
     attachPipCommentScrollSync(targetWindow);
     attachPipBackToTopSync(targetWindow);
     syncPipBackToTopButton(targetWindow);
+    schedulePipBottomFixedWrapperSync(targetWindow);
     if (resize) syncPipSize(targetWindow);
   }
 
@@ -2868,6 +2945,7 @@ import {
       layout.__biliPopupPlayerNanoScrollSyncBound = true;
       layout.addEventListener('scroll', () => {
         syncPipBackToTopButton(targetWindow);
+        schedulePipBottomFixedWrapperSync(targetWindow);
         schedulePipLayoutSync(targetWindow);
       }, { passive: true });
     }
@@ -2877,6 +2955,7 @@ import {
       panel.__biliPopupPlayerNanoScrollSyncBound = true;
       panel.addEventListener('scroll', () => {
         syncPipBackToTopButton(targetWindow);
+        schedulePipBottomFixedWrapperSync(targetWindow);
         schedulePipLayoutSync(targetWindow);
       }, { passive: true });
     });
@@ -3174,6 +3253,7 @@ import {
     } catch {
       // Ignore resize failures.
     }
+    scheduleHomeBottomFixedWrapperSync();
     window.dispatchEvent(new Event('resize'));
   }
 
@@ -3238,6 +3318,7 @@ import {
     } catch {
       // Ignore resize failures.
     }
+    schedulePipBottomFixedWrapperSync(targetWindow);
     targetWindow.dispatchEvent(new targetWindow.Event('resize'));
     targetWindow.requestAnimationFrame(() => {
       const nextRect = stage?.getBoundingClientRect();
@@ -3445,6 +3526,7 @@ import {
     if (state.scanTimer) window.clearTimeout(state.scanTimer);
     if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
     if (state.settingsVisibilityFrame) cancelAnimationFrame(state.settingsVisibilityFrame);
+    if (state.bottomFixedFrame) cancelAnimationFrame(state.bottomFixedFrame);
     stopScanWarmup();
     closeHome();
     disposeHomePlayer();
