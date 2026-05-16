@@ -1547,6 +1547,26 @@
         height: 100% !important;
       }
 
+      #${APP}-player .bpx-player-ctrl-web,
+      #${APP}-player .bpx-player-ctrl-web-enter,
+      #${APP}-player .bpx-player-ctrl-web-leave,
+      #${APP}-player .bilibili-player-video-btn-web-fullscreen {
+        display: none !important;
+      }
+
+      #${APP}-player.bpx-player-web-full,
+      #${APP}-player .bpx-player-web-full,
+      #${APP}-player.bilibili-player-video-web-fullscreen,
+      #${APP}-player .bilibili-player-video-web-fullscreen {
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        z-index: 1 !important;
+      }
+
       #${APP}-comments {
         min-height: 520px;
         padding: 24px 32px 48px;
@@ -1964,11 +1984,9 @@
       });
 
       fullscreen.addEventListener('click', () => {
-        const active = !overlay.classList.contains(`${APP}--fullscreen`);
-        overlay.classList.toggle(`${APP}--fullscreen`, active);
-        syncHomeFullscreenButton();
-        syncHomeSize();
+        setHomeFullscreen(!overlay.classList.contains(`${APP}--fullscreen`));
       });
+      playerRoot.addEventListener('click', onHomePlayerControlClick, true);
 
       state.home.overlay = overlay;
       state.home.ui = { overlay, dialog, title, status, openOriginal, fullscreen, close, content, playerWrap, playerRoot, commentsResizer, comments, commentsMount };
@@ -1986,6 +2004,25 @@
       document.documentElement.style.overflow = 'hidden';
       document.addEventListener('keydown', onKeydown, true);
       ui.close.focus();
+      syncHomeSize();
+    }
+
+    function onHomePlayerControlClick(event) {
+      const target = event.target;
+      const control = target?.closest?.(
+        '.bpx-player-ctrl-web, .bpx-player-ctrl-web-enter, .bpx-player-ctrl-web-leave, .bilibili-player-video-btn-web-fullscreen',
+      );
+      if (!control || !state.home.ui?.playerRoot?.contains(control)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+    }
+
+    function setHomeFullscreen(active) {
+      if (!state.home.overlay) return;
+      state.home.overlay.classList.toggle(`${APP}--fullscreen`, Boolean(active));
+      syncHomeFullscreenButton();
       syncHomeSize();
     }
 
