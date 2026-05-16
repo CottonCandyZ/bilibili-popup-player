@@ -7,6 +7,7 @@ export const BADGE_CLASS = `${APP}__badge`;
 export const SETTINGS_CLASS = `${APP}__settings`;
 export const STORAGE_MODE = `${APP}:mode`;
 export const STORAGE_DIRECT_CLICK = `${APP}:direct-click`;
+export const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
 export const STORAGE_LAST_PLAYED = `${APP}:last-played`;
 export const ENABLED_URL_RE = /^https?:\/\/www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV)/;
 export const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;

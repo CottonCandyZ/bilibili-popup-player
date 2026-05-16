@@ -1,11 +1,12 @@
 import { createEffect, createSignal, onCleanup } from 'solid-js';
 import { render } from 'solid-js/web';
-import { APP, SETTINGS_CLASS, STORAGE_DIRECT_CLICK, STORAGE_MODE } from './constants.js';
+import { APP, SETTINGS_CLASS, STORAGE_COMMENT_LAYOUT, STORAGE_DIRECT_CLICK, STORAGE_MODE } from './constants.js';
 import { createSettingsIcon } from './icons.js';
 
-export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
+export function createSettingsUi({ state, getShadowRoot, syncCardButtons, syncCommentLayout }) {
   const [modeSignal, setModeSignal] = createSignal(state.mode);
   const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
+  const [commentLayoutSignal, setCommentLayoutSignal] = createSignal(state.commentLayout);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   function ensure() {
@@ -42,6 +43,9 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
       createSettingsLabel('封面点击'),
       createSettingsOption('direct', 'off', '按钮起播'),
       createSettingsOption('direct', 'on', '封面起播'),
+      createSettingsLabel('评论区'),
+      createSettingsOption('commentLayout', 'bottom', '评论在下'),
+      createSettingsOption('commentLayout', 'right', '评论在右'),
     );
 
     button.addEventListener('click', (event) => {
@@ -64,7 +68,8 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
     createEffect(() => {
       const mode = modeSignal();
       const directClick = directClickSignal();
-      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'}`;
+      const commentLayout = commentLayoutSignal();
+      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'} / ${commentLayout === 'right' ? '评论在右' : '评论在下'}`;
     });
 
     root.append(button, menu);
@@ -89,13 +94,16 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
       event.stopPropagation();
       if (type === 'mode') setPlaybackMode(value);
       else if (type === 'direct') setDirectCoverClick(value === 'on');
+      else if (type === 'commentLayout') setCommentLayout(value);
     });
     createEffect(() => {
       const active = type === 'mode'
         ? modeSignal() === value
         : type === 'direct'
           ? directClickSignal() === (value === 'on')
-          : false;
+          : type === 'commentLayout'
+            ? commentLayoutSignal() === value
+            : false;
       option.classList.toggle(`${APP}--active`, active);
       option.textContent = active ? `✓ ${text}` : text;
     });
@@ -105,7 +113,9 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
   function sync() {
     setModeSignal(state.mode);
     setDirectClickSignal(state.directClick);
+    setCommentLayoutSignal(state.commentLayout);
     syncCardButtons();
+    syncCommentLayout();
   }
 
   function setPlaybackMode(value) {
@@ -113,6 +123,13 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
     localStorage.setItem(STORAGE_MODE, value);
     setModeSignal(value);
     syncCardButtons();
+  }
+
+  function setCommentLayout(value) {
+    state.commentLayout = value === 'right' ? 'right' : 'bottom';
+    localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
+    setCommentLayoutSignal(state.commentLayout);
+    syncCommentLayout({ remount: true });
   }
 
   function setDirectCoverClick(value) {

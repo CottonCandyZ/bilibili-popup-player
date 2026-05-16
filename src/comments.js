@@ -13,8 +13,8 @@ export async function mountComments(adapter, bootstrap) {
     const CommentCtor = getCtor();
     if (!CommentCtor) throw new Error('BiliComments not available after comment script load');
 
-    const props = buildCommentProps(bootstrap);
     const scrollContainer = getScrollContainer?.();
+    const props = buildCommentProps(bootstrap, scrollContainer);
     if (reloadCommentInstance(slot.comments, props)) {
       applyCommentScrollContainer(slot.comments, scrollContainer);
       return;
@@ -55,14 +55,14 @@ function mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollC
   }
 }
 
-function applyCommentScrollContainer(instance, scrollContainer) {
+export function applyCommentScrollContainer(instance, scrollContainer) {
   if (!instance || !scrollContainer) return;
   const element = instance.el?.current;
   if (element) element.scrollContainer = scrollContainer;
 }
 
-function buildCommentProps(bootstrap) {
-  return {
+function buildCommentProps(bootstrap, scrollContainer) {
+  const props = {
     params: bootstrap.commentInfo.params,
     disableUpActions: true,
     disableVideoTime: false,
@@ -70,6 +70,8 @@ function buildCommentProps(bootstrap) {
     cmFromTrackId: bootstrap.commentInfo.cmFromTrackId,
     spmPrefix: bootstrap.commentInfo.spmPrefix,
   };
+  if (scrollContainer) props.scrollContainer = scrollContainer;
+  return props;
 }
 
 export function reloadCommentInstance(instance, props) {

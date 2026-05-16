@@ -6,12 +6,13 @@ import {
   ENABLED_URL_RE,
   HOST_ID,
   SETTINGS_CLASS,
+  STORAGE_COMMENT_LAYOUT,
   STORAGE_DIRECT_CLICK,
   STORAGE_LAST_PLAYED,
   STORAGE_MODE,
   STYLE_ID,
 } from './constants.js';
-import { disposeCommentInstance, mountComments } from './comments.js';
+import { applyCommentScrollContainer, disposeCommentInstance, mountComments } from './comments.js';
 import {
   createExternalLinkIcon,
   createMaximizeIcon,
@@ -59,6 +60,7 @@ import {
     lastButton: null,
     mode: localStorage.getItem(STORAGE_MODE) === 'pip' ? 'pip' : 'home',
     directClick: localStorage.getItem(STORAGE_DIRECT_CLICK) === '1',
+    commentLayout: localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'right' ? 'right' : 'bottom',
     lastPlayed: initialLastPlayed,
     pipPlaying: null,
     switchToken: 0,
@@ -73,11 +75,13 @@ import {
       ui: null,
       player: null,
       comments: null,
+      bootstrap: null,
     },
     pip: {
       win: null,
       player: null,
       comments: null,
+      bootstrap: null,
       switchingWindow: false,
     },
   };
@@ -86,6 +90,7 @@ import {
     state,
     getShadowRoot: () => state.shadowRoot,
     syncCardButtons,
+    syncCommentLayout,
   });
 
   window.__biliPopupPlayerNano = {
@@ -330,7 +335,7 @@ import {
 
       #${APP}-header {
         display: grid;
-        grid-template-columns: 1fr auto auto auto auto;
+        grid-template-columns: 1fr auto auto auto auto auto;
         align-items: center;
         gap: 8px;
         min-width: 0;
@@ -375,6 +380,13 @@ import {
         stroke: currentColor;
       }
 
+      .${APP}__header-button--text {
+        width: auto;
+        min-width: 72px;
+        padding: 0 10px;
+        font-size: 12px;
+      }
+
       .${APP}__header-button:hover,
       .${APP}__header-button:focus-visible,
       .${APP}__header-button.${APP}__header-button--active {
@@ -392,6 +404,12 @@ import {
         background: #0f1117;
       }
 
+      #${APP}-overlay.${APP}--comments-right #${APP}-content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+        overflow: hidden;
+      }
+
       #${APP}-player-wrap {
         position: relative;
         height: calc(min(860px, calc(100vh - 32px)) - 46px);
@@ -402,6 +420,11 @@ import {
 
       #${APP}-overlay.${APP}--fullscreen #${APP}-player-wrap {
         height: calc(100vh - 46px);
+      }
+
+      #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap,
+      #${APP}-overlay.${APP}--fullscreen.${APP}--comments-right #${APP}-player-wrap {
+        height: 100%;
       }
 
       #${APP}-player,
@@ -417,6 +440,17 @@ import {
         background: var(--bg1, #fff);
       }
 
+      #${APP}-overlay.${APP}--comments-right #${APP}-comments {
+        min-width: 0;
+        min-height: 0;
+        height: 100%;
+        padding: 18px 22px 40px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border-left: 1px solid var(--line_regular, #e3e5e7);
+      }
+
       #${APP}-comments-title {
         margin: 0 0 16px;
         color: var(--text1, #18191c);
@@ -427,6 +461,24 @@ import {
         min-height: 360px;
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
+      }
+
+      @media (max-width: 900px) {
+        #${APP}-overlay.${APP}--comments-right #${APP}-content {
+          display: block;
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+
+        #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
+          height: calc(min(860px, calc(100vh - 32px)) - 46px);
+        }
+
+        #${APP}-overlay.${APP}--comments-right #${APP}-comments {
+          height: auto;
+          overflow: visible;
+          border-left: 0;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -673,6 +725,7 @@ import {
 
   async function playHome(context, bootstrap, token) {
     const { ui } = context;
+    state.home.bootstrap = bootstrap;
     ui.title.textContent = bootstrap.title || ui.title.textContent;
     ui.openOriginal.dataset.href = bootstrap.href;
     ui.status.textContent = `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
@@ -710,6 +763,11 @@ import {
 
     const status = document.createElement('div');
     status.id = `${APP}-status`;
+
+    const commentsToggle = document.createElement('button');
+    commentsToggle.type = 'button';
+    commentsToggle.className = `${APP}__header-button ${APP}__header-button--text`;
+    commentsToggle.addEventListener('click', toggleCommentLayout);
 
     const openOriginal = document.createElement('button');
     openOriginal.type = 'button';
@@ -755,7 +813,7 @@ import {
     playerWrap.append(playerRoot);
     comments.append(commentsTitle, commentsMount);
     content.append(playerWrap, comments);
-    header.append(title, status, openOriginal, fullscreen, close);
+    header.append(title, status, commentsToggle, openOriginal, fullscreen, close);
     dialog.append(header, content);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
@@ -776,7 +834,8 @@ import {
     });
 
     state.home.overlay = overlay;
-    state.home.ui = { overlay, dialog, title, status, openOriginal, fullscreen, close, content, playerWrap, playerRoot, comments, commentsMount };
+    state.home.ui = { overlay, dialog, title, status, commentsToggle, openOriginal, fullscreen, close, content, playerWrap, playerRoot, comments, commentsMount };
+    syncHomeCommentLayout();
     return state.home.ui;
   }
 
@@ -786,6 +845,7 @@ import {
     state.home.overlay.removeAttribute('aria-hidden');
     ui.title.textContent = title;
     ui.content.scrollTop = 0;
+    syncHomeCommentLayout();
     document.documentElement.style.overflow = 'hidden';
     document.addEventListener('keydown', onKeydown, true);
     ui.close.focus();
@@ -840,6 +900,7 @@ import {
   }
 
   async function mountHomeComments(bootstrap, token) {
+    state.home.bootstrap = bootstrap;
     return mountComments({
       slot: state.home,
       mount: state.home.ui?.commentsMount,
@@ -847,7 +908,7 @@ import {
       getCtor: () => window.BiliComments,
       beforeLoad: () => ensureBiliThemeStylesheets(document),
       getPlayer: () => state.home.player,
-      getScrollContainer: () => state.home.ui?.content,
+      getScrollContainer: getHomeCommentsScrollContainer,
       isActive: () => token === state.switchToken && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`),
     }, bootstrap, token);
   }
@@ -907,6 +968,7 @@ import {
   }
 
   async function bootPipWindow(pipWindow, bootstrap, token) {
+    state.pip.bootstrap = bootstrap;
     if (canReloadPip(pipWindow)) {
       await reloadPipPlayer(pipWindow, bootstrap, token);
       return;
@@ -918,6 +980,7 @@ import {
     const stylesheetLinks = [...new Set([...bootstrap.stylesheets, ...getBiliThemeStylesheets()])]
       .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
       .join('\n');
+    const commentLayoutClass = state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom';
 
     writePipDocument(pipWindow, `<!doctype html>
 <html>
@@ -934,51 +997,43 @@ import {
         background: #000;
       }
       body {
-        position: relative;
+        overflow: hidden;
+        color: var(--text1, #18191c);
+      }
+      #shell {
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+      }
+      #layout {
+        min-width: 0;
+        min-height: 0;
+        height: 100vh;
+      }
+      body.comments-bottom #layout {
         overflow-x: hidden;
         overflow-y: auto;
+        overscroll-behavior: contain;
       }
-      #open-original {
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        z-index: 2147483647;
-        width: 34px;
-        height: 34px;
+      body.comments-right #layout {
         display: grid;
-        place-items: center;
-        border: 1px solid rgba(255, 255, 255, 0.24);
-        border-radius: 8px;
-        color: #fff;
-        background: rgba(24, 25, 28, 0.62);
-        text-decoration: none;
-        opacity: 0.52;
-        transition: opacity 0.16s ease, background 0.16s ease;
-      }
-      #open-original:hover,
-      #open-original:focus-visible {
-        opacity: 1;
-        background: rgba(251, 114, 153, 0.92);
-        outline: none;
-      }
-      #open-original svg {
-        width: 17px;
-        height: 17px;
-        display: block;
-        stroke: currentColor;
+        grid-template-columns: minmax(0, 1fr) minmax(300px, min(420px, 38vw));
+        overflow: hidden;
       }
       #stage {
         position: relative;
-        width: 100vw;
+        min-width: 0;
+        min-height: 0;
+        width: 100%;
         height: 100vh;
         background: #000;
       }
       #bilibili-player {
         position: relative;
-        width: 100vw !important;
-        height: 100vh !important;
-        min-width: 100vw;
-        min-height: 100vh;
+        width: 100% !important;
+        height: 100% !important;
+        min-width: 100%;
+        min-height: 100%;
         overflow: hidden;
         background: #000;
       }
@@ -994,6 +1049,46 @@ import {
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
       }
+      body.comments-right #comments {
+        min-width: 0;
+        min-height: 0;
+        height: 100vh;
+        padding: 18px 20px 40px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border-left: 1px solid var(--line_regular, #e3e5e7);
+      }
+      #${APP}-pip-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 100%;
+        margin-left: 4px;
+      }
+      #${APP}-pip-controls a,
+      #${APP}-pip-controls button {
+        height: 28px;
+        min-width: 34px;
+        padding: 0 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        background: rgba(255, 255, 255, 0.12);
+        text-decoration: none;
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      #${APP}-pip-controls a:hover,
+      #${APP}-pip-controls a:focus-visible,
+      #${APP}-pip-controls button:hover,
+      #${APP}-pip-controls button:focus-visible {
+        background: rgba(251, 114, 153, 0.92);
+        outline: none;
+      }
       #comments h2 {
         margin: 0 0 16px;
         color: var(--text1, #18191c);
@@ -1006,10 +1101,13 @@ import {
       }
     </style>
   </head>
-  <body>
-    <a id="open-original" href="${escapeHtml(bootstrap.href)}" target="_blank" rel="noopener noreferrer" title="打开原播放页" aria-label="打开原播放页">${externalLinkIconMarkup()}</a>
-    <div id="stage"><div id="bilibili-player"></div></div>
-    <section id="comments"><h2>评论</h2><div id="comments-mount">评论加载中...</div></section>
+  <body class="${commentLayoutClass}">
+    <div id="shell">
+      <main id="layout">
+        <div id="stage"><div id="bilibili-player"></div></div>
+        <section id="comments"><h2>评论</h2><div id="comments-mount">评论加载中...</div></section>
+      </main>
+    </div>
   </body>
 </html>`);
 
@@ -1035,10 +1133,11 @@ import {
   async function reloadPipPlayer(targetWindow, bootstrap, token) {
     if (token !== state.switchToken || targetWindow.closed) return;
 
+    state.pip.bootstrap = bootstrap;
     ensureStylesheetsInWindow(targetWindow, bootstrap.stylesheets);
     targetWindow.document.title = bootstrap.title || 'Bilibili 小窗播放';
-    const openOriginal = targetWindow.document.getElementById('open-original');
-    if (openOriginal) openOriginal.href = bootstrap.href;
+    syncPipCommentLayout(targetWindow);
+    ensurePipPlayerControls(targetWindow, bootstrap.href);
     syncPipSize(targetWindow);
     setPipStatus('换源中');
 
@@ -1080,6 +1179,7 @@ import {
     targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
     state.pip.player = player;
     player.connect();
+    ensurePipPlayerControls(targetWindow, bootstrap.href);
     syncPipSize(targetWindow);
     setPipStatus('已创建播放器');
 
@@ -1131,14 +1231,183 @@ import {
   }
 
   async function mountPipComments(targetWindow, bootstrap, token) {
+    state.pip.bootstrap = bootstrap;
     return mountComments({
       slot: state.pip,
       mount: targetWindow.document?.getElementById('comments-mount'),
       targetDocument: targetWindow.document,
       getCtor: () => targetWindow.BiliComments,
       getPlayer: () => state.pip.player,
+      getScrollContainer: () => getPipCommentsScrollContainer(targetWindow),
       isActive: () => token === state.switchToken && !targetWindow.closed,
     }, bootstrap, token);
+  }
+
+  function toggleCommentLayout() {
+    setCommentLayout(state.commentLayout === 'right' ? 'bottom' : 'right');
+  }
+
+  function setCommentLayout(value) {
+    const next = value === 'right' ? 'right' : 'bottom';
+    const changed = state.commentLayout !== next;
+    state.commentLayout = next;
+    localStorage.setItem(STORAGE_COMMENT_LAYOUT, state.commentLayout);
+    settingsUi.sync();
+    if (changed) syncCommentLayout({ remount: true });
+  }
+
+  function syncCommentLayout(options = {}) {
+    syncHomeCommentLayout();
+    if (state.pip.win && !state.pip.win.closed) syncPipCommentLayout(state.pip.win);
+    if (options.remount) remountCommentsForLayout();
+  }
+
+  function syncHomeCommentLayout() {
+    const ui = state.home.ui;
+    if (!ui?.overlay) return;
+    ui.overlay.classList.toggle(`${APP}--comments-right`, state.commentLayout === 'right');
+    ui.commentsToggle.textContent = state.commentLayout === 'right' ? '评论在下' : '评论在右';
+    ui.commentsToggle.title = state.commentLayout === 'right' ? '移动评论到下方' : '移动评论到右侧';
+    ui.commentsToggle.setAttribute('aria-label', ui.commentsToggle.title);
+    applyCommentScrollContainer(state.home.comments, getHomeCommentsScrollContainer());
+    syncHomeSize();
+  }
+
+  function getHomeCommentsScrollContainer() {
+    if (state.commentLayout === 'right' && !window.matchMedia('(max-width: 900px)').matches) {
+      return state.home.ui?.comments;
+    }
+    return state.home.ui?.content;
+  }
+
+  function syncPipCommentLayout(targetWindow, options = {}) {
+    if (!targetWindow || targetWindow.closed) return;
+    const body = targetWindow.document?.body;
+    if (!body) return;
+    const { resize = true } = options;
+    body.classList.toggle('comments-right', state.commentLayout === 'right');
+    body.classList.toggle('comments-bottom', state.commentLayout !== 'right');
+    const toggle = targetWindow.document.getElementById(`${APP}-pip-comment-toggle`);
+    if (toggle) {
+      toggle.textContent = state.commentLayout === 'right' ? '评论下' : '评论右';
+      toggle.title = state.commentLayout === 'right' ? '移动评论到下方' : '移动评论到右侧';
+      toggle.setAttribute('aria-label', toggle.title);
+    }
+    applyCommentScrollContainer(state.pip.comments, getPipCommentsScrollContainer(targetWindow));
+    if (resize) syncPipSize(targetWindow);
+  }
+
+  function remountCommentsForLayout() {
+    const token = state.switchToken;
+    if (state.home.bootstrap && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) {
+      disposeHomeComments();
+      if (state.home.ui.commentsMount) state.home.ui.commentsMount.textContent = '评论加载中...';
+      mountHomeComments(state.home.bootstrap, token);
+    }
+    if (state.pip.bootstrap && state.pip.win && !state.pip.win.closed) {
+      disposePipComments();
+      const mount = state.pip.win.document?.getElementById('comments-mount');
+      if (mount) mount.textContent = '评论加载中...';
+      mountPipComments(state.pip.win, state.pip.bootstrap, token);
+    }
+  }
+
+  function getPipCommentsScrollContainer(targetWindow) {
+    if (!targetWindow || targetWindow.closed) return null;
+    const doc = targetWindow.document;
+    return state.commentLayout === 'right' ? doc.getElementById('comments') : doc.getElementById('layout');
+  }
+
+  function ensurePipPlayerControls(targetWindow, href) {
+    if (!targetWindow || targetWindow.closed) return;
+    const doc = targetWindow.document;
+    const controls = getOrCreatePipControls(targetWindow, href);
+    const controlsToken = (targetWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
+    targetWindow.__biliPopupPlayerNanoControlsToken = controlsToken;
+    const isCurrentControlsRun = () => targetWindow.__biliPopupPlayerNanoControlsToken === controlsToken;
+
+    targetWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
+    targetWindow.__biliPopupPlayerNanoControlsObserver = null;
+
+    const attach = () => {
+      if (!isCurrentControlsRun() || targetWindow.closed || !doc.body) return false;
+      const bar = findPipControlBar(doc);
+      if (!bar) return false;
+      if (controls.parentNode !== bar) bar.appendChild(controls);
+      syncPipCommentLayout(targetWindow);
+      return true;
+    };
+
+    if (attach()) return;
+
+    let scheduled = false;
+    let stopped = false;
+    const stop = () => {
+      if (!isCurrentControlsRun()) return;
+      stopped = true;
+      targetWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
+      targetWindow.__biliPopupPlayerNanoControlsObserver = null;
+    };
+    const scheduleAttach = () => {
+      if (!isCurrentControlsRun() || scheduled || stopped || targetWindow.closed) return;
+      scheduled = true;
+      targetWindow.setTimeout(() => {
+        scheduled = false;
+        if (!isCurrentControlsRun()) return;
+        if (attach()) stop();
+      }, 120);
+    };
+
+    [250, 600, 1200, 2400, 4800].forEach((delay) => targetWindow.setTimeout(scheduleAttach, delay));
+    targetWindow.setTimeout(stop, 7000);
+
+    const observer = new targetWindow.MutationObserver(scheduleAttach);
+    observer.observe(doc.body || doc.documentElement, { childList: true, subtree: true });
+    targetWindow.__biliPopupPlayerNanoControlsObserver = observer;
+  }
+
+  function getOrCreatePipControls(targetWindow, href) {
+    const doc = targetWindow.document;
+    let controls = doc.getElementById(`${APP}-pip-controls`);
+    if (controls) {
+      const original = doc.getElementById(`${APP}-pip-original`);
+      if (original) original.href = href;
+      return controls;
+    }
+
+    controls = doc.createElement('div');
+    controls.id = `${APP}-pip-controls`;
+
+    const original = doc.createElement('a');
+    original.id = `${APP}-pip-original`;
+    original.href = href;
+    original.target = '_blank';
+    original.rel = 'noopener noreferrer';
+    original.title = '打开原播放页';
+    original.setAttribute('aria-label', '打开原播放页');
+    original.textContent = '原片';
+
+    const commentToggle = doc.createElement('button');
+    commentToggle.id = `${APP}-pip-comment-toggle`;
+    commentToggle.type = 'button';
+    commentToggle.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleCommentLayout();
+    });
+
+    controls.append(original, commentToggle);
+    return controls;
+  }
+
+  function findPipControlBar(doc) {
+    return doc.querySelector([
+      '.bpx-player-control-bottom-right',
+      '.bpx-player-control-bottom .bpx-player-control-bottom-right',
+      '.bpx-player-control-wrap .bpx-player-control-bottom-right',
+      '.bpx-player-ctrl-right',
+      '.bpx-player-control-bottom',
+    ].join(','));
   }
 
   function saveLastPlayed(meta, bootstrap) {
@@ -1201,10 +1470,14 @@ import {
   function syncPipSize(targetWindow) {
     const root = targetWindow.document?.getElementById('bilibili-player');
     if (!root) return;
-    root.style.width = `${targetWindow.innerWidth}px`;
-    root.style.height = `${targetWindow.innerHeight}px`;
-    root.style.minWidth = `${targetWindow.innerWidth}px`;
-    root.style.minHeight = `${targetWindow.innerHeight}px`;
+    const stage = targetWindow.document.getElementById('stage');
+    const rect = stage?.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect?.width || targetWindow.innerWidth));
+    const height = Math.max(1, Math.floor(rect?.height || targetWindow.innerHeight));
+    root.style.width = `${width}px`;
+    root.style.height = `${height}px`;
+    root.style.minWidth = `${width}px`;
+    root.style.minHeight = `${height}px`;
     try {
       state.pip.player?.resize?.();
     } catch {
@@ -1212,8 +1485,13 @@ import {
     }
     targetWindow.dispatchEvent(new targetWindow.Event('resize'));
     targetWindow.requestAnimationFrame(() => {
-      root.style.width = `${targetWindow.innerWidth}px`;
-      root.style.height = `${targetWindow.innerHeight}px`;
+      const nextRect = stage?.getBoundingClientRect();
+      const nextWidth = Math.max(1, Math.floor(nextRect?.width || targetWindow.innerWidth));
+      const nextHeight = Math.max(1, Math.floor(nextRect?.height || targetWindow.innerHeight));
+      root.style.width = `${nextWidth}px`;
+      root.style.height = `${nextHeight}px`;
+      root.style.minWidth = `${nextWidth}px`;
+      root.style.minHeight = `${nextHeight}px`;
       try {
         state.pip.player?.resize?.();
       } catch {
@@ -1313,6 +1591,9 @@ import {
 
   function writePipDocument(pipWindow, html) {
     state.pip.switchingWindow = true;
+    pipWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
+    delete pipWindow.__biliPopupPlayerNanoControlsObserver;
+    pipWindow.__biliPopupPlayerNanoControlsToken = (pipWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
     pipWindow.document.open();
     pipWindow.document.write(html);
     pipWindow.document.close();
