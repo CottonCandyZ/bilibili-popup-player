@@ -16,6 +16,26 @@
 - Violentmonkey：https://violentmonkey.github.io/get-it/
 - ScriptCat：https://chromewebstore.google.com/detail/scriptcat/ndcooeababalnlpkfedmmbbbgkljhpjf
 
+## 本地调试
+
+```sh
+pnpm run dev
+```
+
+然后在用户脚本管理器里安装根目录的 `bilibili-popup-player-nano.dev.user.js`。这个 dev loader 会从 `http://127.0.0.1:8715/bilibili-popup-player-nano.user.js` 拉取本地 bundle；改动源码后 Rollup 会自动重建，已打开的 B 站页面会自动刷新。
+
+## 发布
+
+```sh
+pnpm run release
+```
+
+默认自动 bump patch 版本并发布到 Cloudflare Pages。指定版本：
+
+```sh
+pnpm run release -- 0.3.0
+```
+
 ## 架构
 
 - 共用卡片扫描、封面点击拦截、播放页 SSR 解析、主题 CSS、评论组件、调试入口。

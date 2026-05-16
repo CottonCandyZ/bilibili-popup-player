@@ -5,7 +5,9 @@
   "scripts": {
     "build": "rollup -c && node scripts/prepare-dist.mjs",
     "check": "node --check src/main.js && node --check bilibili-popup-player-nano.user.js && node --check dist/bilibili-popup-player-nano.user.js",
-    "publish:pages": "pnpm build && node scripts/deploy-pages.mjs"
+    "dev": "node scripts/dev.mjs",
+    "publish:pages": "pnpm build && node scripts/deploy-pages.mjs",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^16.0.3",

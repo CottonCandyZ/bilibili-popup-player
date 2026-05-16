@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      0.2.3
+// @version      0.2.8
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -286,6 +286,55 @@
     };
   }
 
+  const COVER_HOST_SELECTOR = [
+    '.bili-video-card__image',
+    '.bili-video-card__cover',
+    '.pic-box',
+    '.pic',
+    '.framepreview-box',
+    '.video-awesome-img',
+    '.cover',
+    '.cover-contain',
+    '.history-card__cover',
+    '.bili-history-card__cover',
+    '[class*="cover"]',
+    '[class*="pic"]',
+    '[class*="image"]',
+    '[class*="poster"]',
+    '[class*="thumbnail"]',
+  ].join(',');
+
+  const CARD_ROOT_SELECTORS = [
+    '.bili-video-card',
+    '.feed-card',
+    '.floor-single-card',
+    '.carousel-item',
+    '[class*="carousel-item"]',
+    '.bili-video-card__wrap',
+    '.small-item',
+    '.history-card',
+    '.history-record',
+    '.bili-history-card',
+    '.video-item',
+    '.video-list-item',
+    '.search-card',
+    '.search-item',
+    '.list-item',
+    '.section-item',
+    '.video-card',
+    '.video-page-card-small',
+    '.video-page-operator-card-small',
+    '.card-box',
+    '.recommended-card',
+    '[class*="video-card"]',
+    '[class*="video-page-card"]',
+    '[class*="history"]',
+    '[class*="search"]',
+    '[class*="list-item"]',
+    '[class*="small-item"]',
+    '[class*="feed-card"]',
+  ];
+
   function normalizeVideoHref(rawHref) {
     if (!rawHref) return '';
     try {
@@ -326,42 +375,39 @@
     return /^https?:\/\/www\.bilibili\.com\/video\/BV/.test(location.href);
   }
 
+  function isSpacePage() {
+    return /^https?:\/\/space\.bilibili\.com\//.test(location.href);
+  }
+
   function getCardRoot(link) {
-    return link.closest('.bili-video-card') ||
-      link.closest('.feed-card') ||
-      link.closest('.bili-video-card__wrap') ||
-      link.closest('.small-item') ||
-      link.closest('.history-card') ||
-      link.closest('.history-record') ||
-      link.closest('.bili-history-card') ||
-      link.closest('.video-item') ||
-      link.closest('.video-list-item') ||
-      link.closest('.search-card') ||
-      link.closest('.search-item') ||
-      link.closest('.list-item') ||
-      link.closest('.section-item') ||
-      link.closest('.video-card') ||
-      link.closest('.video-page-card-small') ||
-      link.closest('.card-box') ||
-      link.closest('.recommended-card') ||
-      link.closest('[class*="video-card"]') ||
-      link.closest('[class*="video-page-card"]') ||
-      link.closest('[class*="history"]') ||
-      link.closest('[class*="search"]') ||
-      link.closest('[class*="list-item"]') ||
-      link.closest('[class*="small-item"]') ||
-      link.closest('[class*="feed-card"]') ||
-      link.parentElement;
+    for (const selector of CARD_ROOT_SELECTORS) {
+      const candidate = link.closest(selector);
+      if (candidate && countDistinctBvids(candidate) <= 1) return candidate;
+    }
+    return getFallbackCardRoot(link);
   }
 
   function isCoverLink(link) {
-    const coverSelector = '.bili-video-card__image, .bili-video-card__cover, .bili-video-card__wrap, .pic-box, .pic, .framepreview-box, .video-awesome-img, .cover, .cover-contain, .history-card__cover, .bili-history-card__cover, [class*="cover"], [class*="pic"], [class*="image"], [class*="poster"], [class*="thumbnail"]';
     return Boolean(
-      link.matches?.(coverSelector) ||
-      link.closest?.(coverSelector) ||
+      link.matches?.(COVER_HOST_SELECTOR) ||
+      link.closest?.(COVER_HOST_SELECTOR) ||
       link.querySelector?.('img, picture, video, canvas, svg[class*="play"]') ||
       /cover|pic|image/i.test(String(link.className || ''))
     );
+  }
+
+  function getFallbackCardRoot(link) {
+    const parent = link.parentElement;
+    if (!parent) return link;
+    return countDistinctBvids(parent) > 1 ? link : parent;
+  }
+
+  function countDistinctBvids(root) {
+    return new Set(
+      [...(root.querySelectorAll?.('a[href*="/video/BV"]') || [])]
+        .map((link) => normalizeVideoHref(link.getAttribute('href') || link.href).match(BV_RE)?.[1])
+        .filter(Boolean),
+    ).size;
   }
 
   async function resolvePlaybackBootstrap(meta) {
@@ -1154,6 +1200,8 @@
     const state = {
       observer: null,
       scanTimer: 0,
+      scanWarmupTimer: 0,
+      viewportFrame: 0,
       lastFocus: null,
       lastButton: null,
       mode: localStorage.getItem(STORAGE_MODE) === 'pip' ? 'pip' : 'home',
@@ -1203,13 +1251,19 @@
     ensureDocumentStyle();
     ensureSettings();
     scan();
-    window.addEventListener('scroll', scheduleOverlaySync, true);
-    window.addEventListener('resize', scheduleOverlaySync, true);
     document.addEventListener('mousemove', onDocumentMouseMove, true);
     document.addEventListener('mouseleave', onDocumentMouseLeave, true);
     document.addEventListener('click', onDirectCoverClick, true);
-    state.observer = new MutationObserver(scheduleScan);
-    state.observer.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('scroll', scheduleViewportSync, true);
+    window.addEventListener('resize', scheduleViewportSync, true);
+    state.observer = new MutationObserver(onDomMutated);
+    state.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['href', 'title', 'aria-label'],
+    });
+    startScanWarmup();
 
     function ensureShadowUi() {
       if (state.shadowRoot) return;
@@ -1221,7 +1275,7 @@
       host.id = HOST_ID;
       host.style.position = 'fixed';
       host.style.inset = '0';
-      host.style.zIndex = '2147483646';
+      host.style.zIndex = '2147482999';
       host.style.pointerEvents = 'none';
       document.documentElement.appendChild(host);
 
@@ -1232,53 +1286,58 @@
       const style = document.createElement('style');
       style.id = STYLE_ID;
       style.textContent = `
+      .${APP}__overlay {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+
       .${BUTTON_CLASS} {
-        position: absolute;
+        position: absolute !important;
         z-index: 20;
+        right: auto;
+        bottom: auto;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 72px;
         height: 28px;
         padding: 0 10px;
-        border: 0;
+        border: 1px solid var(--${APP}-settings-border);
         border-radius: 6px;
-        color: #fff;
-        background: rgba(251, 114, 153, 0.96);
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+        color: var(--${APP}-settings-text);
+        background: var(--${APP}-settings-bg-hover);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
         font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         cursor: pointer;
-        opacity: 0.92;
+        opacity: 0.96;
         pointer-events: auto;
-        transform: translate(-100%, -100%);
-        transition: opacity 0.16s ease, transform 0.16s ease, background 0.16s ease;
+        transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
       }
 
       .${BUTTON_CLASS}:hover,
       .${BUTTON_CLASS}:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-settings-brand);
+        background: var(--${APP}-settings-brand);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
         opacity: 1;
         outline: none;
-        transform: translate(-100%, -100%);
       }
 
       .${BADGE_CLASS} {
-        position: absolute;
+        position: absolute !important;
         z-index: 21;
         display: none;
         align-items: center;
         height: 24px;
         padding: 0 8px;
+        border: 1px solid var(--${APP}-settings-border);
         border-radius: 6px;
-        color: #fff;
-        background: rgba(24, 25, 28, 0.86);
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+        color: var(--${APP}-settings-subtle);
+        background: var(--${APP}-settings-bg);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
         font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        pointer-events: none;
-      }
-
-      .${APP}__overlay {
-        position: fixed;
-        inset: 0;
         pointer-events: none;
       }
 
@@ -1287,14 +1346,27 @@
       }
 
       .${BADGE_CLASS}.${APP}--playing {
-        background: rgba(251, 114, 153, 0.96);
+        color: #fff;
+        border-color: var(--${APP}-settings-brand);
+        background: var(--${APP}-settings-brand);
+      }
+
+      :host {
+        --${APP}-settings-bg: var(--bg1, #fff);
+        --${APP}-settings-bg-hover: var(--bg2, #f6f7f8);
+        --${APP}-settings-text: var(--text1, #18191c);
+        --${APP}-settings-subtle: var(--text2, #61666d);
+        --${APP}-settings-muted: var(--text3, #9499a0);
+        --${APP}-settings-border: var(--line_regular, #e3e5e7);
+        --${APP}-settings-brand: var(--brand_pink, #fb7299);
+        --${APP}-settings-shadow: rgba(0, 0, 0, 0.18);
       }
 
       .${SETTINGS_CLASS} {
         position: fixed;
         right: 16px;
         bottom: 96px;
-        z-index: 2147483646;
+        z-index: 2147482999;
         font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         pointer-events: auto;
       }
@@ -1304,11 +1376,11 @@
         height: 52px;
         display: grid;
         place-items: center;
-        border: 1px solid #e3e5e7;
+        border: 1px solid var(--${APP}-settings-border);
         border-radius: 10px;
-        color: #61666d;
-        background: #fff;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        color: var(--${APP}-settings-subtle);
+        background: var(--${APP}-settings-bg);
+        box-shadow: 0 2px 8px var(--${APP}-settings-shadow);
         cursor: pointer;
       }
 
@@ -1323,8 +1395,8 @@
       .${SETTINGS_CLASS}__button:focus-visible,
       .${SETTINGS_CLASS}.${APP}--open .${SETTINGS_CLASS}__button {
         color: #fff;
-        border-color: #fb7299;
-        background: #fb7299;
+        border-color: var(--${APP}-settings-brand);
+        background: var(--${APP}-settings-brand);
         outline: none;
       }
 
@@ -1335,11 +1407,11 @@
         width: 184px;
         padding: 8px;
         display: none;
-        border: 1px solid #e3e5e7;
+        border: 1px solid var(--${APP}-settings-border);
         border-radius: 8px;
-        color: #18191c;
-        background: #fff;
-        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+        color: var(--${APP}-settings-text);
+        background: var(--${APP}-settings-bg);
+        box-shadow: 0 10px 32px var(--${APP}-settings-shadow);
       }
 
       .${SETTINGS_CLASS}.${APP}--open .${SETTINGS_CLASS}__menu {
@@ -1348,7 +1420,7 @@
 
       .${SETTINGS_CLASS}__label {
         margin: 4px 6px 6px;
-        color: #9499a0;
+        color: var(--${APP}-settings-muted);
         font-size: 12px;
       }
 
@@ -1362,7 +1434,7 @@
         justify-content: space-between;
         border: 0;
         border-radius: 6px;
-        color: #18191c;
+        color: var(--${APP}-settings-text);
         background: transparent;
         cursor: pointer;
         text-align: left;
@@ -1371,13 +1443,13 @@
       .${SETTINGS_CLASS}__option:hover,
       .${SETTINGS_CLASS}__option:focus-visible,
       .${SETTINGS_CLASS}__option.${APP}--active {
-        color: #fb7299;
-        background: #f6f7f8;
+        color: var(--${APP}-settings-brand);
+        background: var(--${APP}-settings-bg-hover);
         outline: none;
       }
 
       .${SETTINGS_CLASS}__option:disabled {
-        color: #c9ccd0;
+        color: var(--${APP}-settings-muted);
         cursor: default;
         background: transparent;
       }
@@ -1394,15 +1466,124 @@
       const style = document.createElement('style');
       style.id = DOCUMENT_STYLE_ID;
       style.textContent = `
+      :root {
+        --${APP}-surface: var(--bg1, #fff);
+        --${APP}-surface-soft: var(--bg2, #f6f7f8);
+        --${APP}-surface-elevated: var(--bg1_float, var(--bg1, #fff));
+        --${APP}-text: var(--text1, #18191c);
+        --${APP}-text-subtle: var(--text2, #61666d);
+        --${APP}-text-muted: var(--text3, #9499a0);
+        --${APP}-border: var(--line_regular, #e3e5e7);
+        --${APP}-brand: var(--brand_pink, #fb7299);
+        --${APP}-brand-soft: var(--Pi5, rgba(251, 114, 153, 0.14));
+      }
+
+      .${BUTTON_CLASS} {
+        position: absolute !important;
+        z-index: 20;
+        right: 8px;
+        bottom: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 72px;
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--${APP}-border);
+        border-radius: 6px;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface-soft);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+        opacity: 0.96;
+        pointer-events: auto;
+        transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+      }
+
+      .${BUTTON_CLASS}:disabled {
+        color: var(--${APP}-text-muted);
+        background: var(--${APP}-surface-soft);
+        box-shadow: none;
+        cursor: default;
+      }
+
+      .${BUTTON_CLASS}:hover,
+      .${BUTTON_CLASS}:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        opacity: 1;
+        outline: none;
+      }
+
+      .${BADGE_CLASS} {
+        position: absolute !important;
+        z-index: 21;
+        top: 8px;
+        left: 8px;
+        display: none;
+        align-items: center;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 6px;
+        color: var(--${APP}-text-subtle);
+        border: 1px solid var(--${APP}-border);
+        background: var(--${APP}-surface-elevated);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        pointer-events: none;
+      }
+
+      .${BADGE_CLASS}.${APP}--active {
+        display: inline-flex;
+      }
+
+      .${BADGE_CLASS}.${APP}--playing {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+      }
 
       #${APP}-overlay {
         position: fixed;
         inset: 0;
-        z-index: 2147483647;
+        z-index: 2147483000;
         display: grid;
         place-items: center;
         padding: 16px;
         background: rgba(15, 18, 24, 0.68);
+      }
+
+      body.${APP}--modal-open > bili-photoswipe,
+      body.${APP}--modal-open > bili-modal,
+      body.${APP}--modal-open > .pswp,
+      body.${APP}--modal-open > .bili-modal,
+      body.${APP}--modal-open > .bili-photoswipe,
+      body.${APP}--modal-open > [class*="pswp"],
+      body.${APP}--modal-open > [class*="photoswipe"],
+      body.${APP}--modal-open > [class*="photo-swipe"],
+      body.${APP}--modal-open > [class*="image-preview"],
+      body.${APP}--modal-open > [class*="picture-preview"],
+      body.${APP}--modal-open > [class*="preview"][class*="modal"],
+      body.${APP}--modal-open > [class*="preview"][class*="popup"],
+      #${APP}-overlay bili-photoswipe,
+      #${APP}-overlay bili-modal,
+      #${APP}-overlay .pswp,
+      #${APP}-overlay .bili-modal,
+      #${APP}-overlay .bili-photoswipe,
+      #${APP}-overlay [class*="pswp"],
+      #${APP}-overlay [class*="photoswipe"],
+      #${APP}-overlay [class*="photo-swipe"],
+      #${APP}-overlay [class*="image-preview"],
+      #${APP}-overlay [class*="picture-preview"],
+      #${APP}-overlay [class*="preview"][class*="modal"],
+      #${APP}-overlay [class*="preview"][class*="popup"] {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 2147483647 !important;
       }
 
       #${APP}-overlay.${APP}--hidden {
@@ -1416,7 +1597,7 @@
         grid-template-rows: 46px 1fr;
         overflow: hidden;
         border-radius: 8px;
-        background: #11151d;
+        background: var(--${APP}-surface);
         box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
       }
 
@@ -1434,13 +1615,14 @@
 
       #${APP}-header {
         display: grid;
-        grid-template-columns: 1fr auto auto auto auto;
+        grid-template-columns: 1fr auto auto auto;
         align-items: center;
         gap: 8px;
         min-width: 0;
         padding: 0 10px 0 16px;
-        color: #f7f8fa;
-        background: #1c222d;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface-elevated);
+        border-bottom: 1px solid var(--${APP}-border);
       }
 
       #${APP}-title {
@@ -1452,12 +1634,7 @@
       }
 
       #${APP}-status {
-        max-width: 360px;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        color: #aeb7c6;
-        font-size: 12px;
+        display: none;
       }
 
       .${APP}__header-button {
@@ -1467,7 +1644,7 @@
         place-items: center;
         border: 0;
         border-radius: 6px;
-        color: #d8dde6;
+        color: var(--${APP}-text-subtle);
         background: transparent;
         cursor: pointer;
       }
@@ -1489,8 +1666,8 @@
       .${APP}__header-button:hover,
       .${APP}__header-button:focus-visible,
       .${APP}__header-button.${APP}__header-button--active {
-        color: #fff;
-        background: rgba(255, 255, 255, 0.12);
+        color: var(--${APP}-brand);
+        background: var(--${APP}-surface-soft);
         outline: none;
       }
 
@@ -1500,7 +1677,7 @@
         overflow-x: hidden;
         overflow-y: auto;
         overscroll-behavior: contain;
-        background: #0f1117;
+        background: var(--${APP}-surface);
       }
 
       #${APP}-overlay.${APP}--comments-right #${APP}-content {
@@ -1534,7 +1711,7 @@
       #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:hover::before,
       #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible::before,
       #${APP}-overlay.${APP}--resizing #${APP}-comments-resizer::before {
-        background: #fb7299;
+        background: var(--${APP}-brand);
       }
 
       #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer:focus-visible {
@@ -1653,6 +1830,44 @@
       window.open(href, '_blank', 'noopener,noreferrer');
     }
 
+    function openOriginalPlaybackPage(href, player) {
+      const nextHref = withPlaybackTime(href, getPlaybackTime(player));
+      console.debug('[bili-popup-player] open original page', { href, nextHref });
+      openOriginalPage(nextHref);
+      pausePlayer(player);
+    }
+
+    function withPlaybackTime(href, seconds) {
+      if (!href) return '';
+      const time = Math.floor(Number(seconds));
+      if (!Number.isFinite(time) || time <= 0) return href;
+      try {
+        const url = new URL(href, location.href);
+        url.searchParams.set('t', String(time));
+        return url.href;
+      } catch {
+        return href;
+      }
+    }
+
+    function getPlaybackTime(player) {
+      try {
+        const numeric = Number(player?.getCurrentTime?.());
+        if (Number.isFinite(numeric)) return numeric;
+      } catch {
+        // Ignore time read failures.
+      }
+      return 0;
+    }
+
+    function pausePlayer(player) {
+      try {
+        player?.pause?.();
+      } catch {
+        // Ignore pause failures.
+      }
+    }
+
     function setPipPlaying(bootstrap) {
       state.pipPlaying = bootstrap ? {
         title: bootstrap.title,
@@ -1669,7 +1884,13 @@
     function bindLink(link, meta = getVideoMetaFromLink(link)) {
       if (!meta) return;
       const card = getCardRoot(link);
-      if (!card || state.cardEntries.some((entry) => entry.card === card || entry.link === link)) return;
+      if (!card) return;
+
+      const existing = state.cardEntries.find((entry) => entry.card === card || entry.link === link);
+      if (existing) {
+        upgradeCardEntry(existing, link, card, meta);
+        return;
+      }
 
       const button = document.createElement('button');
       button.type = 'button';
@@ -1698,10 +1919,46 @@
       badge.className = BADGE_CLASS;
       badge.dataset.bvid = meta.bvid;
 
-      state.overlay.append(button, badge);
-      state.cardEntries.push({ card, link, button, badge, meta });
+      const overlayMode = shouldUseCardOverlay();
+      const host = overlayMode ? state.overlay : getCardControlHost(link, card);
+      if (!overlayMode) ensureCardHost(host);
+      host.append(button, badge);
+      state.cardEntries.push({ card, host, link, button, badge, meta, overlayMode });
       positionCardEntry(state.cardEntries[state.cardEntries.length - 1]);
       syncVideoBadge(badge);
+    }
+
+    function upgradeCardEntry(entry, link, card, meta) {
+      const currentIsCover = isCoverLink(entry.link);
+      const nextIsCover = isCoverLink(link);
+      if (entry.link === link || currentIsCover || !nextIsCover) {
+        entry.meta = meta;
+        entry.button.dataset.bvid = meta.bvid;
+        entry.button.dataset.href = meta.href;
+        entry.button.dataset.title = meta.title;
+        entry.badge.dataset.bvid = meta.bvid;
+        syncCardButton(entry.button);
+        syncVideoBadge(entry.badge);
+        positionCardEntry(entry);
+        return;
+      }
+
+      const overlayMode = shouldUseCardOverlay();
+      const host = overlayMode ? state.overlay : getCardControlHost(link, card);
+      if (!overlayMode) ensureCardHost(host);
+      host.append(entry.button, entry.badge);
+      entry.card = card;
+      entry.host = host;
+      entry.link = link;
+      entry.meta = meta;
+      entry.overlayMode = overlayMode;
+      entry.button.dataset.bvid = meta.bvid;
+      entry.button.dataset.href = meta.href;
+      entry.button.dataset.title = meta.title;
+      entry.badge.dataset.bvid = meta.bvid;
+      syncCardButton(entry.button);
+      syncVideoBadge(entry.badge);
+      positionCardEntry(entry);
     }
 
     function syncCardButtons() {
@@ -1728,16 +1985,6 @@
       badge.textContent = isPlaying ? '正在播放' : isLastPlayed ? '上次播放' : '';
       badge.classList.toggle(`${APP}--active`, active);
       badge.classList.toggle(`${APP}--playing`, isPlaying);
-      const entry = state.cardEntries.find((item) => item.badge === badge);
-      if (entry) positionCardEntry(entry);
-    }
-
-    function scheduleOverlaySync() {
-      if (state.overlayFrame) return;
-      state.overlayFrame = requestAnimationFrame(() => {
-        state.overlayFrame = 0;
-        syncOverlayPositions();
-      });
     }
 
     function syncOverlayPositions() {
@@ -1747,24 +1994,33 @@
           entry.badge.remove();
           return false;
         }
-        positionCardEntry(entry);
         return true;
       });
     }
 
     function positionCardEntry(entry) {
+      const hostRect = entry.overlayMode ? getCardControlRect(entry) : entry.host.getBoundingClientRect();
       const cardRect = getCardRect(entry);
-      const coverRect = getCoverRect(entry);
-      const visible = cardRect.width > 36 && cardRect.height > 28 && cardRect.bottom > 0 && cardRect.right > 0 && cardRect.top < innerHeight && cardRect.left < innerWidth;
+      const visible = hostRect.width > 36 && hostRect.height > 28 && hostRect.bottom > 0 && hostRect.right > 0 && hostRect.top < innerHeight && hostRect.left < innerWidth;
       const buttonVisible = visible && shouldShowCardButton(entry, cardRect);
       entry.button.style.display = buttonVisible ? 'inline-flex' : 'none';
       entry.badge.style.display = visible && entry.badge.classList.contains(`${APP}--active`) ? 'inline-flex' : 'none';
-      if (!visible) return;
+      if (!entry.overlayMode || !visible) return;
+      entry.button.style.left = `${Math.max(0, Math.round(hostRect.right - 80))}px`;
+      entry.button.style.top = `${Math.max(0, Math.round(hostRect.bottom - 36))}px`;
+      entry.badge.style.left = `${Math.max(0, Math.round(hostRect.left + 8))}px`;
+      entry.badge.style.top = `${Math.max(0, Math.round(hostRect.top + 8))}px`;
+    }
 
-      entry.button.style.left = `${Math.max(80, cardRect.right - 8)}px`;
-      entry.button.style.top = `${Math.max(36, cardRect.bottom - 8)}px`;
-      entry.badge.style.left = `${Math.max(0, coverRect.left + 8)}px`;
-      entry.badge.style.top = `${Math.max(0, coverRect.top + 8)}px`;
+    function getCardControlRect(entry) {
+      const coverLink = getCardCoverLink(entry.link, entry.card);
+      const target = coverLink || entry.link;
+      const host = getCardControlHost(target, entry.card);
+      return (host || target).getBoundingClientRect();
+    }
+
+    function shouldUseCardOverlay() {
+      return isPlaybackPage() || isSpacePage();
     }
 
     function getCardRect(entry) {
@@ -1783,28 +2039,77 @@
 
     function onDocumentMouseMove(event) {
       state.pointer = { x: event.clientX, y: event.clientY };
-      scheduleOverlaySync();
+      syncOverlayPositions();
+      state.cardEntries.forEach(positionCardEntry);
     }
 
     function onDocumentMouseLeave() {
       state.pointer = null;
-      scheduleOverlaySync();
+      syncOverlayPositions();
+      state.cardEntries.forEach(positionCardEntry);
     }
 
-    function getCoverRect(entry) {
-      const cover = entry.link.closest?.('.bili-video-card__image, .bili-video-card__cover, .bili-video-card__wrap, .pic-box, .pic, .framepreview-box, .video-awesome-img, .cover, [class*="cover"], [class*="pic"], [class*="image"]');
-      return (cover || entry.link).getBoundingClientRect();
+    function scheduleViewportSync() {
+      if (state.viewportFrame) return;
+      state.viewportFrame = requestAnimationFrame(() => {
+        state.viewportFrame = 0;
+        syncOverlayPositions();
+        state.cardEntries.forEach(positionCardEntry);
+      });
+    }
+
+    function ensureCardHost(card) {
+      const style = getComputedStyle(card);
+      if (style.position === 'static') card.style.position = 'relative';
+      if (style.display === 'inline') card.style.display = 'inline-block';
+      if (style.overflow === 'visible') return;
+      card.style.overflow = 'visible';
+    }
+
+    function getCardControlHost(link, card) {
+      const coverLink = getCardCoverLink(link, card) || link;
+      const host = coverLink.matches?.(COVER_HOST_SELECTOR)
+        ? coverLink
+        : coverLink.closest?.(COVER_HOST_SELECTOR);
+      if (!host || !card.contains(host)) return link.parentElement && card.contains(link.parentElement) ? link.parentElement : link;
+      if (host.tagName !== 'A' || host === card) return host;
+      const parent = host.parentElement;
+      return parent && card.contains(parent) ? parent : host;
+    }
+
+    function getCardCoverLink(link, card) {
+      if (isCoverLink(link)) return link;
+      const bvid = getVideoMetaFromLink(link)?.bvid;
+      if (!bvid) return null;
+      return [...(card.querySelectorAll?.('a[href*="/video/BV"]') || [])]
+        .find((candidate) => getVideoMetaFromLink(candidate)?.bvid === bvid && isCoverLink(candidate)) || null;
     }
 
     function scan() {
-      document.querySelectorAll(getVideoLinkSelector()).forEach((link) => {
-        const meta = getVideoMetaFromLink(link);
-        if (!meta || meta.bvid === getCurrentPageBvid()) return;
-        bindLink(link, meta);
-      });
+      [...document.querySelectorAll(getVideoLinkSelector())]
+        .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
+        .forEach((link) => {
+          const meta = getVideoMetaFromLink(link);
+          if (!meta || meta.bvid === getCurrentPageBvid()) return;
+          bindLink(link, meta);
+        });
       ensureSettings();
       syncVideoBadges();
       syncOverlayPositions();
+      state.cardEntries.forEach(positionCardEntry);
+    }
+
+    function onDomMutated(mutations) {
+      if (mutations.some(shouldRescanMutation)) scheduleScan();
+    }
+
+    function shouldRescanMutation(mutation) {
+      if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
+      if (mutation.type !== 'attributes') return false;
+      const target = mutation.target;
+      if (!(target instanceof Element)) return false;
+      return target.matches?.('a[href*="/video/"], a[href], [title], [aria-label]') ||
+        target.closest?.('.bili-video-card, .feed-card, .video-card, [class*="video-card"], [class*="feed-card"]');
     }
 
     function scheduleScan() {
@@ -1815,12 +2120,30 @@
       }, 180);
     }
 
+    function startScanWarmup() {
+      let count = 0;
+      state.scanWarmupTimer = window.setInterval(() => {
+        count += 1;
+        scan();
+        if (count >= 16) stopScanWarmup();
+      }, 750);
+    }
+
+    function stopScanWarmup() {
+      if (!state.scanWarmupTimer) return;
+      window.clearInterval(state.scanWarmupTimer);
+      state.scanWarmupTimer = 0;
+    }
+
     function getVideoLinkSelector() {
       if (!isPlaybackPage()) return 'a[href*="/video/BV"]';
       return [
         '.video-page-card-small a[href*="/video/BV"]',
+        '.video-page-operator-card-small a[href*="/video/BV"]',
         '.rec-list .video-page-card-small a[href*="/video/BV"]',
+        '.rec-list .video-page-operator-card-small a[href*="/video/BV"]',
         '.recommend-list .video-page-card-small a[href*="/video/BV"]',
+        '.recommend-list .video-page-operator-card-small a[href*="/video/BV"]',
       ].join(',');
     }
 
@@ -1851,6 +2174,13 @@
     }
 
     async function openWithRenderer(renderer, meta) {
+      const reusable = renderer.getReusable?.(meta);
+      if (reusable) {
+        const token = ++state.switchToken;
+        renderer.reuse(reusable, meta, token);
+        return;
+      }
+
       const token = ++state.switchToken;
       const context = await renderer.prepare(meta, token);
       if (!context || token !== state.switchToken) return;
@@ -1869,11 +2199,31 @@
     }
 
     const homeRenderer = {
+      getReusable: getReusableHome,
+      reuse: reuseHome,
       prepare: prepareHome,
       play: playHome,
       fail: failHome,
       isClosed: () => !state.home.overlay || state.home.overlay.classList.contains(`${APP}--hidden`),
     };
+
+    function getReusableHome(meta) {
+      if (!state.home.player || !state.home.bootstrap || !isSamePlayback(meta, state.home.bootstrap)) return null;
+      return { bootstrap: state.home.bootstrap };
+    }
+
+    function reuseHome(context, meta, token) {
+      const ui = ensureHomeShell();
+      const bootstrap = context.bootstrap;
+      showHomeShell(bootstrap.title || meta.title || meta.bvid);
+      ui.openOriginal.dataset.href = meta.href || bootstrap.href;
+      ui.status.textContent = '播放器：继续播放';
+      saveLastPlayed(meta, bootstrap);
+      bindHomeScreenChange(state.home.player);
+      syncHomeSize();
+      syncVideoBadges();
+      playHomeSoon(token, 80);
+    }
 
     async function prepareHome(meta) {
       const ui = ensureHomeShell();
@@ -1901,6 +2251,7 @@
     }
 
     function failHome(context, error) {
+      console.error('[bili-popup-player] modal init failed', error);
       context.ui.status.textContent = `初始化失败：${error?.message || 'unknown'}`;
     }
 
@@ -1977,7 +2328,7 @@
       playerWrap.append(playerRoot);
       comments.append(commentsTitle, commentsMount);
       content.append(playerWrap, commentsResizer, comments);
-      header.append(title, status, openOriginal, fullscreen, close);
+      header.append(title, openOriginal, fullscreen, close);
       dialog.append(header, content);
       overlay.appendChild(dialog);
       document.body.appendChild(overlay);
@@ -1997,7 +2348,7 @@
       });
 
       openOriginal.addEventListener('click', () => {
-        openOriginalPage(openOriginal.dataset.href);
+        openOriginalPlaybackPage(openOriginal.dataset.href, state.home.player);
       });
 
       fullscreen.addEventListener('click', () => {
@@ -2015,6 +2366,7 @@
       const ui = state.home.ui;
       state.home.overlay.classList.remove(`${APP}--hidden`);
       state.home.overlay.removeAttribute('aria-hidden');
+      document.body.classList.add(`${APP}--modal-open`);
       ui.title.textContent = title;
       ui.content.scrollTop = 0;
       syncHomeCommentLayout();
@@ -2108,6 +2460,8 @@
     }
 
     const pipRenderer = {
+      getReusable: getReusablePip,
+      reuse: reusePip,
       prepare: preparePip,
       play: playPip,
       fail: failPip,
@@ -2117,6 +2471,27 @@
       },
       isClosed: (context) => !context?.pipWindow || context.pipWindow.closed,
     };
+
+    function getReusablePip(meta) {
+      if (!state.pip.win || state.pip.win.closed || !state.pip.player || !state.pip.bootstrap || !isSamePlayback(meta, state.pip.bootstrap)) return null;
+      return { pipWindow: state.pip.win, bootstrap: state.pip.bootstrap };
+    }
+
+    function reusePip(context, meta) {
+      const bootstrap = context.bootstrap;
+      saveLastPlayed(meta, bootstrap);
+      ensurePipPlayerControls(context.pipWindow, meta.href || bootstrap.href);
+      syncPipCommentLayout(context.pipWindow);
+      syncPipSize(context.pipWindow);
+      setPipPlaying(bootstrap);
+      setPipStatus('播放中');
+      try {
+        context.pipWindow.focus?.();
+        state.pip.player.play?.();
+      } catch {
+        // Keep the existing PiP instance.
+      }
+    }
 
     async function preparePip(meta) {
       if (!('documentPictureInPicture' in window)) {
@@ -2243,7 +2618,7 @@
       body.comments-right #comments-resizer:hover::before,
       body.comments-right #comments-resizer:focus-visible::before,
       body.resizing-comments #comments-resizer::before {
-        background: #fb7299;
+        background: var(--brand_pink, #fb7299);
       }
       body.comments-right #comments-resizer:focus-visible {
         outline: none;
@@ -2776,7 +3151,10 @@
       let controls = doc.getElementById(`${APP}-pip-controls`);
       if (controls) {
         const original = doc.getElementById(`${APP}-pip-original`);
-        if (original) original.href = href;
+        if (original) {
+          original.dataset.href = href;
+          original.href = href;
+        }
         return controls;
       }
 
@@ -2786,14 +3164,28 @@
       const original = doc.createElement('a');
       original.id = `${APP}-pip-original`;
       original.href = href;
+      original.dataset.href = href;
       original.target = '_blank';
       original.rel = 'noopener noreferrer';
       original.title = '打开原播放页';
       original.setAttribute('aria-label', '打开原播放页');
       original.textContent = '原页面';
+      original.addEventListener('pointerdown', () => {
+        original.href = getPipOriginalHref(targetWindow, original.dataset.href);
+      });
+      original.addEventListener('click', () => {
+        original.href = getPipOriginalHref(targetWindow, original.dataset.href);
+      });
 
       controls.append(original);
       return controls;
+    }
+
+    function getPipOriginalHref(targetWindow, href) {
+      return withPlaybackTime(
+        href,
+        getPlaybackTime(state.pip.player),
+      );
     }
 
     function findPipOriginalButtonSlot(doc) {
@@ -2823,6 +3215,10 @@
       localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
       syncSettings();
       syncVideoBadges();
+    }
+
+    function isSamePlayback(meta, bootstrap) {
+      return Boolean(meta?.bvid && bootstrap?.playerInfo?.bvid && meta.bvid === bootstrap.playerInfo.bvid);
     }
 
     function updateDebug(primarySetting, bootstrap) {
@@ -2940,11 +3336,15 @@
     }
 
     function writePipLoading(pipWindow, title, href) {
+      const stylesheetLinks = getBiliThemeStylesheets()
+        .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
+        .join('\n');
       writePipDocument(pipWindow, `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
     <title>${escapeHtml(title || 'Bilibili 小窗播放')}</title>
+    ${stylesheetLinks}
     <style>
       html, body {
         margin: 0;
@@ -2952,8 +3352,8 @@
         height: 100%;
         display: grid;
         place-items: center;
-        color: #d8dde6;
-        background: #11151d;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
         font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       a {
@@ -2964,9 +3364,10 @@
         height: 34px;
         display: grid;
         place-items: center;
+        border: 1px solid var(--line_regular, #e3e5e7);
         border-radius: 8px;
-        color: #fff;
-        background: rgba(255, 255, 255, 0.12);
+        color: var(--text1, #18191c);
+        background: var(--bg2, #f6f7f8);
       }
       a svg {
         width: 17px;
@@ -2983,11 +3384,15 @@
     function writePipError(pipWindow, error, href) {
       disposePipPlayer();
       disposePipComments();
+      const stylesheetLinks = getBiliThemeStylesheets()
+        .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
+        .join('\n');
       writePipDocument(pipWindow, `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
     <title>初始化失败</title>
+    ${stylesheetLinks}
     <style>
       html, body {
         margin: 0;
@@ -2995,8 +3400,8 @@
         height: 100%;
         display: grid;
         place-items: center;
-        color: #f7f8fa;
-        background: #11151d;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
         font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       pre {
@@ -3011,9 +3416,10 @@
         height: 34px;
         display: grid;
         place-items: center;
+        border: 1px solid var(--line_regular, #e3e5e7);
         border-radius: 8px;
-        color: #fff;
-        background: rgba(255, 255, 255, 0.12);
+        color: var(--text1, #18191c);
+        background: var(--bg2, #f6f7f8);
       }
       a svg {
         width: 17px;
@@ -3067,6 +3473,7 @@
         // Keep instance alive.
       }
       document.documentElement.style.overflow = '';
+      document.body.classList.remove(`${APP}--modal-open`);
       document.removeEventListener('keydown', onKeydown, true);
       if (state.lastFocus?.isConnected) state.lastFocus.focus({ preventScroll: true });
     }
@@ -3111,6 +3518,8 @@
     function destroy() {
       state.observer?.disconnect();
       if (state.scanTimer) window.clearTimeout(state.scanTimer);
+      if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
+      stopScanWarmup();
       closeHome();
       disposeHomePlayer();
       disposePipPlayer();
@@ -3118,11 +3527,11 @@
       disposePipComments();
       if (state.home.overlay) state.home.overlay.remove();
       settingsUi.destroy();
-      window.removeEventListener('scroll', scheduleOverlaySync, true);
-      window.removeEventListener('resize', scheduleOverlaySync, true);
       document.removeEventListener('mousemove', onDocumentMouseMove, true);
       document.removeEventListener('mouseleave', onDocumentMouseLeave, true);
       document.removeEventListener('click', onDirectCoverClick, true);
+      window.removeEventListener('scroll', scheduleViewportSync, true);
+      window.removeEventListener('resize', scheduleViewportSync, true);
       state.shadowHost?.remove();
       document.getElementById(DOCUMENT_STYLE_ID)?.remove();
       document.documentElement.style.overflow = '';
