@@ -1,6 +1,13 @@
 import { render } from 'solid-js/web';
 import { APP } from './constants.js';
-import { arrowUpIconMarkup, createCloseIcon, createExternalLinkIcon, createMaximizeIcon } from './icons.js';
+import {
+  arrowUpIconMarkup,
+  createCloseIcon,
+  createExternalLinkIcon,
+  createHistoryBackIcon,
+  createHistoryForwardIcon,
+  createMaximizeIcon,
+} from './icons.js';
 
 export function mountHomePlayerPage({
   targetDocument = document,
@@ -9,6 +16,8 @@ export function mountHomePlayerPage({
   onBackdropClose,
   onClose,
   onFullscreen,
+  onHistoryNext,
+  onHistoryPrevious,
   onOpenOriginal,
   onPlayerControlClick,
   onResizeStart,
@@ -29,6 +38,8 @@ export function mountHomePlayerPage({
       onBackdropClose={onBackdropClose}
       onClose={onClose}
       onFullscreen={onFullscreen}
+      onHistoryNext={onHistoryNext}
+      onHistoryPrevious={onHistoryPrevious}
       onOpenOriginal={onOpenOriginal}
       onPlayerControlClick={onPlayerControlClick}
       onResizeStart={onResizeStart}
@@ -99,6 +110,28 @@ function HomePlayerPage(props) {
     >
       <section id={`${APP}-dialog`} ref={props.refs('dialog')}>
         <header id={`${APP}-header`}>
+          <div class={`${APP}__header-history`}>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="上一次播放"
+              aria-label="上一次播放"
+              ref={props.refs('historyPrevious')}
+              onClick={() => props.onHistoryPrevious?.()}
+            >
+              {createHistoryBackIcon()}
+            </button>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="下一次播放"
+              aria-label="下一次播放"
+              ref={props.refs('historyNext')}
+              onClick={() => props.onHistoryNext?.()}
+            >
+              {createHistoryForwardIcon()}
+            </button>
+          </div>
           <div id={`${APP}-title`} ref={props.refs('title')} />
           <div id={`${APP}-status`} ref={props.refs('status')} />
           <button

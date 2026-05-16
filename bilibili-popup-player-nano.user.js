@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.2.4
+// @version      3.2.5
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -567,6 +567,7 @@
     getHomeRenderer,
     getPipRenderer,
     getCommentLayout,
+    onTabChange,
     openWithRenderer,
     syncHomeSize,
     schedulePipLayoutSync
@@ -608,6 +609,7 @@
       getActiveSignal(kind)[1](state[kind].activeCommentsTab);
       syncTabs(kind);
       if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind);
+      onTabChange?.(kind, state[kind].activeCommentsTab);
       if (kind === 'home') syncHomeSize();else if (state.pip.win && !state.pip.win.closed) schedulePipLayoutSync(state.pip.win);
     }
     function syncTabs(kind) {
@@ -698,7 +700,11 @@
         stats: getEntryCardStats(root)
       };
     }
-    function renderPlaylist(kind, statusText = '当前页面没有扫到可播放卡片') {
+    function renderPlaylist(kind, statusText = '当前页面没有扫到可播放卡片', options = {}) {
+      if (typeof statusText === 'object') {
+        options = statusText;
+        statusText = '当前页面没有扫到可播放卡片';
+      }
       const ui = getUi(kind);
       if (!ui?.playlistList || !ui.playlistEmpty) return;
       renderCardList({
@@ -707,7 +713,8 @@
         cards: state[kind].playlistCards,
         emptyText: statusText,
         kind,
-        source: 'playlist'
+        source: 'playlist',
+        ...options
       });
     }
     function renderRecommendations(kind, bootstrap, statusText = '推荐列表加载中...') {
@@ -731,7 +738,9 @@
       emptyText,
       kind,
       source,
-      loading = false
+      loading = false,
+      appendLoading = false,
+      autoScrollSelected = true
     }) {
       const view = ensureListView({
         list,
@@ -739,6 +748,8 @@
         kind,
         source
       });
+      view.setAutoScrollSelected(Boolean(autoScrollSelected));
+      view.setAppendLoading(Boolean(appendLoading));
       view.setLoading(Boolean(loading));
       view.setEmptyText(emptyText);
       view.setCards(cards || []);
@@ -757,14 +768,17 @@
       const [cards, setCards] = createSignal([]);
       const [emptyText, setEmptyText] = createSignal('');
       const [loading, setLoading] = createSignal(false);
+      const [appendLoading, setAppendLoading] = createSignal(false);
+      const [autoScrollSelected, setAutoScrollSelected] = createSignal(true);
       const dispose = createRoot(disposeRoot => {
         createEffect(() => {
           const currentCards = cards();
           const currentLoading = loading();
+          const currentAppendLoading = appendLoading();
           const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : '';
           list.textContent = '';
-          empty.hidden = Boolean(currentLoading || currentCards.length);
-          empty.textContent = currentLoading || currentCards.length ? '' : emptyText();
+          empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
+          empty.textContent = currentLoading || currentAppendLoading || currentCards.length ? '' : emptyText();
           if (currentLoading) {
             appendSkeletonCards(list.ownerDocument, list, 6);
             return;
@@ -772,7 +786,8 @@
           currentCards.forEach(card => {
             list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected));
           });
-          if (source === 'playlist') scrollSelectedPlaylistIntoView(kind);
+          if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
+          if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
         });
         return disposeRoot;
       });
@@ -780,6 +795,8 @@
         dispose,
         empty,
         list,
+        setAppendLoading,
+        setAutoScrollSelected,
         setCards,
         setEmptyText,
         setLoading
@@ -939,7 +956,7 @@
   function appendStats(targetDocument, container, stats) {
     const values = normalizeStats(stats);
     if (!values.view && !values.danmaku) {
-      container.textContent = typeof stats === 'object' ? '' : cleanText(stats);
+      container.textContent = typeof stats === 'object' ? '' : cleanText$1(stats);
       return;
     }
     if (values.view) container.appendChild(createStatItem(targetDocument, 'view', values.view, '播放'));
@@ -966,11 +983,11 @@
     };
     if (typeof stats === 'object') {
       return {
-        view: cleanText(stats.view),
-        danmaku: cleanText(stats.danmaku)
+        view: cleanText$1(stats.view),
+        danmaku: cleanText$1(stats.danmaku)
       };
     }
-    const parts = cleanText(stats).split(/\s+/).filter(Boolean);
+    const parts = cleanText$1(stats).split(/\s+/).filter(Boolean);
     return {
       view: parts[0] || '',
       danmaku: parts[1] || ''
@@ -986,7 +1003,7 @@
     const bvid = getVideoMetaFromLink(link)?.bvid;
     const textLink = getEntryTextLink(root, bvid);
     const candidate = textLink?.textContent || getSafeTitleElementText$1(root, ['.bili-video-card__info--tit', '.video-page-card-small-title', '.title', '.info-title'].join(',')) || link?.getAttribute?.('title') || link?.getAttribute?.('aria-label') || root?.querySelector?.('img')?.getAttribute('alt') || fallback;
-    return cleanTitle(candidate || fallback || 'Bilibili 视频');
+    return cleanTitle$1(candidate || fallback || 'Bilibili 视频');
   }
   function getEntryTextLink(root, bvid) {
     if (!root || !bvid) return null;
@@ -1005,26 +1022,26 @@
     return normalizeResourceUrl(raw);
   }
   function getEntryCardSubtitle(root) {
-    return cleanText(root?.querySelector?.(['.upname', '.name', '.bili-video-card__info--author', '.video-page-card-small-author', '[class*="author"]'].join(','))?.textContent);
+    return cleanText$1(root?.querySelector?.(['.upname', '.name', '.bili-video-card__info--author', '.video-page-card-small-author', '[class*="author"]'].join(','))?.textContent);
   }
   function getEntryCardDuration(root) {
-    return cleanText(root?.querySelector?.(['.duration', '.bili-video-card__stats__duration', '[class*="duration"]'].join(','))?.textContent);
+    return cleanText$1(root?.querySelector?.(['.duration', '.bili-video-card__stats__duration', '[class*="duration"]'].join(','))?.textContent);
   }
   function getEntryCardStats(root) {
     const playInfo = root?.querySelector?.('.playinfo')?.textContent;
-    if (playInfo) return cleanText(playInfo);
-    const items = uniqueList([...(root?.querySelectorAll?.(['.bili-video-card__stats--text', '.bili-video-card__stats--item', '[class*="stats"] [class*="text"]'].join(',')) || [])].map(element => cleanText(element.textContent)).filter(Boolean));
+    if (playInfo) return cleanText$1(playInfo);
+    const items = uniqueList([...(root?.querySelectorAll?.(['.bili-video-card__stats--text', '.bili-video-card__stats--item', '[class*="stats"] [class*="text"]'].join(',')) || [])].map(element => cleanText$1(element.textContent)).filter(Boolean));
     return items.slice(0, 2).join(' ');
   }
-  function cleanText(value) {
+  function cleanText$1(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
-  function cleanTitle(value) {
-    const title = cleanText(value);
+  function cleanTitle$1(value) {
+    const title = cleanText$1(value);
     return isUsefulTitle$1(title) ? title : 'Bilibili 视频';
   }
   function isUsefulTitle$1(value) {
-    const title = cleanText(value);
+    const title = cleanText$1(value);
     return Boolean(title && title !== '不感兴趣' && title !== '撤销' && !title.includes('将减少此类内容推荐'));
   }
   function uniqueList(values) {
@@ -1034,11 +1051,160 @@
     return String(srcset || '').split(',')[0]?.trim().split(/\s+/)[0] || '';
   }
 
+  const HOME_FEED_API = 'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd';
+  const PAGE_SIZE = 12;
+  function isHomeFeedPage(url = globalThis.location?.href || '') {
+    try {
+      const parsed = new URL(url);
+      return parsed.hostname === 'www.bilibili.com' && (parsed.pathname === '/' || parsed.pathname === '/index.html');
+    } catch {
+      return false;
+    }
+  }
+  function createHomeFeedSession() {
+    return {
+      brush: 0,
+      fetchRow: 0,
+      freshIdx: 0,
+      freshIdx1h: 0,
+      lastYNum: 0,
+      shownIds: new Set(),
+      uniqId: String(Date.now() + Math.floor(Math.random() * 1000000)),
+      yNum: 0
+    };
+  }
+  async function fetchHomeFeedCards({
+    session,
+    existingCards = []
+  } = {}) {
+    if (!session) throw new Error('Missing home feed session');
+    const params = buildHomeFeedParams(session, existingCards);
+    const response = await fetch(`${HOME_FEED_API}?${params}`, {
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*'
+      }
+    });
+    if (!response.ok) throw new Error(`Home feed request failed: ${response.status}`);
+    const payload = await response.json();
+    if (payload?.code !== 0) throw new Error(payload?.message || `Home feed error: ${payload?.code}`);
+    const existingBvids = new Set(existingCards.map(card => card?.bvid).filter(Boolean));
+    const seenBvids = new Set(existingBvids);
+    const cards = (payload.data?.item || []).map(mapHomeFeedItem).filter(card => {
+      if (!card?.bvid || seenBvids.has(card.bvid)) return false;
+      seenBvids.add(card.bvid);
+      return true;
+    });
+    advanceHomeFeedSession(session, cards);
+    return cards;
+  }
+  function buildHomeFeedParams(session, existingCards) {
+    const showIds = [...existingCards.map(card => card?.showId).filter(Boolean), ...session.shownIds].slice(-60);
+    const nextFreshIdx = session.freshIdx + 1;
+    const nextFetchRow = session.fetchRow + 1;
+    const nextYNum = session.yNum + 4;
+    const params = new URLSearchParams({
+      web_location: '1430650',
+      y_num: String(nextYNum),
+      fresh_type: '4',
+      feed_version: 'V8',
+      fresh_idx_1h: String(session.freshIdx1h + 1),
+      fetch_row: String(nextFetchRow),
+      fresh_idx: String(nextFreshIdx),
+      brush: String(session.brush + 1),
+      device: 'win',
+      homepage_ver: '1',
+      ps: String(PAGE_SIZE),
+      last_y_num: String(session.lastYNum),
+      screen: getScreenParam(),
+      seo_info: '',
+      tt_exp: '',
+      uniq_id: session.uniqId
+    });
+    if (showIds.length) params.set('last_showlist', showIds.join(','));
+    return params;
+  }
+  function advanceHomeFeedSession(session, cards) {
+    session.brush += 1;
+    session.fetchRow += Math.max(1, Math.ceil(cards.length / 4));
+    session.freshIdx += 1;
+    session.freshIdx1h += 1;
+    session.lastYNum = session.yNum;
+    session.yNum += 4;
+    cards.forEach(card => {
+      if (card.showId) session.shownIds.add(card.showId);
+    });
+  }
+  function mapHomeFeedItem(item) {
+    if (!item || item.goto !== 'av' || !item.bvid) return null;
+    const href = normalizeVideoHref(item.uri || `/video/${item.bvid}`, 'https://www.bilibili.com/');
+    if (!href) return null;
+    return {
+      bvid: item.bvid,
+      cover: normalizeResourceUrl(item.pic, 'https://www.bilibili.com/'),
+      duration: formatDuration$1(item.duration),
+      href,
+      showId: item.id ? `av_${item.id}` : '',
+      stats: formatHomeFeedStats(item),
+      subtitle: cleanText(item.owner?.name),
+      title: cleanTitle(item.title)
+    };
+  }
+  function formatHomeFeedStats(item) {
+    const view = formatCount$1(item?.stat?.view);
+    const danmaku = formatCount$1(item?.stat?.danmaku);
+    return view || danmaku ? {
+      view,
+      danmaku
+    } : '';
+  }
+  function formatCount$1(value) {
+    const count = Number(value);
+    if (!Number.isFinite(count) || count <= 0) return '';
+    if (count >= 100000000) return `${trimFixed$1(count / 100000000)}亿`;
+    if (count >= 10000) return `${trimFixed$1(count / 10000)}万`;
+    return String(Math.round(count));
+  }
+  function trimFixed$1(value) {
+    return value.toFixed(1).replace(/\.0$/, '');
+  }
+  function formatDuration$1(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '';
+    const total = Math.round(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor(total % 3600 / 60);
+    const s = total % 60;
+    if (h) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  function getScreenParam() {
+    const width = Math.max(1, Math.round(globalThis.window?.innerWidth || globalThis.screen?.width || 0));
+    const height = Math.max(1, Math.round(globalThis.window?.innerHeight || globalThis.screen?.height || 0));
+    return `${width}-${height}`;
+  }
+  function cleanTitle(value) {
+    return cleanText(value) || 'Bilibili 视频';
+  }
+  function cleanText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  const LUCIDE_STROKE_WIDTH = '2';
+  function createIconFromMarkup(markup) {
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    return template.content.firstElementChild;
+  }
+  function lucideIconMarkup(paths) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${LUCIDE_STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths.map(d => `<path d="${d}"></path>`).join('')}</svg>`;
+  }
   function createSettingsIcon() {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', LUCIDE_STROKE_WIDTH);
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
@@ -1056,30 +1222,28 @@
     return svg;
   }
   function createExternalLinkIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = externalLinkIconMarkup();
-    return template.content.firstElementChild;
+    return createIconFromMarkup(externalLinkIconMarkup());
+  }
+  function createHistoryBackIcon() {
+    return createIconFromMarkup(lucideIconMarkup(['m11 17-5-5 5-5', 'm18 17-5-5 5-5']));
+  }
+  function createHistoryForwardIcon() {
+    return createIconFromMarkup(lucideIconMarkup(['m6 17 5-5-5-5', 'm13 17 5-5-5-5']));
   }
   function createMaximizeIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>';
-    return template.content.firstElementChild;
+    return createIconFromMarkup(lucideIconMarkup(['M8 3H5a2 2 0 0 0-2 2v3', 'M21 8V5a2 2 0 0 0-2-2h-3', 'M3 16v3a2 2 0 0 0 2 2h3', 'M16 21h3a2 2 0 0 0 2-2v-3']));
   }
   function createMinimizeIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3"></path><path d="M21 8h-3a2 2 0 0 1-2-2V3"></path><path d="M3 16h3a2 2 0 0 1 2 2v3"></path><path d="M16 21v-3a2 2 0 0 1 2-2h3"></path></svg>';
-    return template.content.firstElementChild;
+    return createIconFromMarkup(lucideIconMarkup(['M8 3v3a2 2 0 0 1-2 2H3', 'M21 8h-3a2 2 0 0 1-2-2V3', 'M3 16h3a2 2 0 0 1 2 2v3', 'M16 21v-3a2 2 0 0 1 2-2h3']));
   }
   function createCloseIcon() {
-    const template = document.createElement('template');
-    template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>';
-    return template.content.firstElementChild;
+    return createIconFromMarkup(lucideIconMarkup(['M18 6 6 18', 'm6 6 12 12']));
   }
   function externalLinkIconMarkup() {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
+    return lucideIconMarkup(['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6']);
   }
   function arrowUpIconMarkup() {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6"></path></svg>';
+    return lucideIconMarkup(['m18 15-6-6-6 6']);
   }
 
   function reconcileArrays(parentNode, a, b) {
@@ -1336,7 +1500,7 @@
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div></div><div></div><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器></button></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器></button></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
     _tmpl$2 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=comments-mount>评论加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>推荐列表加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
     targetDocument = document,
@@ -1345,6 +1509,8 @@
     onBackdropClose,
     onClose,
     onFullscreen,
+    onHistoryNext,
+    onHistoryPrevious,
     onOpenOriginal,
     onPlayerControlClick,
     onResizeStart
@@ -1363,6 +1529,8 @@
       onBackdropClose: onBackdropClose,
       onClose: onClose,
       onFullscreen: onFullscreen,
+      onHistoryNext: onHistoryNext,
+      onHistoryPrevious: onHistoryPrevious,
       onOpenOriginal: onOpenOriginal,
       onPlayerControlClick: onPlayerControlClick,
       onResizeStart: onResizeStart,
@@ -1405,24 +1573,27 @@
         _el$2 = _el$.firstChild,
         _el$3 = _el$2.firstChild,
         _el$4 = _el$3.firstChild,
-        _el$5 = _el$4.nextSibling,
+        _el$5 = _el$4.firstChild,
         _el$6 = _el$5.nextSibling,
-        _el$7 = _el$6.nextSibling,
+        _el$7 = _el$4.nextSibling,
         _el$8 = _el$7.nextSibling,
-        _el$9 = _el$3.nextSibling,
-        _el$0 = _el$9.firstChild,
-        _el$1 = _el$0.firstChild,
-        _el$10 = _el$0.nextSibling,
-        _el$11 = _el$10.nextSibling,
+        _el$9 = _el$8.nextSibling,
+        _el$0 = _el$9.nextSibling,
+        _el$1 = _el$0.nextSibling,
+        _el$10 = _el$3.nextSibling,
+        _el$11 = _el$10.firstChild,
         _el$12 = _el$11.firstChild,
-        _el$13 = _el$12.firstChild,
-        _el$14 = _el$12.nextSibling,
+        _el$13 = _el$11.nextSibling,
+        _el$14 = _el$13.nextSibling,
         _el$15 = _el$14.firstChild,
-        _el$16 = _el$15.nextSibling,
-        _el$17 = _el$14.nextSibling,
+        _el$16 = _el$15.firstChild,
+        _el$17 = _el$15.nextSibling,
         _el$18 = _el$17.firstChild,
         _el$19 = _el$18.nextSibling,
-        _el$20 = _el$9.nextSibling;
+        _el$20 = _el$17.nextSibling,
+        _el$21 = _el$20.firstChild,
+        _el$22 = _el$21.nextSibling,
+        _el$23 = _el$10.nextSibling;
       _el$.addEventListener("pointercancel", event => {
         backdropPointer = '0';
         event.currentTarget.dataset.backdropPointer = '0';
@@ -1444,81 +1615,92 @@
       typeof _ref$2 === "function" && use(_ref$2, _el$2);
       setAttribute(_el$2, "id", `${APP}-dialog`);
       setAttribute(_el$3, "id", `${APP}-header`);
-      var _ref$3 = props.refs('title');
-      typeof _ref$3 === "function" && use(_ref$3, _el$4);
-      setAttribute(_el$4, "id", `${APP}-title`);
-      var _ref$4 = props.refs('status');
-      typeof _ref$4 === "function" && use(_ref$4, _el$5);
-      setAttribute(_el$5, "id", `${APP}-status`);
-      _el$6.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
-      var _ref$5 = props.refs('openOriginal');
-      typeof _ref$5 === "function" && use(_ref$5, _el$6);
+      className(_el$4, `${APP}__header-history`);
+      _el$5.$$click = () => props.onHistoryPrevious?.();
+      var _ref$3 = props.refs('historyPrevious');
+      typeof _ref$3 === "function" && use(_ref$3, _el$5);
+      className(_el$5, `${APP}__header-button`);
+      insert(_el$5, createHistoryBackIcon);
+      _el$6.$$click = () => props.onHistoryNext?.();
+      var _ref$4 = props.refs('historyNext');
+      typeof _ref$4 === "function" && use(_ref$4, _el$6);
       className(_el$6, `${APP}__header-button`);
-      insert(_el$6, createExternalLinkIcon);
-      _el$7.$$click = () => props.onFullscreen?.();
-      var _ref$6 = props.refs('fullscreen');
-      typeof _ref$6 === "function" && use(_ref$6, _el$7);
-      className(_el$7, `${APP}__header-button`);
-      insert(_el$7, createMaximizeIcon);
-      _el$8.$$click = () => props.onClose?.();
-      var _ref$7 = props.refs('close');
-      typeof _ref$7 === "function" && use(_ref$7, _el$8);
-      className(_el$8, `${APP}__header-button ${APP}__header-button--close`);
-      insert(_el$8, createCloseIcon);
-      var _ref$8 = props.refs('content');
-      typeof _ref$8 === "function" && use(_ref$8, _el$9);
-      setAttribute(_el$9, "id", `${APP}-content`);
-      var _ref$9 = props.refs('playerWrap');
-      typeof _ref$9 === "function" && use(_ref$9, _el$0);
-      setAttribute(_el$0, "id", `${APP}-player-wrap`);
-      _el$1.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
-      var _ref$0 = props.refs('playerRoot');
-      typeof _ref$0 === "function" && use(_ref$0, _el$1);
-      setAttribute(_el$1, "id", `${APP}-player`);
-      _el$10.$$pointerdown = event => props.onResizeStart?.(event);
-      var _ref$1 = props.refs('commentsResizer');
-      typeof _ref$1 === "function" && use(_ref$1, _el$10);
-      setAttribute(_el$10, "id", `${APP}-comments-resizer`);
-      var _ref$10 = props.refs('comments');
-      typeof _ref$10 === "function" && use(_ref$10, _el$11);
-      setAttribute(_el$11, "id", `${APP}-comments`);
-      insert(_el$11, () => props.commentsTabs, _el$12);
-      var _ref$11 = props.refs('commentsPanel');
-      typeof _ref$11 === "function" && use(_ref$11, _el$12);
-      setAttribute(_el$12, "id", `${APP}-comments-panel`);
-      className(_el$12, `${APP}__comments-panel`);
-      var _ref$12 = props.refs('commentsMount');
-      typeof _ref$12 === "function" && use(_ref$12, _el$13);
-      setAttribute(_el$13, "id", `${APP}-comments-mount`);
-      var _ref$13 = props.refs('playlistPanel');
-      typeof _ref$13 === "function" && use(_ref$13, _el$14);
-      setAttribute(_el$14, "id", `${APP}-playlist-panel`);
-      className(_el$14, `${APP}__comments-panel`);
-      var _ref$14 = props.refs('playlistList');
-      typeof _ref$14 === "function" && use(_ref$14, _el$15);
-      setAttribute(_el$15, "id", `${APP}-playlist-list`);
-      className(_el$15, `${APP}__playlist`);
-      var _ref$15 = props.refs('playlistEmpty');
-      typeof _ref$15 === "function" && use(_ref$15, _el$16);
-      setAttribute(_el$16, "id", `${APP}-playlist-empty`);
-      className(_el$16, `${APP}__playlist-empty`);
-      var _ref$16 = props.refs('recommendPanel');
-      typeof _ref$16 === "function" && use(_ref$16, _el$17);
-      setAttribute(_el$17, "id", `${APP}-recommend-panel`);
+      insert(_el$6, createHistoryForwardIcon);
+      var _ref$5 = props.refs('title');
+      typeof _ref$5 === "function" && use(_ref$5, _el$7);
+      setAttribute(_el$7, "id", `${APP}-title`);
+      var _ref$6 = props.refs('status');
+      typeof _ref$6 === "function" && use(_ref$6, _el$8);
+      setAttribute(_el$8, "id", `${APP}-status`);
+      _el$9.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
+      var _ref$7 = props.refs('openOriginal');
+      typeof _ref$7 === "function" && use(_ref$7, _el$9);
+      className(_el$9, `${APP}__header-button`);
+      insert(_el$9, createExternalLinkIcon);
+      _el$0.$$click = () => props.onFullscreen?.();
+      var _ref$8 = props.refs('fullscreen');
+      typeof _ref$8 === "function" && use(_ref$8, _el$0);
+      className(_el$0, `${APP}__header-button`);
+      insert(_el$0, createMaximizeIcon);
+      _el$1.$$click = () => props.onClose?.();
+      var _ref$9 = props.refs('close');
+      typeof _ref$9 === "function" && use(_ref$9, _el$1);
+      className(_el$1, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$1, createCloseIcon);
+      var _ref$0 = props.refs('content');
+      typeof _ref$0 === "function" && use(_ref$0, _el$10);
+      setAttribute(_el$10, "id", `${APP}-content`);
+      var _ref$1 = props.refs('playerWrap');
+      typeof _ref$1 === "function" && use(_ref$1, _el$11);
+      setAttribute(_el$11, "id", `${APP}-player-wrap`);
+      _el$12.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
+      var _ref$10 = props.refs('playerRoot');
+      typeof _ref$10 === "function" && use(_ref$10, _el$12);
+      setAttribute(_el$12, "id", `${APP}-player`);
+      _el$13.$$pointerdown = event => props.onResizeStart?.(event);
+      var _ref$11 = props.refs('commentsResizer');
+      typeof _ref$11 === "function" && use(_ref$11, _el$13);
+      setAttribute(_el$13, "id", `${APP}-comments-resizer`);
+      var _ref$12 = props.refs('comments');
+      typeof _ref$12 === "function" && use(_ref$12, _el$14);
+      setAttribute(_el$14, "id", `${APP}-comments`);
+      insert(_el$14, () => props.commentsTabs, _el$15);
+      var _ref$13 = props.refs('commentsPanel');
+      typeof _ref$13 === "function" && use(_ref$13, _el$15);
+      setAttribute(_el$15, "id", `${APP}-comments-panel`);
+      className(_el$15, `${APP}__comments-panel`);
+      var _ref$14 = props.refs('commentsMount');
+      typeof _ref$14 === "function" && use(_ref$14, _el$16);
+      setAttribute(_el$16, "id", `${APP}-comments-mount`);
+      var _ref$15 = props.refs('playlistPanel');
+      typeof _ref$15 === "function" && use(_ref$15, _el$17);
+      setAttribute(_el$17, "id", `${APP}-playlist-panel`);
       className(_el$17, `${APP}__comments-panel`);
-      var _ref$17 = props.refs('recommendList');
-      typeof _ref$17 === "function" && use(_ref$17, _el$18);
-      setAttribute(_el$18, "id", `${APP}-recommend-list`);
+      var _ref$16 = props.refs('playlistList');
+      typeof _ref$16 === "function" && use(_ref$16, _el$18);
+      setAttribute(_el$18, "id", `${APP}-playlist-list`);
       className(_el$18, `${APP}__playlist`);
-      var _ref$18 = props.refs('recommendEmpty');
-      typeof _ref$18 === "function" && use(_ref$18, _el$19);
-      setAttribute(_el$19, "id", `${APP}-recommend-empty`);
+      var _ref$17 = props.refs('playlistEmpty');
+      typeof _ref$17 === "function" && use(_ref$17, _el$19);
+      setAttribute(_el$19, "id", `${APP}-playlist-empty`);
       className(_el$19, `${APP}__playlist-empty`);
-      _el$20.$$click = () => props.onBackToTop?.();
-      var _ref$19 = props.refs('backToTop');
-      typeof _ref$19 === "function" && use(_ref$19, _el$20);
-      className(_el$20, `${APP}__back-to-top`);
-      insert(_el$20, () => backToTopIcon.content.firstElementChild);
+      var _ref$18 = props.refs('recommendPanel');
+      typeof _ref$18 === "function" && use(_ref$18, _el$20);
+      setAttribute(_el$20, "id", `${APP}-recommend-panel`);
+      className(_el$20, `${APP}__comments-panel`);
+      var _ref$19 = props.refs('recommendList');
+      typeof _ref$19 === "function" && use(_ref$19, _el$21);
+      setAttribute(_el$21, "id", `${APP}-recommend-list`);
+      className(_el$21, `${APP}__playlist`);
+      var _ref$20 = props.refs('recommendEmpty');
+      typeof _ref$20 === "function" && use(_ref$20, _el$22);
+      setAttribute(_el$22, "id", `${APP}-recommend-empty`);
+      className(_el$22, `${APP}__playlist-empty`);
+      _el$23.$$click = () => props.onBackToTop?.();
+      var _ref$21 = props.refs('backToTop');
+      typeof _ref$21 === "function" && use(_ref$21, _el$23);
+      className(_el$23, `${APP}__back-to-top`);
+      insert(_el$23, () => backToTopIcon.content.firstElementChild);
       return _el$;
     })();
   }
@@ -1526,30 +1708,30 @@
     const backToTopIcon = props.targetDocument.createElement('template');
     backToTopIcon.innerHTML = arrowUpIconMarkup();
     return (() => {
-      var _el$21 = _tmpl$2(),
-        _el$22 = _el$21.firstChild,
-        _el$23 = _el$22.firstChild,
-        _el$24 = _el$23.nextSibling,
-        _el$25 = _el$24.nextSibling,
+      var _el$24 = _tmpl$2(),
+        _el$25 = _el$24.firstChild,
         _el$26 = _el$25.firstChild,
         _el$27 = _el$26.nextSibling,
-        _el$28 = _el$27.firstChild,
-        _el$29 = _el$28.nextSibling,
-        _el$30 = _el$27.nextSibling,
+        _el$28 = _el$27.nextSibling,
+        _el$29 = _el$28.firstChild,
+        _el$30 = _el$29.nextSibling,
         _el$31 = _el$30.firstChild,
         _el$32 = _el$31.nextSibling,
-        _el$33 = _el$22.nextSibling;
-      insert(_el$25, () => props.commentsTabs, _el$26);
-      className(_el$26, `${APP}__comments-panel`);
-      className(_el$27, `${APP}__comments-panel`);
-      className(_el$28, `${APP}__playlist`);
-      className(_el$29, `${APP}__playlist-empty`);
+        _el$33 = _el$30.nextSibling,
+        _el$34 = _el$33.firstChild,
+        _el$35 = _el$34.nextSibling,
+        _el$36 = _el$25.nextSibling;
+      insert(_el$28, () => props.commentsTabs, _el$29);
+      className(_el$29, `${APP}__comments-panel`);
       className(_el$30, `${APP}__comments-panel`);
       className(_el$31, `${APP}__playlist`);
       className(_el$32, `${APP}__playlist-empty`);
-      className(_el$33, `${APP}__back-to-top`);
-      insert(_el$33, () => backToTopIcon.content.firstElementChild);
-      return _el$21;
+      className(_el$33, `${APP}__comments-panel`);
+      className(_el$34, `${APP}__playlist`);
+      className(_el$35, `${APP}__playlist-empty`);
+      className(_el$36, `${APP}__back-to-top`);
+      insert(_el$36, () => backToTopIcon.content.firstElementChild);
+      return _el$24;
     })();
   }
   delegateEvents(["pointerdown", "pointerup", "click"]);
@@ -2024,6 +2206,10 @@
       pipPlaying: null,
       switchToken: 0,
       externalFeatureBlocks: [],
+      playbackHistory: {
+        entries: [],
+        index: -1
+      },
       pointer: null,
       settings: null,
       shadowHost: null,
@@ -2039,6 +2225,14 @@
         screenHandler: null,
         featureBlocked: false,
         activeCommentsTab: 'comments',
+        feed: {
+          error: '',
+          exhausted: false,
+          loading: false,
+          requestId: 0,
+          session: null
+        },
+        playlistRefreshFrame: 0,
         playlistCards: [],
         recommendationCards: [],
         selectedPlaylistBvid: ''
@@ -2065,6 +2259,7 @@
       getHomeRenderer: () => homeRenderer,
       getPipRenderer: () => pipRenderer,
       getCommentLayout: () => state.commentLayout,
+      onTabChange: onCommentsTabChange,
       openWithRenderer,
       syncHomeSize,
       schedulePipLayoutSync
@@ -2448,7 +2643,7 @@
 
       #${APP}-header {
         display: grid;
-        grid-template-columns: 1fr auto auto auto;
+        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
         align-items: center;
         gap: 8px;
         min-width: 0;
@@ -2456,6 +2651,13 @@
         color: var(--${APP}-text);
         background: var(--${APP}-surface-elevated);
         border-bottom: 1px solid var(--${APP}-border);
+      }
+
+      .${APP}__header-history {
+        display: inline-grid;
+        grid-template-columns: repeat(2, 32px);
+        gap: 2px;
+        align-items: center;
       }
 
       #${APP}-title {
@@ -2482,9 +2684,10 @@
         cursor: pointer;
       }
 
-      .${APP}__header-button--close {
-        width: 40px;
-        height: 40px;
+      .${APP}__header-button:disabled {
+        color: var(--${APP}-text-muted);
+        cursor: default;
+        opacity: 0.45;
       }
 
       .${APP}__header-button svg {
@@ -2492,11 +2695,6 @@
         height: 17px;
         display: block;
         stroke: currentColor;
-      }
-
-      .${APP}__header-button--close svg {
-        width: 20px;
-        height: 20px;
       }
 
       .${APP}__header-button--text {
@@ -2512,6 +2710,12 @@
         color: var(--${APP}-brand);
         background: var(--${APP}-surface-soft);
         outline: none;
+      }
+
+      .${APP}__header-button:disabled:hover,
+      .${APP}__header-button:disabled:focus-visible {
+        color: var(--${APP}-text-muted);
+        background: transparent;
       }
 
       #${APP}-content {
@@ -3363,6 +3567,7 @@
         saveLastPlayed(meta, bootstrap);
         await renderer.play(context, bootstrap, token);
         if (token !== state.switchToken || renderer.isClosed(context)) return;
+        recordPlaybackHistory(meta, bootstrap);
         renderer.done?.(context, bootstrap);
       } catch (error) {
         if (token !== state.switchToken || renderer.isClosed(context)) return;
@@ -3390,6 +3595,7 @@
       ui.openOriginal.dataset.href = meta.href || bootstrap.href;
       ui.status.textContent = '播放器：继续播放';
       saveLastPlayed(meta, bootstrap);
+      recordPlaybackHistory(meta, bootstrap);
       setSelectedPlaylistBvid('home', meta.bvid || bootstrap.playerInfo?.bvid);
       renderPlaylist('home');
       renderRecommendations('home', bootstrap);
@@ -3407,6 +3613,7 @@
         setSelectedPlaylistBvid('home', meta.bvid);
         renderPlaylist('home');
       } else {
+        resetHomePlaylistFeed();
         capturePagePlaylist('home', meta.bvid);
       }
       renderRecommendations('home', null);
@@ -3445,12 +3652,15 @@
         onBackdropClose: closeHome,
         onClose: closeHome,
         onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
+        onHistoryNext: () => openPlaybackHistoryOffset(1),
+        onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
         onOpenOriginal: href => openOriginalPlaybackPage(href, state.home.player),
         onPlayerControlClick: onHomePlayerControlClick,
         onResizeStart: event => startCommentWidthDrag(event, window)
       });
       state.home.overlay = state.home.ui.overlay;
       attachHomeBackToTopSync();
+      attachHomePlaylistAutoRefresh();
       syncHomeCommentLayout();
       syncCommentsTabs('home');
       return state.home.ui;
@@ -3463,6 +3673,7 @@
       setExternalPlayerFeaturesBlocked(true);
       setHomePlayerFeatureBlocked(false);
       ui.title.textContent = title;
+      syncPlaybackHistoryButtons();
       ui.content.scrollTop = 0;
       syncHomeCommentLayout();
       syncCommentsTabs('home');
@@ -3470,6 +3681,11 @@
       document.addEventListener('keydown', onKeydown, true);
       ui.close.focus();
       syncHomeSize();
+      scheduleHomePlaylistAutoRefreshCheck();
+    }
+    function onCommentsTabChange(kind, tab) {
+      if (kind !== 'home' || tab !== 'playlist') return;
+      scheduleHomePlaylistAutoRefreshCheck();
     }
     function onHomePlayerControlClick(event) {
       const target = event.target;
@@ -3575,6 +3791,7 @@
     function reusePip(context, meta) {
       const bootstrap = context.bootstrap;
       saveLastPlayed(meta, bootstrap);
+      recordPlaybackHistory(meta, bootstrap);
       ensurePipPlayerControls(context.pipWindow, meta.href || bootstrap.href);
       attachPipCommentsTabs(context.pipWindow);
       setSelectedPlaylistBvid('pip', meta.bvid || bootstrap.playerInfo?.bvid);
@@ -4291,6 +4508,99 @@
       });
       syncHomeBackToTopButton();
     }
+    function attachHomePlaylistAutoRefresh() {
+      const ui = state.home.ui;
+      if (!ui?.content || !ui.playlistPanel) return;
+      [ui.content, ui.playlistPanel].forEach(container => {
+        if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
+        container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
+        container.addEventListener('scroll', scheduleHomePlaylistAutoRefreshCheck, {
+          passive: true
+        });
+      });
+    }
+    function scheduleHomePlaylistAutoRefreshCheck() {
+      if (state.home.playlistRefreshFrame) return;
+      state.home.playlistRefreshFrame = window.requestAnimationFrame(() => {
+        state.home.playlistRefreshFrame = 0;
+        void maybeLoadMoreHomePlaylist();
+      });
+    }
+    async function maybeLoadMoreHomePlaylist({
+      force = false
+    } = {}) {
+      const feed = state.home.feed;
+      if (!feed || feed.loading || feed.exhausted) return;
+      if (!isHomeFeedPage()) return;
+      if (!state.home.ui || !state.home.overlay || state.home.overlay.classList.contains(`${APP}--hidden`)) return;
+      if (state.home.activeCommentsTab !== 'playlist') return;
+      if (!force && !isHomePlaylistNearBottom()) return;
+      const requestId = feed.requestId + 1;
+      feed.requestId = requestId;
+      feed.loading = true;
+      feed.error = '';
+      feed.session ||= createHomeFeedSession();
+      renderPlaylist('home', {
+        appendLoading: state.home.playlistCards.length > 0,
+        autoScrollSelected: false,
+        loading: state.home.playlistCards.length === 0
+      });
+      try {
+        const cards = await fetchHomeFeedCards({
+          existingCards: state.home.playlistCards,
+          session: feed.session
+        });
+        if (requestId !== feed.requestId) return;
+        if (!cards.length) {
+          feed.exhausted = true;
+          return;
+        }
+        appendHomePlaylistCards(cards);
+      } catch (error) {
+        if (requestId !== feed.requestId) return;
+        feed.error = error?.message || String(error);
+        console.warn('[bili-popup-player] home feed refresh failed', error);
+      } finally {
+        if (requestId === feed.requestId) {
+          feed.loading = false;
+          renderPlaylist('home', getHomePlaylistEmptyText(), {
+            autoScrollSelected: false
+          });
+        }
+      }
+    }
+    function appendHomePlaylistCards(cards) {
+      const seen = new Set(state.home.playlistCards.map(card => card?.bvid).filter(Boolean));
+      const nextCards = cards.filter(card => {
+        if (!card?.bvid || seen.has(card.bvid)) return false;
+        seen.add(card.bvid);
+        return true;
+      });
+      if (nextCards.length) state.home.playlistCards = [...state.home.playlistCards, ...nextCards];
+    }
+    function isHomePlaylistNearBottom() {
+      const container = getHomePlaylistScrollContainer();
+      if (!container) return false;
+      return container.scrollHeight - container.scrollTop - container.clientHeight <= 320;
+    }
+    function getHomePlaylistScrollContainer() {
+      const ui = state.home.ui;
+      if (!ui) return null;
+      return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+    }
+    function resetHomePlaylistFeed() {
+      const feed = state.home.feed;
+      if (!feed) return;
+      feed.error = '';
+      feed.exhausted = false;
+      feed.loading = false;
+      feed.requestId += 1;
+      feed.session = null;
+    }
+    function getHomePlaylistEmptyText() {
+      if (state.home.feed?.error) return '首页推荐加载失败，继续滚动可重试';
+      return '当前页面没有扫到可播放卡片';
+    }
     function attachPipBackToTopSync(targetWindow) {
       if (!targetWindow || targetWindow.closed) return;
       const doc = targetWindow.document;
@@ -4649,6 +4959,68 @@
       localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
       syncSettings();
       syncVideoBadges();
+    }
+    function recordPlaybackHistory(meta, bootstrap) {
+      const bvid = bootstrap.playerInfo?.bvid || meta.bvid;
+      const href = bootstrap.href || meta.href;
+      if (!bvid || !href) return;
+      if (meta.fromHistory && Number.isInteger(meta.historyIndex)) {
+        state.playbackHistory.index = clampHistoryIndex(meta.historyIndex);
+        syncPlaybackHistoryButtons();
+        return;
+      }
+      const next = {
+        bvid,
+        href,
+        title: bootstrap.title || meta.title || bvid
+      };
+      const history = state.playbackHistory;
+      const current = history.entries[history.index];
+      if (current?.bvid === next.bvid) {
+        history.entries[history.index] = {
+          ...current,
+          ...next
+        };
+        syncPlaybackHistoryButtons();
+        return;
+      }
+      const keptEntries = history.index >= 0 ? history.entries.slice(0, history.index + 1) : history.entries.slice();
+      keptEntries.push(next);
+      history.entries = keptEntries.slice(-20);
+      history.index = history.entries.length - 1;
+      syncPlaybackHistoryButtons();
+    }
+    function openPlaybackHistoryOffset(offset) {
+      const history = state.playbackHistory;
+      const nextIndex = history.index + offset;
+      const entry = history.entries[nextIndex];
+      if (!entry) return;
+      history.index = nextIndex;
+      syncPlaybackHistoryButtons();
+      openWithRenderer(homeRenderer, {
+        ...entry,
+        fromHistory: true,
+        historyIndex: nextIndex
+      });
+    }
+    function syncPlaybackHistoryButtons() {
+      const ui = state.home.ui;
+      if (!ui?.historyPrevious || !ui.historyNext) return;
+      const previous = state.playbackHistory.entries[state.playbackHistory.index - 1];
+      const next = state.playbackHistory.entries[state.playbackHistory.index + 1];
+      syncPlaybackHistoryButton(ui.historyPrevious, previous, '上一次播放');
+      syncPlaybackHistoryButton(ui.historyNext, next, '下一次播放');
+    }
+    function syncPlaybackHistoryButton(button, entry, label) {
+      const disabled = !entry;
+      button.disabled = disabled;
+      const title = entry?.title ? `${label}：${entry.title}` : label;
+      button.title = title;
+      button.setAttribute('aria-label', title);
+    }
+    function clampHistoryIndex(index) {
+      const max = state.playbackHistory.entries.length - 1;
+      return Math.max(-1, Math.min(max, index));
     }
     function isSamePlayback(meta, bootstrap) {
       return Boolean(meta?.bvid && bootstrap?.playerInfo?.bvid && meta.bvid === bootstrap.playerInfo.bvid);

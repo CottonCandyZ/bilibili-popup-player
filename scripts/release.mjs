@@ -37,7 +37,7 @@ function bumpPatch(version) {
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.platform === 'win32' ? `${command}.cmd` : command, args, {
+    const child = spawn(...resolveSpawnArgs(command, args), {
       stdio: 'inherit',
       shell: false,
     });
@@ -48,6 +48,17 @@ function run(command, args) {
     });
     child.on('error', reject);
   });
+}
+
+function resolveSpawnArgs(command, args) {
+  if (process.platform !== 'win32') return [command, args];
+  return ['cmd.exe', ['/d', '/s', '/c', [command, ...args].map(quoteCmdArg).join(' ')]];
+}
+
+function quoteCmdArg(value) {
+  const arg = String(value);
+  if (/^[\w./:@=-]+$/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
 }
 
 async function printPublishedVersion() {

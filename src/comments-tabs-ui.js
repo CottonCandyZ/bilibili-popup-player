@@ -10,6 +10,7 @@ export function createCommentsTabsUi({
   getHomeRenderer,
   getPipRenderer,
   getCommentLayout,
+  onTabChange,
   openWithRenderer,
   syncHomeSize,
   schedulePipLayoutSync,
@@ -59,6 +60,7 @@ export function createCommentsTabsUi({
     getActiveSignal(kind)[1](state[kind].activeCommentsTab);
     syncTabs(kind);
     if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind);
+    onTabChange?.(kind, state[kind].activeCommentsTab);
     if (kind === 'home') syncHomeSize();
     else if (state.pip.win && !state.pip.win.closed) schedulePipLayoutSync(state.pip.win);
   }
@@ -164,7 +166,11 @@ export function createCommentsTabsUi({
     };
   }
 
-  function renderPlaylist(kind, statusText = '当前页面没有扫到可播放卡片') {
+  function renderPlaylist(kind, statusText = '当前页面没有扫到可播放卡片', options = {}) {
+    if (typeof statusText === 'object') {
+      options = statusText;
+      statusText = '当前页面没有扫到可播放卡片';
+    }
     const ui = getUi(kind);
     if (!ui?.playlistList || !ui.playlistEmpty) return;
     renderCardList({
@@ -174,6 +180,7 @@ export function createCommentsTabsUi({
       emptyText: statusText,
       kind,
       source: 'playlist',
+      ...options,
     });
   }
 
@@ -193,8 +200,20 @@ export function createCommentsTabsUi({
     });
   }
 
-  function renderCardList({ list, empty, cards, emptyText, kind, source, loading = false }) {
+  function renderCardList({
+    list,
+    empty,
+    cards,
+    emptyText,
+    kind,
+    source,
+    loading = false,
+    appendLoading = false,
+    autoScrollSelected = true,
+  }) {
     const view = ensureListView({ list, empty, kind, source });
+    view.setAutoScrollSelected(Boolean(autoScrollSelected));
+    view.setAppendLoading(Boolean(appendLoading));
     view.setLoading(Boolean(loading));
     view.setEmptyText(emptyText);
     view.setCards(cards || []);
@@ -210,14 +229,17 @@ export function createCommentsTabsUi({
     const [cards, setCards] = createSignal([]);
     const [emptyText, setEmptyText] = createSignal('');
     const [loading, setLoading] = createSignal(false);
+    const [appendLoading, setAppendLoading] = createSignal(false);
+    const [autoScrollSelected, setAutoScrollSelected] = createSignal(true);
     const dispose = createRoot((disposeRoot) => {
       createEffect(() => {
         const currentCards = cards();
         const currentLoading = loading();
+        const currentAppendLoading = appendLoading();
         const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : '';
         list.textContent = '';
-        empty.hidden = Boolean(currentLoading || currentCards.length);
-        empty.textContent = currentLoading || currentCards.length ? '' : emptyText();
+        empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
+        empty.textContent = currentLoading || currentAppendLoading || currentCards.length ? '' : emptyText();
         if (currentLoading) {
           appendSkeletonCards(list.ownerDocument, list, 6);
           return;
@@ -225,11 +247,21 @@ export function createCommentsTabsUi({
         currentCards.forEach((card) => {
           list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected));
         });
-        if (source === 'playlist') scrollSelectedPlaylistIntoView(kind);
+        if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
+        if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
       });
       return disposeRoot;
     });
-    const view = { dispose, empty, list, setCards, setEmptyText, setLoading };
+    const view = {
+      dispose,
+      empty,
+      list,
+      setAppendLoading,
+      setAutoScrollSelected,
+      setCards,
+      setEmptyText,
+      setLoading,
+    };
     listViews.set(key, view);
     return view;
   }

@@ -16,6 +16,11 @@ import {
 import { disposeCommentInstance, mountComments } from './comments.js';
 import { createCommentsTabsUi } from './comments-tabs-ui.js';
 import {
+  createHomeFeedSession,
+  fetchHomeFeedCards,
+  isHomeFeedPage,
+} from './home-feed.js';
+import {
   createMaximizeIcon,
   createMinimizeIcon,
   externalLinkIconMarkup,
@@ -53,6 +58,7 @@ import {
   const PLAYER_CHROME_HEIGHT = 48;
   const PLAYER_CHROME_HEIGHT_WIDE = 56;
   const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
+  const PLAYBACK_HISTORY_LIMIT = 20;
 
   const initialLastPlayed = (() => {
     try {
@@ -86,6 +92,10 @@ import {
     pipPlaying: null,
     switchToken: 0,
     externalFeatureBlocks: [],
+    playbackHistory: {
+      entries: [],
+      index: -1,
+    },
     pointer: null,
     settings: null,
     shadowHost: null,
@@ -101,6 +111,14 @@ import {
       screenHandler: null,
       featureBlocked: false,
       activeCommentsTab: 'comments',
+      feed: {
+        error: '',
+        exhausted: false,
+        loading: false,
+        requestId: 0,
+        session: null,
+      },
+      playlistRefreshFrame: 0,
       playlistCards: [],
       recommendationCards: [],
       selectedPlaylistBvid: '',
@@ -130,6 +148,7 @@ import {
     getHomeRenderer: () => homeRenderer,
     getPipRenderer: () => pipRenderer,
     getCommentLayout: () => state.commentLayout,
+    onTabChange: onCommentsTabChange,
     openWithRenderer,
     syncHomeSize,
     schedulePipLayoutSync,
@@ -520,7 +539,7 @@ import {
 
       #${APP}-header {
         display: grid;
-        grid-template-columns: 1fr auto auto auto;
+        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
         align-items: center;
         gap: 8px;
         min-width: 0;
@@ -528,6 +547,13 @@ import {
         color: var(--${APP}-text);
         background: var(--${APP}-surface-elevated);
         border-bottom: 1px solid var(--${APP}-border);
+      }
+
+      .${APP}__header-history {
+        display: inline-grid;
+        grid-template-columns: repeat(2, 32px);
+        gap: 2px;
+        align-items: center;
       }
 
       #${APP}-title {
@@ -554,9 +580,10 @@ import {
         cursor: pointer;
       }
 
-      .${APP}__header-button--close {
-        width: 40px;
-        height: 40px;
+      .${APP}__header-button:disabled {
+        color: var(--${APP}-text-muted);
+        cursor: default;
+        opacity: 0.45;
       }
 
       .${APP}__header-button svg {
@@ -564,11 +591,6 @@ import {
         height: 17px;
         display: block;
         stroke: currentColor;
-      }
-
-      .${APP}__header-button--close svg {
-        width: 20px;
-        height: 20px;
       }
 
       .${APP}__header-button--text {
@@ -584,6 +606,12 @@ import {
         color: var(--${APP}-brand);
         background: var(--${APP}-surface-soft);
         outline: none;
+      }
+
+      .${APP}__header-button:disabled:hover,
+      .${APP}__header-button:disabled:focus-visible {
+        color: var(--${APP}-text-muted);
+        background: transparent;
       }
 
       #${APP}-content {
@@ -1489,6 +1517,7 @@ import {
       saveLastPlayed(meta, bootstrap);
       await renderer.play(context, bootstrap, token);
       if (token !== state.switchToken || renderer.isClosed(context)) return;
+      recordPlaybackHistory(meta, bootstrap);
       renderer.done?.(context, bootstrap);
     } catch (error) {
       if (token !== state.switchToken || renderer.isClosed(context)) return;
@@ -1517,6 +1546,7 @@ import {
     ui.openOriginal.dataset.href = meta.href || bootstrap.href;
     ui.status.textContent = '播放器：继续播放';
     saveLastPlayed(meta, bootstrap);
+    recordPlaybackHistory(meta, bootstrap);
     setSelectedPlaylistBvid('home', meta.bvid || bootstrap.playerInfo?.bvid);
     renderPlaylist('home');
     renderRecommendations('home', bootstrap);
@@ -1535,6 +1565,7 @@ import {
       setSelectedPlaylistBvid('home', meta.bvid);
       renderPlaylist('home');
     } else {
+      resetHomePlaylistFeed();
       capturePagePlaylist('home', meta.bvid);
     }
     renderRecommendations('home', null);
@@ -1575,12 +1606,15 @@ import {
       onBackdropClose: closeHome,
       onClose: closeHome,
       onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
+      onHistoryNext: () => openPlaybackHistoryOffset(1),
+      onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
       onOpenOriginal: (href) => openOriginalPlaybackPage(href, state.home.player),
       onPlayerControlClick: onHomePlayerControlClick,
       onResizeStart: (event) => startCommentWidthDrag(event, window),
     });
     state.home.overlay = state.home.ui.overlay;
     attachHomeBackToTopSync();
+    attachHomePlaylistAutoRefresh();
     syncHomeCommentLayout();
     syncCommentsTabs('home');
     return state.home.ui;
@@ -1594,6 +1628,7 @@ import {
     setExternalPlayerFeaturesBlocked(true);
     setHomePlayerFeatureBlocked(false);
     ui.title.textContent = title;
+    syncPlaybackHistoryButtons();
     ui.content.scrollTop = 0;
     syncHomeCommentLayout();
     syncCommentsTabs('home');
@@ -1601,6 +1636,12 @@ import {
     document.addEventListener('keydown', onKeydown, true);
     ui.close.focus();
     syncHomeSize();
+    scheduleHomePlaylistAutoRefreshCheck();
+  }
+
+  function onCommentsTabChange(kind, tab) {
+    if (kind !== 'home' || tab !== 'playlist') return;
+    scheduleHomePlaylistAutoRefreshCheck();
   }
 
   function onHomePlayerControlClick(event) {
@@ -1709,6 +1750,7 @@ import {
   function reusePip(context, meta) {
     const bootstrap = context.bootstrap;
     saveLastPlayed(meta, bootstrap);
+    recordPlaybackHistory(meta, bootstrap);
     ensurePipPlayerControls(context.pipWindow, meta.href || bootstrap.href);
     attachPipCommentsTabs(context.pipWindow);
     setSelectedPlaylistBvid('pip', meta.bvid || bootstrap.playerInfo?.bvid);
@@ -2452,6 +2494,106 @@ import {
     syncHomeBackToTopButton();
   }
 
+  function attachHomePlaylistAutoRefresh() {
+    const ui = state.home.ui;
+    if (!ui?.content || !ui.playlistPanel) return;
+    [
+      ui.content,
+      ui.playlistPanel,
+    ].forEach((container) => {
+      if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
+      container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
+      container.addEventListener('scroll', scheduleHomePlaylistAutoRefreshCheck, { passive: true });
+    });
+  }
+
+  function scheduleHomePlaylistAutoRefreshCheck() {
+    if (state.home.playlistRefreshFrame) return;
+    state.home.playlistRefreshFrame = window.requestAnimationFrame(() => {
+      state.home.playlistRefreshFrame = 0;
+      void maybeLoadMoreHomePlaylist();
+    });
+  }
+
+  async function maybeLoadMoreHomePlaylist({ force = false } = {}) {
+    const feed = state.home.feed;
+    if (!feed || feed.loading || feed.exhausted) return;
+    if (!isHomeFeedPage()) return;
+    if (!state.home.ui || !state.home.overlay || state.home.overlay.classList.contains(`${APP}--hidden`)) return;
+    if (state.home.activeCommentsTab !== 'playlist') return;
+    if (!force && !isHomePlaylistNearBottom()) return;
+
+    const requestId = feed.requestId + 1;
+    feed.requestId = requestId;
+    feed.loading = true;
+    feed.error = '';
+    feed.session ||= createHomeFeedSession();
+    renderPlaylist('home', {
+      appendLoading: state.home.playlistCards.length > 0,
+      autoScrollSelected: false,
+      loading: state.home.playlistCards.length === 0,
+    });
+
+    try {
+      const cards = await fetchHomeFeedCards({
+        existingCards: state.home.playlistCards,
+        session: feed.session,
+      });
+      if (requestId !== feed.requestId) return;
+      if (!cards.length) {
+        feed.exhausted = true;
+        return;
+      }
+      appendHomePlaylistCards(cards);
+    } catch (error) {
+      if (requestId !== feed.requestId) return;
+      feed.error = error?.message || String(error);
+      console.warn('[bili-popup-player] home feed refresh failed', error);
+    } finally {
+      if (requestId === feed.requestId) {
+        feed.loading = false;
+        renderPlaylist('home', getHomePlaylistEmptyText(), { autoScrollSelected: false });
+      }
+    }
+  }
+
+  function appendHomePlaylistCards(cards) {
+    const seen = new Set(state.home.playlistCards.map((card) => card?.bvid).filter(Boolean));
+    const nextCards = cards.filter((card) => {
+      if (!card?.bvid || seen.has(card.bvid)) return false;
+      seen.add(card.bvid);
+      return true;
+    });
+    if (nextCards.length) state.home.playlistCards = [...state.home.playlistCards, ...nextCards];
+  }
+
+  function isHomePlaylistNearBottom() {
+    const container = getHomePlaylistScrollContainer();
+    if (!container) return false;
+    return container.scrollHeight - container.scrollTop - container.clientHeight <= 320;
+  }
+
+  function getHomePlaylistScrollContainer() {
+    const ui = state.home.ui;
+    if (!ui) return null;
+    return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+  }
+
+  function resetHomePlaylistFeed() {
+    const feed = state.home.feed;
+    if (!feed) return;
+    feed.error = '';
+    feed.exhausted = false;
+    feed.loading = false;
+    feed.requestId += 1;
+    feed.session = null;
+  }
+
+  function getHomePlaylistEmptyText() {
+    if (state.home.feed?.error) return '首页推荐加载失败，继续滚动可重试';
+    return '当前页面没有扫到可播放卡片';
+  }
+
   function attachPipBackToTopSync(targetWindow) {
     if (!targetWindow || targetWindow.closed) return;
     const doc = targetWindow.document;
@@ -2845,6 +2987,75 @@ import {
     localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
     syncSettings();
     syncVideoBadges();
+  }
+
+  function recordPlaybackHistory(meta, bootstrap) {
+    const bvid = bootstrap.playerInfo?.bvid || meta.bvid;
+    const href = bootstrap.href || meta.href;
+    if (!bvid || !href) return;
+
+    if (meta.fromHistory && Number.isInteger(meta.historyIndex)) {
+      state.playbackHistory.index = clampHistoryIndex(meta.historyIndex);
+      syncPlaybackHistoryButtons();
+      return;
+    }
+
+    const next = {
+      bvid,
+      href,
+      title: bootstrap.title || meta.title || bvid,
+    };
+    const history = state.playbackHistory;
+    const current = history.entries[history.index];
+    if (current?.bvid === next.bvid) {
+      history.entries[history.index] = { ...current, ...next };
+      syncPlaybackHistoryButtons();
+      return;
+    }
+
+    const keptEntries = history.index >= 0
+      ? history.entries.slice(0, history.index + 1)
+      : history.entries.slice();
+    keptEntries.push(next);
+    history.entries = keptEntries.slice(-PLAYBACK_HISTORY_LIMIT);
+    history.index = history.entries.length - 1;
+    syncPlaybackHistoryButtons();
+  }
+
+  function openPlaybackHistoryOffset(offset) {
+    const history = state.playbackHistory;
+    const nextIndex = history.index + offset;
+    const entry = history.entries[nextIndex];
+    if (!entry) return;
+    history.index = nextIndex;
+    syncPlaybackHistoryButtons();
+    openWithRenderer(homeRenderer, {
+      ...entry,
+      fromHistory: true,
+      historyIndex: nextIndex,
+    });
+  }
+
+  function syncPlaybackHistoryButtons() {
+    const ui = state.home.ui;
+    if (!ui?.historyPrevious || !ui.historyNext) return;
+    const previous = state.playbackHistory.entries[state.playbackHistory.index - 1];
+    const next = state.playbackHistory.entries[state.playbackHistory.index + 1];
+    syncPlaybackHistoryButton(ui.historyPrevious, previous, '上一次播放');
+    syncPlaybackHistoryButton(ui.historyNext, next, '下一次播放');
+  }
+
+  function syncPlaybackHistoryButton(button, entry, label) {
+    const disabled = !entry;
+    button.disabled = disabled;
+    const title = entry?.title ? `${label}：${entry.title}` : label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+  }
+
+  function clampHistoryIndex(index) {
+    const max = state.playbackHistory.entries.length - 1;
+    return Math.max(-1, Math.min(max, index));
   }
 
   function isSamePlayback(meta, bootstrap) {
