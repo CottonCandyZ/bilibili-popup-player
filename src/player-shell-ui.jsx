@@ -1,6 +1,6 @@
 import { render } from 'solid-js/web';
 import { APP } from './constants.js';
-import { arrowUpIconMarkup, createExternalLinkIcon, createMaximizeIcon } from './icons.js';
+import { arrowUpIconMarkup, createCloseIcon, createExternalLinkIcon, createMaximizeIcon } from './icons.js';
 
 export function mountHomePlayerPage({
   targetDocument = document,
@@ -123,13 +123,13 @@ function HomePlayerPage(props) {
           </button>
           <button
             type="button"
-            class={`${APP}__header-button`}
+            class={`${APP}__header-button ${APP}__header-button--close`}
             title="关闭"
             aria-label="关闭首页播放器"
             ref={props.refs('close')}
             onClick={() => props.onClose?.()}
           >
-            ×
+            {createCloseIcon()}
           </button>
         </header>
         <div id={`${APP}-content`} ref={props.refs('content')}>

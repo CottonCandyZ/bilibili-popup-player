@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.2.3
+// @version      3.2.4
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -1070,6 +1070,11 @@
     template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3"></path><path d="M21 8h-3a2 2 0 0 1-2-2V3"></path><path d="M3 16h3a2 2 0 0 1 2 2v3"></path><path d="M16 21v-3a2 2 0 0 1 2-2h3"></path></svg>';
     return template.content.firstElementChild;
   }
+  function createCloseIcon() {
+    const template = document.createElement('template');
+    template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>';
+    return template.content.firstElementChild;
+  }
   function externalLinkIconMarkup() {
     return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
   }
@@ -1331,7 +1336,7 @@
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div></div><div></div><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器>×</button></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div></div><div></div><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=关闭 aria-label=关闭首页播放器></button></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>推荐列表加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部>`),
     _tmpl$2 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=comments-mount>评论加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>推荐列表加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
     targetDocument = document,
@@ -1458,7 +1463,8 @@
       _el$8.$$click = () => props.onClose?.();
       var _ref$7 = props.refs('close');
       typeof _ref$7 === "function" && use(_ref$7, _el$8);
-      className(_el$8, `${APP}__header-button`);
+      className(_el$8, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$8, createCloseIcon);
       var _ref$8 = props.refs('content');
       typeof _ref$8 === "function" && use(_ref$8, _el$9);
       setAttribute(_el$9, "id", `${APP}-content`);
@@ -2017,6 +2023,7 @@
       lastPlayed: initialLastPlayed,
       pipPlaying: null,
       switchToken: 0,
+      externalFeatureBlocks: [],
       pointer: null,
       settings: null,
       shadowHost: null,
@@ -2030,6 +2037,7 @@
         comments: null,
         bootstrap: null,
         screenHandler: null,
+        featureBlocked: false,
         activeCommentsTab: 'comments',
         playlistCards: [],
         recommendationCards: [],
@@ -2474,11 +2482,21 @@
         cursor: pointer;
       }
 
+      .${APP}__header-button--close {
+        width: 40px;
+        height: 40px;
+      }
+
       .${APP}__header-button svg {
         width: 17px;
         height: 17px;
         display: block;
         stroke: currentColor;
+      }
+
+      .${APP}__header-button--close svg {
+        width: 20px;
+        height: 20px;
       }
 
       .${APP}__header-button--text {
@@ -3010,6 +3028,58 @@
         // Ignore pause failures.
       }
     }
+    const PLAYER_GLOBAL_KEYS = ['player', 'bilibiliPlayer', 'biliPlayer', '__PLAYER__', '__BILI_PLAYER__', '__bilibiliPlayer'];
+    function togglePlayerFeatures(player, isBlockPlay) {
+      const blocked = Boolean(isBlockPlay);
+      if (!player || typeof player.toggleFeature !== 'function') return false;
+      try {
+        player.toggleFeature({
+          play: blocked,
+          seek: blocked,
+          shortcut: blocked
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function setHomePlayerFeatureBlocked(isBlockPlay) {
+      const blocked = Boolean(isBlockPlay);
+      if (!state.home.player || state.home.featureBlocked === blocked) return;
+      if (togglePlayerFeatures(state.home.player, blocked)) {
+        state.home.featureBlocked = blocked;
+      }
+    }
+    function setExternalPlayerFeaturesBlocked(isBlockPlay) {
+      const blocked = Boolean(isBlockPlay);
+      if (!blocked) {
+        state.externalFeatureBlocks.forEach(player => togglePlayerFeatures(player, false));
+        state.externalFeatureBlocks = [];
+        return;
+      }
+      const known = new Set(state.externalFeatureBlocks);
+      getExternalFeaturePlayers().forEach(player => {
+        if (known.has(player)) return;
+        if (togglePlayerFeatures(player, true)) {
+          state.externalFeatureBlocks.push(player);
+          known.add(player);
+        }
+      });
+    }
+    function getExternalFeaturePlayers() {
+      const players = [];
+      const seen = new Set();
+      const add = player => {
+        if (!player || typeof player.toggleFeature !== 'function') return;
+        if (player === state.home.player || player === state.pip.player || seen.has(player)) return;
+        seen.add(player);
+        players.push(player);
+      };
+      PLAYER_GLOBAL_KEYS.forEach(key => add(window[key]));
+      add(window.playerAgent?.player);
+      add(window.bilibili?.player);
+      return players;
+    }
     function setPipPlaying(bootstrap) {
       state.pipPlaying = bootstrap ? {
         title: bootstrap.title,
@@ -3390,6 +3460,8 @@
       state.home.overlay.classList.remove(`${APP}--hidden`);
       state.home.overlay.removeAttribute('aria-hidden');
       document.body.classList.add(`${APP}--modal-open`);
+      setExternalPlayerFeaturesBlocked(true);
+      setHomePlayerFeatureBlocked(false);
       ui.title.textContent = title;
       ui.content.scrollTop = 0;
       syncHomeCommentLayout();
@@ -3453,6 +3525,7 @@
       await Promise.resolve(state.home.player.reload(setting, bootstrap.initialState?.nanoTheme));
       if (token !== state.switchToken || !state.home.player) return;
       bindHomeScreenChange(state.home.player);
+      setHomePlayerFeatureBlocked(homeRenderer.isClosed());
       state.home.ui.status.textContent = '播放器：已 reload';
       playHomeSoon(token, 300);
     }
@@ -3460,6 +3533,7 @@
       const setting = buildHomePrimarySetting(bootstrap);
       state.home.player = nano.createPlayer(setting, bootstrap.initialState?.nanoTheme);
       bindHomeScreenChange(state.home.player);
+      setHomePlayerFeatureBlocked(homeRenderer.isClosed());
       updateDebug(setting, bootstrap);
       state.home.player.connect();
       state.home.ui.status.textContent = '播放器：已 createPlayer';
@@ -4807,6 +4881,8 @@
       } catch {
         // Keep instance alive.
       }
+      setHomePlayerFeatureBlocked(true);
+      setExternalPlayerFeaturesBlocked(false);
       document.documentElement.style.overflow = '';
       document.body.classList.remove(`${APP}--modal-open`);
       document.removeEventListener('keydown', onKeydown, true);
@@ -4822,12 +4898,14 @@
     function disposeHomePlayer() {
       if (!state.home.player) return;
       unbindHomeScreenChange();
+      setHomePlayerFeatureBlocked(false);
       try {
         state.home.player.disconnect?.();
       } catch {
         // Ignore player cleanup failures.
       }
       state.home.player = null;
+      state.home.featureBlocked = false;
     }
     function disposePipPlayer() {
       if (!state.pip.player) return;

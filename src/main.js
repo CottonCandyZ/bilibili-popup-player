@@ -85,6 +85,7 @@ import {
     lastPlayed: initialLastPlayed,
     pipPlaying: null,
     switchToken: 0,
+    externalFeatureBlocks: [],
     pointer: null,
     settings: null,
     shadowHost: null,
@@ -98,6 +99,7 @@ import {
       comments: null,
       bootstrap: null,
       screenHandler: null,
+      featureBlocked: false,
       activeCommentsTab: 'comments',
       playlistCards: [],
       recommendationCards: [],
@@ -552,11 +554,21 @@ import {
         cursor: pointer;
       }
 
+      .${APP}__header-button--close {
+        width: 40px;
+        height: 40px;
+      }
+
       .${APP}__header-button svg {
         width: 17px;
         height: 17px;
         display: block;
         stroke: currentColor;
+      }
+
+      .${APP}__header-button--close svg {
+        width: 20px;
+        height: 20px;
       }
 
       .${APP}__header-button--text {
@@ -1092,6 +1104,72 @@ import {
     }
   }
 
+  const PLAYER_GLOBAL_KEYS = [
+    'player',
+    'bilibiliPlayer',
+    'biliPlayer',
+    '__PLAYER__',
+    '__BILI_PLAYER__',
+    '__bilibiliPlayer',
+  ];
+
+  function togglePlayerFeatures(player, isBlockPlay) {
+    const blocked = Boolean(isBlockPlay);
+    if (!player || typeof player.toggleFeature !== 'function') return false;
+    try {
+      player.toggleFeature({
+        play: blocked,
+        seek: blocked,
+        shortcut: blocked,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function setHomePlayerFeatureBlocked(isBlockPlay) {
+    const blocked = Boolean(isBlockPlay);
+    if (!state.home.player || state.home.featureBlocked === blocked) return;
+    if (togglePlayerFeatures(state.home.player, blocked)) {
+      state.home.featureBlocked = blocked;
+    }
+  }
+
+  function setExternalPlayerFeaturesBlocked(isBlockPlay) {
+    const blocked = Boolean(isBlockPlay);
+    if (!blocked) {
+      state.externalFeatureBlocks.forEach((player) => togglePlayerFeatures(player, false));
+      state.externalFeatureBlocks = [];
+      return;
+    }
+
+    const known = new Set(state.externalFeatureBlocks);
+    getExternalFeaturePlayers().forEach((player) => {
+      if (known.has(player)) return;
+      if (togglePlayerFeatures(player, true)) {
+        state.externalFeatureBlocks.push(player);
+        known.add(player);
+      }
+    });
+  }
+
+  function getExternalFeaturePlayers() {
+    const players = [];
+    const seen = new Set();
+    const add = (player) => {
+      if (!player || typeof player.toggleFeature !== 'function') return;
+      if (player === state.home.player || player === state.pip.player || seen.has(player)) return;
+      seen.add(player);
+      players.push(player);
+    };
+
+    PLAYER_GLOBAL_KEYS.forEach((key) => add(window[key]));
+    add(window.playerAgent?.player);
+    add(window.bilibili?.player);
+    return players;
+  }
+
   function setPipPlaying(bootstrap) {
     state.pipPlaying = bootstrap ? {
       title: bootstrap.title,
@@ -1513,6 +1591,8 @@ import {
     state.home.overlay.classList.remove(`${APP}--hidden`);
     state.home.overlay.removeAttribute('aria-hidden');
     document.body.classList.add(`${APP}--modal-open`);
+    setExternalPlayerFeaturesBlocked(true);
+    setHomePlayerFeatureBlocked(false);
     ui.title.textContent = title;
     ui.content.scrollTop = 0;
     syncHomeCommentLayout();
@@ -1577,6 +1657,7 @@ import {
     await Promise.resolve(state.home.player.reload(setting, bootstrap.initialState?.nanoTheme));
     if (token !== state.switchToken || !state.home.player) return;
     bindHomeScreenChange(state.home.player);
+    setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     state.home.ui.status.textContent = '播放器：已 reload';
     playHomeSoon(token, 300);
   }
@@ -1585,6 +1666,7 @@ import {
     const setting = buildHomePrimarySetting(bootstrap);
     state.home.player = nano.createPlayer(setting, bootstrap.initialState?.nanoTheme);
     bindHomeScreenChange(state.home.player);
+    setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     updateDebug(setting, bootstrap);
     state.home.player.connect();
     state.home.ui.status.textContent = '播放器：已 createPlayer';
@@ -3020,6 +3102,8 @@ import {
     } catch {
       // Keep instance alive.
     }
+    setHomePlayerFeatureBlocked(true);
+    setExternalPlayerFeaturesBlocked(false);
     document.documentElement.style.overflow = '';
     document.body.classList.remove(`${APP}--modal-open`);
     document.removeEventListener('keydown', onKeydown, true);
@@ -3035,12 +3119,14 @@ import {
   function disposeHomePlayer() {
     if (!state.home.player) return;
     unbindHomeScreenChange();
+    setHomePlayerFeatureBlocked(false);
     try {
       state.home.player.disconnect?.();
     } catch {
       // Ignore player cleanup failures.
     }
     state.home.player = null;
+    state.home.featureBlocked = false;
   }
 
   function disposePipPlayer() {

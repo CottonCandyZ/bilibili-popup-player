@@ -35,6 +35,12 @@ export function createMinimizeIcon() {
   return template.content.firstElementChild;
 }
 
+export function createCloseIcon() {
+  const template = document.createElement('template');
+  template.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>';
+  return template.content.firstElementChild;
+}
+
 export function externalLinkIconMarkup() {
   return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
 }
