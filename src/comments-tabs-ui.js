@@ -20,6 +20,7 @@ export function createCommentsTabsUi({
   const selectedPageSignals = new Map();
   const selectedSignals = new Map();
   const listViews = new Map();
+  const [lastPlayedKey, setLastPlayedKey] = createSignal(getLastPlayedKey());
 
   function createTabs(targetDocument, kind) {
     const tabs = targetDocument.createElement('div');
@@ -292,9 +293,12 @@ export function createCommentsTabsUi({
         const currentAppendLoading = appendLoading();
         const selected = source === 'playlist'
           ? getSelectedSignal(kind)[0]()
-          : source === 'pages'
-            ? getSelectedPageSignal(kind)[0]()
-            : '';
+          : source === 'recommend'
+            ? getSelectedSignal(kind)[0]()
+            : source === 'pages'
+              ? getSelectedPageSignal(kind)[0]()
+              : '';
+        const lastPlayed = lastPlayedKey();
         list.textContent = '';
         empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
         empty.textContent = currentLoading || currentAppendLoading || currentCards.length ? '' : emptyText();
@@ -303,7 +307,7 @@ export function createCommentsTabsUi({
           return;
         }
         currentCards.forEach((card) => {
-          list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected));
+          list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected, lastPlayed));
         });
         if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
         if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
@@ -353,10 +357,11 @@ export function createCommentsTabsUi({
     return card;
   }
 
-  function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '') {
-    const selected = source === 'playlist'
+  function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '', lastPlayedBvid = '') {
+    const selected = source === 'playlist' || source === 'recommend'
       ? selectedBvid === card.bvid
       : source === 'pages' && selectedBvid === card.pageKey;
+    const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === card.bvid;
     const button = targetDocument.createElement('div');
     button.className = `${APP}__playlist-card`;
     button.dataset.bvid = card.bvid || '';
@@ -420,6 +425,12 @@ export function createCommentsTabsUi({
     }
     titleText.appendChild(targetDocument.createTextNode(card.title || 'Bilibili 视频'));
     title.appendChild(titleText);
+    if (isLastPlayed) {
+      const lastPlayed = targetDocument.createElement('span');
+      lastPlayed.className = `${APP}__playlist-last-played`;
+      lastPlayed.textContent = '上次播放';
+      title.appendChild(lastPlayed);
+    }
     info.appendChild(title);
 
     if (card.subtitle) {
@@ -479,6 +490,14 @@ export function createCommentsTabsUi({
     return signal;
   }
 
+  function getLastPlayedKey() {
+    return state.lastPlayed?.kind === 'video' && state.lastPlayed?.bvid ? state.lastPlayed.bvid : '';
+  }
+
+  function syncLastPlayed() {
+    setLastPlayedKey(getLastPlayedKey());
+  }
+
   function scrollSelectedPlaylistIntoView(kind, { force = false } = {}) {
     if (!force && getCommentLayout?.() !== 'right') return;
     const bvid = state[kind].selectedPlaylistBvid;
@@ -527,6 +546,7 @@ export function createCommentsTabsUi({
     scrollSelectedPlaylistIntoView,
     setSelectedPageKey,
     setSelectedPlaylistBvid,
+    syncLastPlayed,
     syncTabs,
   };
 }

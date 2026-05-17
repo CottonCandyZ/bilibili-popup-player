@@ -879,6 +879,9 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       .${APP}__playlist-title {
         width: 100%;
         min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
@@ -888,12 +891,25 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
 
       .${APP}__playlist-title-text {
         min-width: 0;
+        flex: 1 1 auto;
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
+      }
+
+      .${APP}__playlist-last-played {
+        flex: 0 0 auto;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 5px;
+        border-radius: 3px;
+        color: var(--brand_blue, #00aeec);
+        background: color-mix(in srgb, var(--brand_blue, #00aeec) 12%, transparent);
+        font: 500 11px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
       .${APP}__playlist-subtitle,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.4.7
+// @version      3.4.8
 // @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @match        https://www.bilibili.com/*
@@ -610,6 +610,7 @@
     const selectedPageSignals = new Map();
     const selectedSignals = new Map();
     const listViews = new Map();
+    const [lastPlayedKey, setLastPlayedKey] = createSignal(getLastPlayedKey());
     function createTabs(targetDocument, kind) {
       const tabs = targetDocument.createElement('div');
       tabs.className = `${APP}__comments-tabs`;
@@ -862,7 +863,8 @@
           const currentCards = cards();
           const currentLoading = loading();
           const currentAppendLoading = appendLoading();
-          const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : source === 'pages' ? getSelectedPageSignal(kind)[0]() : '';
+          const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : source === 'recommend' ? getSelectedSignal(kind)[0]() : source === 'pages' ? getSelectedPageSignal(kind)[0]() : '';
+          const lastPlayed = lastPlayedKey();
           list.textContent = '';
           empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
           empty.textContent = currentLoading || currentAppendLoading || currentCards.length ? '' : emptyText();
@@ -871,7 +873,7 @@
             return;
           }
           currentCards.forEach(card => {
-            list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected));
+            list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected, lastPlayed));
           });
           if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
           if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
@@ -915,8 +917,9 @@
       card.append(cover, info);
       return card;
     }
-    function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '') {
-      const selected = source === 'playlist' ? selectedBvid === card.bvid : source === 'pages' && selectedBvid === card.pageKey;
+    function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '', lastPlayedBvid = '') {
+      const selected = source === 'playlist' || source === 'recommend' ? selectedBvid === card.bvid : source === 'pages' && selectedBvid === card.pageKey;
+      const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === card.bvid;
       const button = targetDocument.createElement('div');
       button.className = `${APP}__playlist-card`;
       button.dataset.bvid = card.bvid || '';
@@ -979,6 +982,12 @@
       }
       titleText.appendChild(targetDocument.createTextNode(card.title || 'Bilibili 视频'));
       title.appendChild(titleText);
+      if (isLastPlayed) {
+        const lastPlayed = targetDocument.createElement('span');
+        lastPlayed.className = `${APP}__playlist-last-played`;
+        lastPlayed.textContent = '上次播放';
+        title.appendChild(lastPlayed);
+      }
       info.appendChild(title);
       if (card.subtitle) {
         const subtitle = targetDocument.createElement('div');
@@ -1032,6 +1041,12 @@
       }
       return signal;
     }
+    function getLastPlayedKey() {
+      return state.lastPlayed?.kind === 'video' && state.lastPlayed?.bvid ? state.lastPlayed.bvid : '';
+    }
+    function syncLastPlayed() {
+      setLastPlayedKey(getLastPlayedKey());
+    }
     function scrollSelectedPlaylistIntoView(kind, {
       force = false
     } = {}) {
@@ -1079,6 +1094,7 @@
       scrollSelectedPlaylistIntoView,
       setSelectedPageKey,
       setSelectedPlaylistBvid,
+      syncLastPlayed,
       syncTabs
     };
   }
@@ -2626,6 +2642,9 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       .${APP}__playlist-title {
         width: 100%;
         min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
@@ -2635,12 +2654,25 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
 
       .${APP}__playlist-title-text {
         min-width: 0;
+        flex: 1 1 auto;
         overflow: hidden;
         overflow-wrap: anywhere;
         word-break: break-word;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
+      }
+
+      .${APP}__playlist-last-played {
+        flex: 0 0 auto;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 5px;
+        border-radius: 3px;
+        color: var(--brand_blue, #00aeec);
+        background: color-mix(in srgb, var(--brand_blue, #00aeec) 12%, transparent);
+        font: 500 11px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
       .${APP}__playlist-subtitle,
@@ -4172,34 +4204,157 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       name: staff.name
     }));
   }
-  function getPlayerViewInfo(initialState) {
+  function compactObject(value) {
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+  }
+  function getStats(stat) {
+    return compactObject({
+      aid: stat?.aid,
+      coin: stat?.coin,
+      danmaku: stat?.danmaku,
+      dislike: stat?.dislike,
+      favorite: stat?.favorite,
+      hisRank: stat?.his_rank,
+      like: stat?.like,
+      nowRank: stat?.now_rank,
+      reply: stat?.reply,
+      share: stat?.share,
+      view: stat?.view,
+      vt: stat?.vt
+    });
+  }
+  function isPositiveState(value) {
+    return value === true || value === 1 || value === '1';
+  }
+  function getStoryType(videoData) {
+    if (videoData?.ugc_season?.sections?.length) return 2;
+    if ((videoData?.pages?.length || 0) > 1) return 1;
+    return 0;
+  }
+  function getPageList(videoData) {
+    if (!Array.isArray(videoData?.pages) || !videoData.pages.length) return null;
+    return videoData.pages.map((page, index) => ({
+      aid: videoData.aid,
+      bvid: videoData.bvid,
+      cid: page.cid,
+      duration: page.duration,
+      from: page.from,
+      hasNext: index < videoData.pages.length - 1,
+      hasPrev: index > 0,
+      page: page.page,
+      p: page.page || index + 1,
+      part: page.part,
+      title: page.part
+    }));
+  }
+  function getUpInfo(initialState) {
     const vd = initialState?.videoData || {};
     const upData = initialState?.upData || vd.owner || {};
+    if (!upData?.mid) return null;
+    const followed = isPositiveState(vd.req_user?.attention ?? upData.followed);
+    return {
+      attention: upData.attention,
+      face: upData.face,
+      fans: upData.fans,
+      follow: followed,
+      followed,
+      isFollowed: followed,
+      mid: upData.mid,
+      name: upData.name,
+      officialVerify: upData.official_verify || upData.officialVerify,
+      pendant: upData.pendant,
+      sign: upData.sign,
+      staffs: getUpStaffs(initialState?.staffData || vd.staff),
+      vip: upData.vip
+    };
+  }
+  function getManuscriptInfo(initialState) {
+    const vd = initialState?.videoData || {};
+    return {
+      coinDisable: true,
+      coinStatus: Number(vd.req_user?.coin) > 0,
+      collectDisable: true,
+      collectStatus: isPositiveState(vd.req_user?.favorite),
+      cover: vd.pic,
+      electricStatus: initialState?.elecFullInfo?.show_info?.state,
+      likeDisable: true,
+      likeIcon: vd.like_icon,
+      likeStatus: isPositiveState(vd.req_user?.like),
+      list: getPageList(vd),
+      related: initialState?.related,
+      relatedAutoplay: false,
+      stat: vd.stat,
+      title: vd.title,
+      type: getStoryType(vd)
+    };
+  }
+  function getManuscriptActionState(initialState) {
+    const vd = initialState?.videoData || {};
+    return {
+      coinDisable: true,
+      coinStatus: Number(vd.req_user?.coin) > 0,
+      collectDisable: true,
+      collectStatus: isPositiveState(vd.req_user?.favorite),
+      likeDisable: true,
+      likeIcon: vd.like_icon,
+      likeStatus: isPositiveState(vd.req_user?.like)
+    };
+  }
+  function getPlayerViewInfo(initialState) {
+    const vd = initialState?.videoData || {};
+    const upInfo = getUpInfo(initialState);
+    const manuscriptInfo = getManuscriptInfo(initialState);
+    const currentPage = Array.isArray(vd.pages) ? vd.pages.find(page => Number(page.page) === Number(initialState?.p)) || vd.pages[0] : null;
     const tidInfo = getTidInfo(initialState?.channelKv || initialState?.channel, vd.tid_v2) || getTidInfo(initialState?.channelKv || initialState?.channel, vd.tid) || {
       subTid: vd.tid_v2 || vd.tid
     };
     return {
-      upInfo: upData?.mid ? {
-        mid: upData.mid,
-        name: upData.name,
-        face: upData.face,
-        fans: upData.fans,
-        staffs: getUpStaffs(initialState?.staffData || vd.staff)
-      } : null,
+      upInfo,
       storyInfo: {
+        aid: vd.aid,
+        bvid: vd.bvid,
+        cid: currentPage?.cid || vd.cid || initialState?.cid,
+        copyright: vd.copyright,
+        cover: vd.pic,
+        ctime: vd.ctime,
+        desc: vd.desc,
+        dimension: vd.dimension,
+        duration: vd.duration,
+        owner: vd.owner,
+        pages: vd.pages,
+        pic: vd.pic,
+        pubdate: vd.pubdate,
+        reqUser: vd.req_user,
+        req_user: vd.req_user,
+        rights: vd.rights,
+        state: vd.state,
+        stat: vd.stat,
         title: vd.title,
+        type: getStoryType(vd),
         tid: tidInfo.tid,
+        tidV2: vd.tid_v2,
+        tname: vd.tname,
+        tnameV2: vd.tname_v2,
         subTid: tidInfo.subTid,
-        likeIcon: vd.like_icon,
-        electricStatus: initialState?.elecFullInfo?.show_info?.state,
-        stats: {
-          like: vd.stat?.like,
-          share: vd.stat?.share,
-          reply: vd.stat?.reply,
-          coin: vd.stat?.coin
-        }
+        stats: getStats(vd.stat),
+        ...manuscriptInfo
       }
     };
+  }
+  function getPlayerExternalState(initialState, internalKind = {}) {
+    const upInfo = getUpInfo(initialState);
+    const manuscriptInfo = getManuscriptActionState(initialState);
+    const followKey = internalKind.Follow ?? 3;
+    const upInfoKey = internalKind.UpInfo ?? 6;
+    const manuscriptKey = internalKind.Manuscript ?? 7;
+    const state = {
+      [manuscriptKey]: manuscriptInfo
+    };
+    if (upInfo) {
+      state[followKey] = upInfo.follow;
+      state[upInfoKey] = upInfo;
+    }
+    return state;
   }
 
   async function resolvePlaybackBootstrap(meta) {
@@ -4211,17 +4366,19 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     const bvid = meta.bvid || meta.href?.match(BV_RE)?.[1];
     if (!bvid) return null;
     try {
-      const [viewResult, relatedResult, pagelistResult] = await Promise.allSettled([fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`), fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/archive/related?bvid=${encodeURIComponent(bvid)}`), fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`)]);
-      if (viewResult.status !== 'fulfilled') return null;
-      const vd = normalizeVideoData(viewResult.value?.data, pagelistResult.status === 'fulfilled' ? pagelistResult.value?.data : null);
+      const [detailResult, pagelistResult] = await Promise.allSettled([fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/wbi/view/detail?bvid=${encodeURIComponent(bvid)}&need_view=1&platform=web`), fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`)]);
+      if (detailResult.status !== 'fulfilled') return null;
+      const detail = detailResult.value?.data || {};
+      const vd = normalizeVideoData(detail.View, pagelistResult.status === 'fulfilled' ? pagelistResult.value?.data : null);
       if (!vd?.aid || !vd?.bvid) return null;
+      applyDetailCard(vd, detail.Card);
       const pageP = resolveCurrentPage(meta.href, {
         p: 1,
         videoData: vd
       });
       const sequence = resolvePlaybackSequence(vd, pageP);
       const page = getVideoPage(vd, pageP);
-      const relatedItems = relatedResult.status === 'fulfilled' && Array.isArray(relatedResult.value?.data) ? relatedResult.value.data : [];
+      const relatedItems = Array.isArray(detail.Related) ? detail.Related : [];
       const initialState = buildInitialStateFromApis({
         meta,
         p: sequence.p,
@@ -4279,6 +4436,30 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       videos: videoData.videos || pages.length
     };
   }
+  function applyDetailCard(videoData, cardInfo) {
+    const card = cardInfo?.card || {};
+    const owner = videoData.owner || {};
+    const mid = Number(card.mid || owner.mid);
+    videoData.owner = {
+      ...owner,
+      __biliPopupPlayerNanoProfileLoaded: cardInfo ? true : owner.__biliPopupPlayerNanoProfileLoaded,
+      attention: card.attention ?? owner.attention,
+      face: card.face || owner.face,
+      fans: cardInfo?.follower ?? card.fans ?? owner.fans,
+      mid: Number.isFinite(mid) && mid > 0 ? mid : owner.mid,
+      name: card.name || owner.name,
+      official_verify: card.official_verify || owner.official_verify,
+      pendant: card.pendant || owner.pendant,
+      sign: card.sign || owner.sign,
+      vip: card.vip || owner.vip
+    };
+    if (cardInfo && Object.hasOwn(cardInfo, 'following')) {
+      videoData.req_user = {
+        ...(videoData.req_user || {}),
+        attention: cardInfo.following ? 1 : 0
+      };
+    }
+  }
   function mergeVideoPages(primaryPages, pageList) {
     const byPage = new Map();
     const addPage = page => {
@@ -4316,7 +4497,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         mid: owner.mid,
         name: owner.name,
         face: owner.face,
-        fans: owner.fans
+        fans: owner.fans,
+        sign: owner.sign,
+        attention: owner.attention,
+        followed: videoData.req_user?.attention,
+        official_verify: owner.official_verify,
+        pendant: owner.pendant,
+        vip: owner.vip
       },
       staffData: videoData.staff || [],
       nanoTheme: getPlayerNanoTheme()
@@ -4600,8 +4787,38 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     return match ? decodeURIComponent(match[1]) : '';
   }
 
-  const RELATION_MODIFY_API = 'https://api.bilibili.com/x/relation/modify';
   const OWNER_CARD_API = 'https://api.bilibili.com/x/web-interface/card';
+  async function fetchOwnerProfile(mid) {
+    const normalizedMid = Number(mid);
+    if (!Number.isFinite(normalizedMid) || normalizedMid <= 0) throw new Error('缺少 UP 主 mid');
+    const url = new URL(OWNER_CARD_API);
+    url.searchParams.set('mid', String(Math.trunc(normalizedMid)));
+    url.searchParams.set('photo', 'true');
+    const response = await fetch(url.href, {
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*'
+      }
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(`请求失败：${response.status}`);
+    if (!payload || payload.code !== 0) throw new Error(payload?.message || 'UP 主资料加载失败');
+    const card = payload.data?.card || {};
+    return {
+      attention: card.attention,
+      face: String(card.face || ''),
+      fans: payload.data?.follower ?? card.fans ?? card.follower,
+      followed: Boolean(payload.data?.following),
+      mid: normalizedMid,
+      name: String(card.name || ''),
+      officialVerify: card.official_verify || null,
+      pendant: card.pendant || null,
+      sign: String(card.sign || '').trim(),
+      vip: card.vip || null
+    };
+  }
+
+  const RELATION_MODIFY_API = 'https://api.bilibili.com/x/relation/modify';
   function renderVideoIntro({
     targetDocument = document,
     mount,
@@ -4678,31 +4895,6 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       description.append(title, text);
       mount.appendChild(description);
     }
-  }
-  async function fetchOwnerProfile(mid) {
-    const normalizedMid = Number(mid);
-    if (!Number.isFinite(normalizedMid) || normalizedMid <= 0) throw new Error('缺少 UP 主 mid');
-    const url = new URL(OWNER_CARD_API);
-    url.searchParams.set('mid', String(Math.trunc(normalizedMid)));
-    url.searchParams.set('photo', 'true');
-    const response = await fetch(url.href, {
-      credentials: 'include',
-      headers: {
-        accept: 'application/json, text/plain, */*'
-      }
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(`请求失败：${response.status}`);
-    if (!payload || payload.code !== 0) throw new Error(payload?.message || 'UP 主资料加载失败');
-    const card = payload.data?.card || {};
-    return {
-      face: String(card.face || ''),
-      fans: payload.data?.follower ?? card.fans ?? card.follower,
-      followed: Boolean(payload.data?.following),
-      mid: normalizedMid,
-      name: String(card.name || ''),
-      sign: String(card.sign || '').trim()
-    };
   }
   async function requestFollowUp(mid, follow = true) {
     const normalizedMid = Number(mid);
@@ -4879,8 +5071,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         comments: null,
         bootstrap: null,
         screenHandler: null,
+        navigateHandler: null,
         handoffHandler: null,
         endedHandler: null,
+        navigateSyncTimer: 0,
         followBusy: false,
         likeBusy: false,
         likeBurstTimer: 0,
@@ -4906,8 +5100,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         comments: null,
         bootstrap: null,
         screenHandler: null,
+        navigateHandler: null,
         handoffHandler: null,
         endedHandler: null,
+        navigateSyncTimer: 0,
         followBusy: false,
         likeBusy: false,
         likeBurstTimer: 0,
@@ -4954,6 +5150,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       scrollSelectedPlaylistIntoView,
       setSelectedPageKey,
       setSelectedPlaylistBvid,
+      syncLastPlayed,
       syncTabs: syncCommentsTabs
     } = commentsTabsUi;
     let rendererOrchestrator = null;
@@ -6039,6 +6236,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       try {
         await requestArchiveLike(aid, nextLiked);
         setBootstrapLiked(bootstrap, nextLiked);
+        syncPlayerExternalState(kind);
         showLikeBurst(kind, message, nextLiked ? 'success' : 'neutral');
         if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = message;
         if (kind === 'pip') setPipStatus(message);
@@ -6158,6 +6356,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       try {
         await requestFollowUp(mid, nextFollow);
         setBootstrapFollowed(slot.bootstrap, nextFollow);
+        syncPlayerExternalState(kind);
         showLikeBurst(kind, message, nextFollow ? 'success' : 'neutral', {
           icon: false
         });
@@ -6203,6 +6402,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         if (slot.bootstrap !== bootstrap) return;
         applyOwnerProfile(bootstrap, profile);
         syncVideoIntro(kind);
+        syncPlayerExternalState(kind);
       } catch {
         owner.__biliPopupPlayerNanoProfileLoaded = true;
       }
@@ -6219,6 +6419,40 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (Number.isFinite(fans) && fans >= 0) owner.fans = fans;
       videoData.req_user ||= {};
       videoData.req_user.attention = profile.followed ? 1 : 0;
+    }
+    function schedulePlayerExternalStateSync(kind) {
+      syncPlayerExternalState(kind);
+      schedulePlayerHandoffAvailabilitySync(kind);
+      const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+      targetWindow.setTimeout(() => {
+        syncPlayerExternalState(kind);
+        schedulePlayerHandoffAvailabilitySync(kind);
+      }, 300);
+    }
+    function syncPlayerExternalState(kind) {
+      const slot = state[kind];
+      if (!slot?.player || !slot.bootstrap || isLiveBootstrap(slot.bootstrap)) return;
+      const playerApi = getPlayerApiForKind(kind);
+      if (!playerApi?.InternalKind || typeof slot.player.setState !== 'function') return;
+      try {
+        slot.player.setState(getPlayerExternalState(slot.bootstrap.initialState, playerApi.InternalKind));
+        syncPlayerHandoffAvailability(kind);
+      } catch {
+        // The nano API is not ready until after connect/reload has mounted its stores.
+      }
+    }
+    function schedulePlayerHandoffAvailabilitySync(kind) {
+      const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+      [0, 80, 300, 800].forEach(delay => {
+        targetWindow.setTimeout(() => syncPlayerHandoffAvailability(kind), delay);
+      });
+    }
+    function getPlayerApiForKind(kind) {
+      if (kind === 'pip') {
+        const pipWindow = state.pip.win;
+        return pipWindow && !pipWindow.closed ? pipWindow.nano : null;
+      }
+      return window.nano;
     }
     function setHomeFullscreen(active) {
       if (!state.home.overlay) return;
@@ -6269,7 +6503,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncHomeSize();
       await Promise.resolve(state.home.player.reload(setting, bootstrap.initialState?.nanoTheme));
       if (token !== state.switchToken || !state.home.player) return;
+      schedulePlayerExternalStateSync('home');
       bindHomeScreenChange(state.home.player);
+      bindHomePlayerNavigate(state.home.player);
       bindHomePlayerHandoff(state.home.player);
       bindHomePlayerEnded(state.home.player);
       syncPlayerHandoffAvailability('home');
@@ -6281,12 +6517,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const setting = buildHomePrimarySetting(bootstrap);
       state.home.player = nano.createPlayer(setting, bootstrap.initialState?.nanoTheme);
       bindHomeScreenChange(state.home.player);
+      bindHomePlayerNavigate(state.home.player);
       bindHomePlayerHandoff(state.home.player);
       bindHomePlayerEnded(state.home.player);
       syncPlayerHandoffAvailability('home');
       setHomePlayerFeatureBlocked(homeRenderer.isClosed());
       updateDebug(setting, bootstrap);
       state.home.player.connect();
+      schedulePlayerExternalStateSync('home');
       state.home.ui.status.textContent = '播放器：已 createPlayer';
       syncHomeSize();
       playHomeSoon(token, 1200);
@@ -6573,7 +6811,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
       await Promise.resolve(state.pip.player.reload(setting, bootstrap.initialState?.nanoTheme));
       if (token !== state.switchToken || targetWindow.closed || targetWindow.player !== state.pip.player) return;
+      schedulePlayerExternalStateSync('pip');
       bindPipScreenChange(targetWindow, state.pip.player);
+      bindPipPlayerNavigate(targetWindow, state.pip.player);
       bindPipPlayerHandoff(targetWindow, state.pip.player);
       bindPipPlayerEnded(targetWindow, state.pip.player);
       syncPlayerHandoffAvailability('pip');
@@ -6606,7 +6846,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
       state.pip.player = player;
       player.connect();
+      schedulePlayerExternalStateSync('pip');
       bindPipScreenChange(targetWindow, player);
+      bindPipPlayerNavigate(targetWindow, player);
       bindPipPlayerHandoff(targetWindow, player);
       bindPipPlayerEnded(targetWindow, player);
       syncPlayerHandoffAvailability('pip');
@@ -6625,6 +6867,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }, 800);
       targetWindow.addEventListener('pagehide', () => {
         if (state.pip.player === player) unbindPipScreenChange();
+        if (state.pip.player === player) unbindPipPlayerNavigate();
         if (state.pip.player === player) unbindPipPlayerHandoff();
         if (state.pip.player === player) unbindPipPlayerEnded();
         try {
@@ -7071,6 +7314,45 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       state.home.screenHandler = null;
     }
+    function bindHomePlayerNavigate(player) {
+      unbindHomePlayerNavigate();
+      const eventTypes = getPlayerNavigationEventTypes(window.nano);
+      if (!player?.on || !eventTypes.length) return;
+      const bindings = eventTypes.map(({
+        eventType,
+        delay
+      }) => {
+        const handler = () => schedulePlayerNavigationSync('home', delay);
+        player.on(eventType, handler);
+        return {
+          eventType,
+          handler
+        };
+      });
+      state.home.navigateHandler = {
+        player,
+        bindings
+      };
+    }
+    function unbindHomePlayerNavigate() {
+      if (state.home.navigateSyncTimer) {
+        window.clearTimeout(state.home.navigateSyncTimer);
+        state.home.navigateSyncTimer = 0;
+      }
+      const binding = state.home.navigateHandler;
+      if (!binding) return;
+      try {
+        binding.bindings?.forEach(({
+          eventType,
+          handler
+        }) => {
+          binding.player?.off?.(eventType, handler);
+        });
+      } catch {
+        // Ignore event cleanup failures.
+      }
+      state.home.navigateHandler = null;
+    }
     function bindHomePlayerHandoff(player) {
       unbindHomePlayerHandoff();
       const eventType = window.nano?.EventType?.Player_Handoff_Signal;
@@ -7137,6 +7419,46 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       state.pip.screenHandler = null;
     }
+    function bindPipPlayerNavigate(targetWindow, player) {
+      unbindPipPlayerNavigate();
+      const eventTypes = getPlayerNavigationEventTypes(targetWindow.nano);
+      if (!player?.on || !eventTypes.length) return;
+      const bindings = eventTypes.map(({
+        eventType,
+        delay
+      }) => {
+        const handler = () => schedulePlayerNavigationSync('pip', delay);
+        player.on(eventType, handler);
+        return {
+          eventType,
+          handler
+        };
+      });
+      state.pip.navigateHandler = {
+        player,
+        bindings
+      };
+    }
+    function unbindPipPlayerNavigate() {
+      const pipWindow = state.pip.win;
+      if (state.pip.navigateSyncTimer) {
+        if (pipWindow && !pipWindow.closed) pipWindow.clearTimeout(state.pip.navigateSyncTimer);else window.clearTimeout(state.pip.navigateSyncTimer);
+        state.pip.navigateSyncTimer = 0;
+      }
+      const binding = state.pip.navigateHandler;
+      if (!binding) return;
+      try {
+        binding.bindings?.forEach(({
+          eventType,
+          handler
+        }) => {
+          binding.player?.off?.(eventType, handler);
+        });
+      } catch {
+        // Ignore event cleanup failures.
+      }
+      state.pip.navigateHandler = null;
+    }
     function bindPipPlayerHandoff(targetWindow, player) {
       unbindPipPlayerHandoff();
       const eventType = targetWindow.nano?.EventType?.Player_Handoff_Signal;
@@ -7195,6 +7517,132 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       playAdjacentFromActiveTab(kind, 1, {
         auto: true
       });
+    }
+    function getPlayerNavigationEventTypes(playerApi) {
+      const eventType = playerApi?.EventType || {};
+      return [{
+        eventType: eventType.Player_Navigate,
+        delay: 240
+      }, {
+        eventType: eventType.Player_LoadStart,
+        delay: 120
+      }, {
+        eventType: eventType.Player_PlayUrl_Done,
+        delay: 80
+      }, {
+        eventType: eventType.Player_Prepared,
+        delay: 40
+      }, {
+        eventType: eventType.Player_Committed,
+        delay: 0
+      }].filter(item => item.eventType);
+    }
+    function schedulePlayerNavigationSync(kind, delay = 180) {
+      const slot = state[kind];
+      if (!slot?.player || isLiveBootstrap(slot.bootstrap)) return;
+      const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+      if (slot.navigateSyncTimer) targetWindow.clearTimeout(slot.navigateSyncTimer);
+      slot.navigateSyncTimer = targetWindow.setTimeout(() => {
+        slot.navigateSyncTimer = 0;
+        void syncPlayerNavigation(kind);
+      }, delay);
+    }
+    async function syncPlayerNavigation(kind, fallbackMeta = null) {
+      const slot = state[kind];
+      if (!slot?.player || !slot.bootstrap || isLiveBootstrap(slot.bootstrap)) return;
+      const currentMeta = getPlayerNavigationMeta(kind);
+      const meta = fallbackMeta?.bvid ? fallbackMeta : currentMeta;
+      if (!meta?.bvid || isCurrentBootstrapPlayback(slot.bootstrap, meta)) {
+        schedulePlayerHandoffAvailabilitySync(kind);
+        return;
+      }
+      const player = slot.player;
+      const token = ++state.switchToken;
+      try {
+        const bootstrap = await resolvePlaybackBootstrap(meta);
+        if (token !== state.switchToken || slot.player !== player) return;
+        if (!fallbackMeta?.bvid && !isCurrentPlayerMeta(kind, meta)) return;
+        applyInternalPlayerNavigation(kind, meta, bootstrap, token);
+      } catch (error) {
+        if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = `播放器内部换源同步失败：${error?.message || 'unknown'}`;
+        if (kind === 'pip') setPipStatus(`换源同步失败：${error?.message || 'unknown'}`);
+      }
+    }
+    function applyInternalPlayerNavigation(kind, meta, bootstrap, token) {
+      state[kind].bootstrap = bootstrap;
+      saveLastPlayed(meta, bootstrap);
+      recordPlaybackHistory({
+        ...meta}, bootstrap);
+      syncPlaybackPageMeta(kind, bootstrap);
+      setSelectedPlaylistBvid(kind, bootstrap.playerInfo?.bvid || meta.bvid);
+      renderPlaylist(kind);
+      renderPageParts(kind, bootstrap);
+      renderRecommendations(kind, bootstrap);
+      syncVideoIntro(kind);
+      syncPlayerExternalState(kind);
+      schedulePlayerHandoffAvailabilitySync(kind);
+      if (kind === 'home') {
+        const ui = state.home.ui;
+        if (ui) {
+          ui.title.textContent = bootstrap.title || meta.title || meta.bvid;
+          ui.openOriginal.dataset.href = bootstrap.href || meta.href;
+          ui.status.textContent = `播放器内部换源：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
+        }
+        updateDebug(buildHomePrimarySetting(bootstrap), bootstrap);
+        mountHomeComments(bootstrap, token);
+        return;
+      }
+      if (state.pip.win && !state.pip.win.closed) {
+        ensurePipPlayerControls(state.pip.win, bootstrap.href || meta.href);
+        mountPipComments(state.pip.win, bootstrap, token);
+        setPipPlaying(bootstrap);
+        setPipStatus('已同步播放器内部换源');
+        state.pip.win.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
+      }
+    }
+    function getPlayerNavigationMeta(kind) {
+      const slot = state[kind];
+      const info = readPlayerNavigationInfo(slot?.player);
+      if (!info.bvid) return null;
+      const href = buildPlaybackHref(info.bvid, info.p);
+      return {
+        bvid: info.bvid,
+        href,
+        p: Number.isInteger(info.p) && info.p > 0 ? info.p : 1,
+        title: info.title || info.bvid
+      };
+    }
+    function readPlayerNavigationInfo(player) {
+      const store = player?.rootStore?.configStore || player?.configStore || {};
+      const story = player?.rootStore?.storyStore?.state || player?.storyStore?.state || {};
+      const primary = player?.primary || {};
+      const input = player?.rootPlayer?.input || player?.input || {};
+      return {
+        aid: readStoreValue(store, 'aid') || story.aid || input.aid || primary.aid,
+        bvid: String(readStoreValue(store, 'bvid') || story.bvid || input.bvid || primary.bvid || '').trim(),
+        cid: readStoreValue(store, 'cid') || story.cid || input.cid || primary.cid,
+        p: Number(readStoreValue(store, 'p') || story.p || input.p || primary.p || 1),
+        title: String(story.title || primary.title || '').trim()
+      };
+    }
+    function readStoreValue(store, key) {
+      return store?.[key] ?? store?.state?.[key] ?? store?.input?.[key] ?? store?.primary?.[key];
+    }
+    function buildPlaybackHref(bvid, page) {
+      const url = new URL(`/video/${bvid}/`, location.origin);
+      const pageNo = Number(page);
+      if (Number.isInteger(pageNo) && pageNo > 1) url.searchParams.set('p', String(pageNo));
+      return url.href;
+    }
+    function isCurrentPlayerMeta(kind, meta) {
+      const current = getPlayerNavigationMeta(kind);
+      return Boolean(current?.bvid && meta?.bvid && current.bvid === meta.bvid);
+    }
+    function isCurrentBootstrapPlayback(bootstrap, meta) {
+      if (!meta?.bvid || !bootstrap?.playerInfo?.bvid || meta.bvid !== bootstrap.playerInfo.bvid) return false;
+      const metaPage = Number(meta.p || 1);
+      const bootstrapPage = Number(bootstrap.playerInfo?.p || 1);
+      return metaPage === bootstrapPage;
     }
     function syncPlayerHandoffAvailability(kind) {
       const availability = getPlayerHandoffAvailability(kind);
@@ -7540,6 +7988,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       };
       state.lastPlayed = next;
       localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
+      syncLastPlayed();
       syncSettings();
       syncVideoBadges();
     }
@@ -8000,6 +8449,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.home.likeBusy = false;
       if (!state.home.player) return;
       unbindHomeScreenChange();
+      unbindHomePlayerNavigate();
       unbindHomePlayerHandoff();
       unbindHomePlayerEnded();
       setHomePlayerFeatureBlocked(false);
@@ -8019,6 +8469,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.pip.likeBusy = false;
       if (!state.pip.player) return;
       unbindPipScreenChange();
+      unbindPipPlayerNavigate();
       unbindPipPlayerHandoff();
       unbindPipPlayerEnded();
       try {

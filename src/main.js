@@ -48,7 +48,7 @@ import {
   renderPipLoadingDocument,
   renderPipPlayerDocument,
 } from './pip-document.js';
-import { getPlayerViewInfo } from './player-view-info.js';
+import { getPlayerExternalState, getPlayerViewInfo } from './player-view-info.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
 import { loadScriptOnce } from './script-loader.js';
@@ -178,8 +178,10 @@ import {
       comments: null,
       bootstrap: null,
       screenHandler: null,
+      navigateHandler: null,
       handoffHandler: null,
       endedHandler: null,
+      navigateSyncTimer: 0,
       followBusy: false,
       likeBusy: false,
       likeBurstTimer: 0,
@@ -205,8 +207,10 @@ import {
       comments: null,
       bootstrap: null,
       screenHandler: null,
+      navigateHandler: null,
       handoffHandler: null,
       endedHandler: null,
+      navigateSyncTimer: 0,
       followBusy: false,
       likeBusy: false,
       likeBurstTimer: 0,
@@ -256,6 +260,7 @@ import {
     scrollSelectedPlaylistIntoView,
     setSelectedPageKey,
     setSelectedPlaylistBvid,
+    syncLastPlayed,
     syncTabs: syncCommentsTabs,
   } = commentsTabsUi;
   let rendererOrchestrator = null;
@@ -1484,6 +1489,7 @@ import {
     try {
       await requestArchiveLike(aid, nextLiked);
       setBootstrapLiked(bootstrap, nextLiked);
+      syncPlayerExternalState(kind);
       showLikeBurst(kind, message, nextLiked ? 'success' : 'neutral');
       if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = message;
       if (kind === 'pip') setPipStatus(message);
@@ -1618,6 +1624,7 @@ import {
     try {
       await requestFollowUp(mid, nextFollow);
       setBootstrapFollowed(slot.bootstrap, nextFollow);
+      syncPlayerExternalState(kind);
       showLikeBurst(kind, message, nextFollow ? 'success' : 'neutral', { icon: false });
       if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = message;
       if (kind === 'pip') setPipStatus(message);
@@ -1665,6 +1672,7 @@ import {
       if (slot.bootstrap !== bootstrap) return;
       applyOwnerProfile(bootstrap, profile);
       syncVideoIntro(kind);
+      syncPlayerExternalState(kind);
     } catch {
       owner.__biliPopupPlayerNanoProfileLoaded = true;
     }
@@ -1682,6 +1690,45 @@ import {
     if (Number.isFinite(fans) && fans >= 0) owner.fans = fans;
     videoData.req_user ||= {};
     videoData.req_user.attention = profile.followed ? 1 : 0;
+  }
+
+  function schedulePlayerExternalStateSync(kind) {
+    syncPlayerExternalState(kind);
+    schedulePlayerHandoffAvailabilitySync(kind);
+    const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+    targetWindow.setTimeout(() => {
+      syncPlayerExternalState(kind);
+      schedulePlayerHandoffAvailabilitySync(kind);
+    }, 300);
+  }
+
+  function syncPlayerExternalState(kind) {
+    const slot = state[kind];
+    if (!slot?.player || !slot.bootstrap || isLiveBootstrap(slot.bootstrap)) return;
+    const playerApi = getPlayerApiForKind(kind);
+    if (!playerApi?.InternalKind || typeof slot.player.setState !== 'function') return;
+
+    try {
+      slot.player.setState(getPlayerExternalState(slot.bootstrap.initialState, playerApi.InternalKind));
+      syncPlayerHandoffAvailability(kind);
+    } catch {
+      // The nano API is not ready until after connect/reload has mounted its stores.
+    }
+  }
+
+  function schedulePlayerHandoffAvailabilitySync(kind) {
+    const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+    [0, 80, 300, 800].forEach((delay) => {
+      targetWindow.setTimeout(() => syncPlayerHandoffAvailability(kind), delay);
+    });
+  }
+
+  function getPlayerApiForKind(kind) {
+    if (kind === 'pip') {
+      const pipWindow = state.pip.win;
+      return pipWindow && !pipWindow.closed ? pipWindow.nano : null;
+    }
+    return window.nano;
   }
 
   function setHomeFullscreen(active) {
@@ -1730,7 +1777,9 @@ import {
     syncHomeSize();
     await Promise.resolve(state.home.player.reload(setting, bootstrap.initialState?.nanoTheme));
     if (token !== state.switchToken || !state.home.player) return;
+    schedulePlayerExternalStateSync('home');
     bindHomeScreenChange(state.home.player);
+    bindHomePlayerNavigate(state.home.player);
     bindHomePlayerHandoff(state.home.player);
     bindHomePlayerEnded(state.home.player);
     syncPlayerHandoffAvailability('home');
@@ -1743,12 +1792,14 @@ import {
     const setting = buildHomePrimarySetting(bootstrap);
     state.home.player = nano.createPlayer(setting, bootstrap.initialState?.nanoTheme);
     bindHomeScreenChange(state.home.player);
+    bindHomePlayerNavigate(state.home.player);
     bindHomePlayerHandoff(state.home.player);
     bindHomePlayerEnded(state.home.player);
     syncPlayerHandoffAvailability('home');
     setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     updateDebug(setting, bootstrap);
     state.home.player.connect();
+    schedulePlayerExternalStateSync('home');
     state.home.ui.status.textContent = '播放器：已 createPlayer';
     syncHomeSize();
     playHomeSoon(token, 1200);
@@ -2070,8 +2121,10 @@ import {
 
     await Promise.resolve(state.pip.player.reload(setting, bootstrap.initialState?.nanoTheme));
     if (token !== state.switchToken || targetWindow.closed || targetWindow.player !== state.pip.player) return;
+    schedulePlayerExternalStateSync('pip');
 
     bindPipScreenChange(targetWindow, state.pip.player);
+    bindPipPlayerNavigate(targetWindow, state.pip.player);
     bindPipPlayerHandoff(targetWindow, state.pip.player);
     bindPipPlayerEnded(targetWindow, state.pip.player);
     syncPlayerHandoffAvailability('pip');
@@ -2106,7 +2159,9 @@ import {
     targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
     state.pip.player = player;
     player.connect();
+    schedulePlayerExternalStateSync('pip');
     bindPipScreenChange(targetWindow, player);
+    bindPipPlayerNavigate(targetWindow, player);
     bindPipPlayerHandoff(targetWindow, player);
     bindPipPlayerEnded(targetWindow, player);
     syncPlayerHandoffAvailability('pip');
@@ -2127,6 +2182,7 @@ import {
 
     targetWindow.addEventListener('pagehide', () => {
       if (state.pip.player === player) unbindPipScreenChange();
+      if (state.pip.player === player) unbindPipPlayerNavigate();
       if (state.pip.player === player) unbindPipPlayerHandoff();
       if (state.pip.player === player) unbindPipPlayerEnded();
       try {
@@ -2604,6 +2660,35 @@ import {
     state.home.screenHandler = null;
   }
 
+  function bindHomePlayerNavigate(player) {
+    unbindHomePlayerNavigate();
+    const eventTypes = getPlayerNavigationEventTypes(window.nano);
+    if (!player?.on || !eventTypes.length) return;
+    const bindings = eventTypes.map(({ eventType, delay }) => {
+      const handler = () => schedulePlayerNavigationSync('home', delay);
+      player.on(eventType, handler);
+      return { eventType, handler };
+    });
+    state.home.navigateHandler = { player, bindings };
+  }
+
+  function unbindHomePlayerNavigate() {
+    if (state.home.navigateSyncTimer) {
+      window.clearTimeout(state.home.navigateSyncTimer);
+      state.home.navigateSyncTimer = 0;
+    }
+    const binding = state.home.navigateHandler;
+    if (!binding) return;
+    try {
+      binding.bindings?.forEach(({ eventType, handler }) => {
+        binding.player?.off?.(eventType, handler);
+      });
+    } catch {
+      // Ignore event cleanup failures.
+    }
+    state.home.navigateHandler = null;
+  }
+
   function bindHomePlayerHandoff(player) {
     unbindHomePlayerHandoff();
     const eventType = window.nano?.EventType?.Player_Handoff_Signal;
@@ -2664,6 +2749,37 @@ import {
     state.pip.screenHandler = null;
   }
 
+  function bindPipPlayerNavigate(targetWindow, player) {
+    unbindPipPlayerNavigate();
+    const eventTypes = getPlayerNavigationEventTypes(targetWindow.nano);
+    if (!player?.on || !eventTypes.length) return;
+    const bindings = eventTypes.map(({ eventType, delay }) => {
+      const handler = () => schedulePlayerNavigationSync('pip', delay);
+      player.on(eventType, handler);
+      return { eventType, handler };
+    });
+    state.pip.navigateHandler = { player, bindings };
+  }
+
+  function unbindPipPlayerNavigate() {
+    const pipWindow = state.pip.win;
+    if (state.pip.navigateSyncTimer) {
+      if (pipWindow && !pipWindow.closed) pipWindow.clearTimeout(state.pip.navigateSyncTimer);
+      else window.clearTimeout(state.pip.navigateSyncTimer);
+      state.pip.navigateSyncTimer = 0;
+    }
+    const binding = state.pip.navigateHandler;
+    if (!binding) return;
+    try {
+      binding.bindings?.forEach(({ eventType, handler }) => {
+        binding.player?.off?.(eventType, handler);
+      });
+    } catch {
+      // Ignore event cleanup failures.
+    }
+    state.pip.navigateHandler = null;
+  }
+
   function bindPipPlayerHandoff(targetWindow, player) {
     unbindPipPlayerHandoff();
     const eventType = targetWindow.nano?.EventType?.Player_Handoff_Signal;
@@ -2715,6 +2831,136 @@ import {
   function handlePlayerEnded(kind) {
     if (!state.autoPlayNext) return;
     playAdjacentFromActiveTab(kind, 1, { auto: true });
+  }
+
+  function getPlayerNavigationEventTypes(playerApi) {
+    const eventType = playerApi?.EventType || {};
+    return [
+      { eventType: eventType.Player_Navigate, delay: 240 },
+      { eventType: eventType.Player_LoadStart, delay: 120 },
+      { eventType: eventType.Player_PlayUrl_Done, delay: 80 },
+      { eventType: eventType.Player_Prepared, delay: 40 },
+      { eventType: eventType.Player_Committed, delay: 0 },
+    ].filter((item) => item.eventType);
+  }
+
+  function schedulePlayerNavigationSync(kind, delay = 180) {
+    const slot = state[kind];
+    if (!slot?.player || isLiveBootstrap(slot.bootstrap)) return;
+    const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+    if (slot.navigateSyncTimer) targetWindow.clearTimeout(slot.navigateSyncTimer);
+    slot.navigateSyncTimer = targetWindow.setTimeout(() => {
+      slot.navigateSyncTimer = 0;
+      void syncPlayerNavigation(kind);
+    }, delay);
+  }
+
+  async function syncPlayerNavigation(kind, fallbackMeta = null) {
+    const slot = state[kind];
+    if (!slot?.player || !slot.bootstrap || isLiveBootstrap(slot.bootstrap)) return;
+
+    const currentMeta = getPlayerNavigationMeta(kind);
+    const meta = fallbackMeta?.bvid ? fallbackMeta : currentMeta;
+    if (!meta?.bvid || isCurrentBootstrapPlayback(slot.bootstrap, meta)) {
+      schedulePlayerHandoffAvailabilitySync(kind);
+      return;
+    }
+
+    const player = slot.player;
+    const token = ++state.switchToken;
+    try {
+      const bootstrap = await resolvePlaybackBootstrap(meta);
+      if (token !== state.switchToken || slot.player !== player) return;
+      if (!fallbackMeta?.bvid && !isCurrentPlayerMeta(kind, meta)) return;
+      applyInternalPlayerNavigation(kind, meta, bootstrap, token);
+    } catch (error) {
+      if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = `播放器内部换源同步失败：${error?.message || 'unknown'}`;
+      if (kind === 'pip') setPipStatus(`换源同步失败：${error?.message || 'unknown'}`);
+    }
+  }
+
+  function applyInternalPlayerNavigation(kind, meta, bootstrap, token) {
+    state[kind].bootstrap = bootstrap;
+    saveLastPlayed(meta, bootstrap);
+    recordPlaybackHistory({ ...meta, fromInternalPlayer: true }, bootstrap);
+    syncPlaybackPageMeta(kind, bootstrap);
+    setSelectedPlaylistBvid(kind, bootstrap.playerInfo?.bvid || meta.bvid);
+    renderPlaylist(kind);
+    renderPageParts(kind, bootstrap);
+    renderRecommendations(kind, bootstrap);
+    syncVideoIntro(kind);
+    syncPlayerExternalState(kind);
+    schedulePlayerHandoffAvailabilitySync(kind);
+
+    if (kind === 'home') {
+      const ui = state.home.ui;
+      if (ui) {
+        ui.title.textContent = bootstrap.title || meta.title || meta.bvid;
+        ui.openOriginal.dataset.href = bootstrap.href || meta.href;
+        ui.status.textContent = `播放器内部换源：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
+      }
+      updateDebug(buildHomePrimarySetting(bootstrap), bootstrap);
+      mountHomeComments(bootstrap, token);
+      return;
+    }
+
+    if (state.pip.win && !state.pip.win.closed) {
+      ensurePipPlayerControls(state.pip.win, bootstrap.href || meta.href);
+      mountPipComments(state.pip.win, bootstrap, token);
+      setPipPlaying(bootstrap);
+      setPipStatus('已同步播放器内部换源');
+      state.pip.win.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
+    }
+  }
+
+  function getPlayerNavigationMeta(kind) {
+    const slot = state[kind];
+    const info = readPlayerNavigationInfo(slot?.player);
+    if (!info.bvid) return null;
+    const href = buildPlaybackHref(info.bvid, info.p);
+    return {
+      bvid: info.bvid,
+      href,
+      p: Number.isInteger(info.p) && info.p > 0 ? info.p : 1,
+      title: info.title || info.bvid,
+    };
+  }
+
+  function readPlayerNavigationInfo(player) {
+    const store = player?.rootStore?.configStore || player?.configStore || {};
+    const story = player?.rootStore?.storyStore?.state || player?.storyStore?.state || {};
+    const primary = player?.primary || {};
+    const input = player?.rootPlayer?.input || player?.input || {};
+    return {
+      aid: readStoreValue(store, 'aid') || story.aid || input.aid || primary.aid,
+      bvid: String(readStoreValue(store, 'bvid') || story.bvid || input.bvid || primary.bvid || '').trim(),
+      cid: readStoreValue(store, 'cid') || story.cid || input.cid || primary.cid,
+      p: Number(readStoreValue(store, 'p') || story.p || input.p || primary.p || 1),
+      title: String(story.title || primary.title || '').trim(),
+    };
+  }
+
+  function readStoreValue(store, key) {
+    return store?.[key] ?? store?.state?.[key] ?? store?.input?.[key] ?? store?.primary?.[key];
+  }
+
+  function buildPlaybackHref(bvid, page) {
+    const url = new URL(`/video/${bvid}/`, location.origin);
+    const pageNo = Number(page);
+    if (Number.isInteger(pageNo) && pageNo > 1) url.searchParams.set('p', String(pageNo));
+    return url.href;
+  }
+
+  function isCurrentPlayerMeta(kind, meta) {
+    const current = getPlayerNavigationMeta(kind);
+    return Boolean(current?.bvid && meta?.bvid && current.bvid === meta.bvid);
+  }
+
+  function isCurrentBootstrapPlayback(bootstrap, meta) {
+    if (!meta?.bvid || !bootstrap?.playerInfo?.bvid || meta.bvid !== bootstrap.playerInfo.bvid) return false;
+    const metaPage = Number(meta.p || 1);
+    const bootstrapPage = Number(bootstrap.playerInfo?.p || 1);
+    return metaPage === bootstrapPage;
   }
 
   function syncPlayerHandoffAvailability(kind) {
@@ -3118,6 +3364,7 @@ import {
     };
     state.lastPlayed = next;
     localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
+    syncLastPlayed();
     syncSettings();
     syncVideoBadges();
   }
@@ -3645,6 +3892,7 @@ import {
     state.home.likeBusy = false;
     if (!state.home.player) return;
     unbindHomeScreenChange();
+    unbindHomePlayerNavigate();
     unbindHomePlayerHandoff();
     unbindHomePlayerEnded();
     setHomePlayerFeatureBlocked(false);
@@ -3665,6 +3913,7 @@ import {
     state.pip.likeBusy = false;
     if (!state.pip.player) return;
     unbindPipScreenChange();
+    unbindPipPlayerNavigate();
     unbindPipPlayerHandoff();
     unbindPipPlayerEnded();
     try {

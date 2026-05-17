@@ -17,24 +17,25 @@ async function resolvePlaybackBootstrapFromApis(meta) {
   if (!bvid) return null;
 
   try {
-    const [viewResult, relatedResult, pagelistResult] = await Promise.allSettled([
-      fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`),
-      fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/archive/related?bvid=${encodeURIComponent(bvid)}`),
+    const [detailResult, pagelistResult] = await Promise.allSettled([
+      fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/wbi/view/detail?bvid=${encodeURIComponent(bvid)}&need_view=1&platform=web`),
       fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`),
     ]);
-    if (viewResult.status !== 'fulfilled') return null;
+    if (detailResult.status !== 'fulfilled') return null;
 
+    const detail = detailResult.value?.data || {};
     const vd = normalizeVideoData(
-      viewResult.value?.data,
+      detail.View,
       pagelistResult.status === 'fulfilled' ? pagelistResult.value?.data : null,
     );
     if (!vd?.aid || !vd?.bvid) return null;
+    applyDetailCard(vd, detail.Card);
 
     const pageP = resolveCurrentPage(meta.href, { p: 1, videoData: vd });
     const sequence = resolvePlaybackSequence(vd, pageP);
     const page = getVideoPage(vd, pageP);
-    const relatedItems = relatedResult.status === 'fulfilled' && Array.isArray(relatedResult.value?.data)
-      ? relatedResult.value.data
+    const relatedItems = Array.isArray(detail.Related)
+      ? detail.Related
       : [];
     const initialState = buildInitialStateFromApis({ meta, p: sequence.p, relatedItems, videoData: vd });
     const recommendationCards = extractPlaylistCardsFromRelatedItems(relatedItems, meta.href, vd.bvid);
@@ -92,6 +93,31 @@ function normalizeVideoData(videoData, pageList) {
   };
 }
 
+function applyDetailCard(videoData, cardInfo) {
+  const card = cardInfo?.card || {};
+  const owner = videoData.owner || {};
+  const mid = Number(card.mid || owner.mid);
+  videoData.owner = {
+    ...owner,
+    __biliPopupPlayerNanoProfileLoaded: cardInfo ? true : owner.__biliPopupPlayerNanoProfileLoaded,
+    attention: card.attention ?? owner.attention,
+    face: card.face || owner.face,
+    fans: cardInfo?.follower ?? card.fans ?? owner.fans,
+    mid: Number.isFinite(mid) && mid > 0 ? mid : owner.mid,
+    name: card.name || owner.name,
+    official_verify: card.official_verify || owner.official_verify,
+    pendant: card.pendant || owner.pendant,
+    sign: card.sign || owner.sign,
+    vip: card.vip || owner.vip,
+  };
+  if (cardInfo && Object.hasOwn(cardInfo, 'following')) {
+    videoData.req_user = {
+      ...(videoData.req_user || {}),
+      attention: cardInfo.following ? 1 : 0,
+    };
+  }
+}
+
 function mergeVideoPages(primaryPages, pageList) {
   const byPage = new Map();
   const addPage = (page) => {
@@ -126,6 +152,12 @@ function buildInitialStateFromApis({ meta, p, relatedItems, videoData }) {
       name: owner.name,
       face: owner.face,
       fans: owner.fans,
+      sign: owner.sign,
+      attention: owner.attention,
+      followed: videoData.req_user?.attention,
+      official_verify: owner.official_verify,
+      pendant: owner.pendant,
+      vip: owner.vip,
     },
     staffData: videoData.staff || [],
     nanoTheme: getPlayerNanoTheme(),
