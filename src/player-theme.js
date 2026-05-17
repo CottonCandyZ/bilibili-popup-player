@@ -56,5 +56,27 @@ export function getPlayerThemeVariableCss(selector) {
         --bpx-dmsend-disable-button-text: var(--text3, #9499a0);
         --bpx-primary-color: var(--brand_blue, #00aeec);
       }
+
+      ${selector} .bpx-player-ctrl-quality,
+      ${selector} .bpx-player-ctrl-quality-result,
+      ${selector} .bpx-player-ctrl-quality-menu-wrap,
+      ${selector} .bpx-player-ctrl-quality-menu,
+      ${selector} .bpx-player-ctrl-quality-menu-item,
+      ${selector} .bpx-player-ctrl-quality-text {
+        box-sizing: content-box;
+      }
+
+      ${selector} .bpx-player-ctrl-quality,
+      ${selector} .bpx-player-ctrl-quality-menu-wrap,
+      ${selector} .bpx-player-ctrl-quality-menu,
+      ${selector} .bpx-player-ctrl-quality-menu-item,
+      ${selector} .bpx-player-ctrl-quality-text,
+      ${selector} .bpx-player-ctrl-quality-badge {
+        font-size: 12px;
+      }
+
+      ${selector} .bpx-player-ctrl-quality-result {
+        font-size: 14px;
+      }
 `;
 }

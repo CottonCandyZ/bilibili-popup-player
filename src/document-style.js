@@ -112,6 +112,9 @@ export function installDocumentStyle(targetDocument = document) {
         display: grid !important;
         place-items: center !important;
         border-radius: 10px !important;
+        color: var(--${APP}-text-subtle) !important;
+        background: var(--${APP}-surface) !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18) !important;
         font-size: 0 !important;
       }
 
@@ -120,6 +123,14 @@ export function installDocumentStyle(targetDocument = document) {
         height: 22px;
         display: block;
         stroke: currentColor;
+      }
+
+      .${APP}__fixed-pip-button:hover,
+      .${APP}__fixed-pip-button:focus-visible {
+        color: #fff !important;
+        border-color: var(--${APP}-brand) !important;
+        background: var(--${APP}-brand) !important;
+        outline: none;
       }
 
       #${APP}-overlay {

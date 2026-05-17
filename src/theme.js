@@ -1,32 +1,20 @@
-import { THEME_BASE } from './constants.js';
+import { FONT_BASE, THEME_BASE } from './constants.js';
 
 export function ensureStylesheetsInWindow(targetWindow, stylesheets) {
   const doc = targetWindow.document;
-  const existing = new Set([...doc.querySelectorAll('link[rel~="stylesheet"][href]')].map((link) => link.href));
-  [...new Set([...stylesheets, ...getBiliThemeStylesheets()])].forEach((href) => {
-    if (existing.has(href)) return;
-    const link = doc.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    doc.head.appendChild(link);
-  });
+  ensureStylesheets(doc, [...stylesheets, ...getBiliThemeStylesheets()]);
 }
 
 export function ensureBiliThemeStylesheets(targetDocument) {
-  const existing = new Set([...targetDocument.querySelectorAll('link[rel~="stylesheet"][href]')].map((link) => link.href));
-  getBiliThemeStylesheets().forEach((href) => {
-    if (existing.has(href)) return;
-    const link = targetDocument.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    targetDocument.head.appendChild(link);
-  });
+  ensureStylesheets(targetDocument, getBiliThemeStylesheets());
 }
 
 export function getBiliThemeStylesheets() {
   const themeStyle = getThemeStyle();
-  if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/dark.css`];
-  return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
+  const theme = themeStyle === 'dark'
+    ? [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/dark.css`]
+    : [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
+  return [...getBiliFontStylesheets(), ...theme];
 }
 
 export function getThemeStyle() {
@@ -35,6 +23,36 @@ export function getThemeStyle() {
   const hasDarkTheme = [...document.querySelectorAll('link[rel~="stylesheet"][href]')]
     .some((link) => String(link.getAttribute('href')).includes('/bili-theme/dark.css'));
   return hasDarkTheme ? 'dark' : 'light';
+}
+
+function getBiliFontStylesheets() {
+  return [`${FONT_BASE}/regular.css`, `${FONT_BASE}/medium.css`];
+}
+
+function ensureStylesheets(targetDocument, stylesheets) {
+  return [...new Set(stylesheets)].map((href) => ensureStylesheet(targetDocument, href));
+}
+
+function ensureStylesheet(targetDocument, href) {
+  const existing = findStylesheet(targetDocument, href);
+  if (existing) return existing;
+  const link = targetDocument.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = href;
+  targetDocument.head.appendChild(link);
+  return link;
+}
+
+function findStylesheet(targetDocument, href) {
+  const absoluteHref = resolveHref(targetDocument, href);
+  return [...targetDocument.querySelectorAll('link[rel~="stylesheet"][href]')]
+    .find((link) => link.href === absoluteHref || link.getAttribute('href') === href) || null;
+}
+
+function resolveHref(targetDocument, href) {
+  const anchor = targetDocument.createElement('a');
+  anchor.href = href;
+  return anchor.href;
 }
 
 function getCookieValue(name) {

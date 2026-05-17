@@ -17,3 +17,4 @@ export const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
 export const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
 export const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
 export const THEME_BASE = 'https://s1.hdslb.com/bfs/seed/jinkela/short/bili-theme';
+export const FONT_BASE = 'https://s1.hdslb.com/bfs/static/jinkela/long/font';

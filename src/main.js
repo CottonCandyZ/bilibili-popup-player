@@ -723,7 +723,7 @@ import {
     badge.className = BADGE_CLASS;
     setCardDataset(badge, meta);
 
-    const overlayMode = shouldUseCardOverlayFor(link, card);
+    const overlayMode = shouldUseCardOverlayFor(link, card, meta);
     const host = overlayMode ? state.overlay : getCardControlHost(link, card);
     if (!overlayMode) ensureCardHost(host);
     host.append(button, badge);
@@ -746,7 +746,7 @@ import {
       return;
     }
 
-    const overlayMode = shouldUseCardOverlayFor(link, card);
+    const overlayMode = shouldUseCardOverlayFor(link, card, meta);
     const host = overlayMode ? state.overlay : getCardControlHost(link, card);
     if (!overlayMode) ensureCardHost(host);
     host.append(entry.button, entry.badge);
@@ -847,7 +847,8 @@ import {
     return (host || target).getBoundingClientRect();
   }
 
-  function shouldUseCardOverlayFor(link, card) {
+  function shouldUseCardOverlayFor(link, card, meta = null) {
+    if (isLiveMeta(meta)) return true;
     if (isPlaybackPage() || isSpacePage() || isDynamicPage()) return true;
     if (card?.tagName === 'A') return false;
     const host = getCardControlHost(link, card);
@@ -921,8 +922,6 @@ import {
     const style = getComputedStyle(card);
     if (style.position === 'static') card.style.position = 'relative';
     if (style.display === 'inline') card.style.display = 'inline-block';
-    if (style.overflow === 'visible') return;
-    card.style.overflow = 'visible';
   }
 
   function getCardControlHost(link, card) {
@@ -1508,6 +1507,7 @@ import {
       else renderPageParts('home', null);
     }
     renderRecommendations('home', null);
+    ensureBiliThemeStylesheets(document);
     return { ui, preservePageParts, preserveRightList };
   }
 
@@ -1532,6 +1532,7 @@ import {
     }
     renderRecommendations('home', bootstrap);
     syncVideoIntro('home');
+    ensureStylesheetsInWindow(window, bootstrap.stylesheets);
     await loadScriptOnce(document, bootstrap.coreScript, () => pageWindow.nano);
     if (token !== state.switchToken || !pageWindow.nano || homeRenderer.isClosed()) return;
 
@@ -1611,6 +1612,7 @@ import {
     const ui = state.home.ui;
     state.home.overlay.classList.remove(`${APP}--hidden`);
     state.home.overlay.removeAttribute('aria-hidden');
+    ensureBiliThemeStylesheets(document);
     document.body.classList.add(`${APP}--modal-open`);
     setExternalPlayerFeaturesBlocked(true);
     setHomePlayerFeatureBlocked(false);
@@ -2189,6 +2191,7 @@ import {
     syncVideoIntro('pip');
     syncCommentsTabs('pip');
     attachPipPlaylistAutoRefresh(pipWindow);
+    ensureStylesheetsInWindow(pipWindow, bootstrap.stylesheets);
     await loadScriptOnce(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
     if (token !== state.switchToken || pipWindow.closed) return;
     if (!pipWindow.nano) throw new Error('nano not available after core load');

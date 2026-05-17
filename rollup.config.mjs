@@ -4,7 +4,7 @@ import { babel } from '@rollup/plugin-babel';
 const userscriptBanner = `// ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      4.0.0
+// @version      4.0.4
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js

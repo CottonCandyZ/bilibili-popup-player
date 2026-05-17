@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      4.0.0
+// @version      4.0.4
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
@@ -39,6 +39,7 @@
   const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
   const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
   const THEME_BASE = 'https://s1.hdslb.com/bfs/seed/jinkela/short/bili-theme';
+  const FONT_BASE = 'https://s1.hdslb.com/bfs/static/jinkela/long/font';
 
   const ARCHIVE_LIKE_API = 'https://api.bilibili.com/x/web-interface/archive/like';
   async function requestArchiveLike(aid, like = true) {
@@ -1975,6 +1976,28 @@
         --bpx-dmsend-disable-button-text: var(--text3, #9499a0);
         --bpx-primary-color: var(--brand_blue, #00aeec);
       }
+
+      ${selector} .bpx-player-ctrl-quality,
+      ${selector} .bpx-player-ctrl-quality-result,
+      ${selector} .bpx-player-ctrl-quality-menu-wrap,
+      ${selector} .bpx-player-ctrl-quality-menu,
+      ${selector} .bpx-player-ctrl-quality-menu-item,
+      ${selector} .bpx-player-ctrl-quality-text {
+        box-sizing: content-box;
+      }
+
+      ${selector} .bpx-player-ctrl-quality,
+      ${selector} .bpx-player-ctrl-quality-menu-wrap,
+      ${selector} .bpx-player-ctrl-quality-menu,
+      ${selector} .bpx-player-ctrl-quality-menu-item,
+      ${selector} .bpx-player-ctrl-quality-text,
+      ${selector} .bpx-player-ctrl-quality-badge {
+        font-size: 12px;
+      }
+
+      ${selector} .bpx-player-ctrl-quality-result {
+        font-size: 14px;
+      }
 `;
   }
 
@@ -2082,6 +2105,9 @@
         display: grid !important;
         place-items: center !important;
         border-radius: 10px !important;
+        color: var(--${APP}-text-subtle) !important;
+        background: var(--${APP}-surface) !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18) !important;
         font-size: 0 !important;
       }
 
@@ -2090,6 +2116,14 @@
         height: 22px;
         display: block;
         stroke: currentColor;
+      }
+
+      .${APP}__fixed-pip-button:hover,
+      .${APP}__fixed-pip-button:focus-visible {
+        color: #fff !important;
+        border-color: var(--${APP}-brand) !important;
+        background: var(--${APP}-brand) !important;
+        outline: none;
       }
 
       #${APP}-overlay {
@@ -5119,35 +5153,45 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
 
   function ensureStylesheetsInWindow(targetWindow, stylesheets) {
     const doc = targetWindow.document;
-    const existing = new Set([...doc.querySelectorAll('link[rel~="stylesheet"][href]')].map(link => link.href));
-    [...new Set([...stylesheets, ...getBiliThemeStylesheets()])].forEach(href => {
-      if (existing.has(href)) return;
-      const link = doc.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = href;
-      doc.head.appendChild(link);
-    });
+    ensureStylesheets(doc, [...stylesheets, ...getBiliThemeStylesheets()]);
   }
   function ensureBiliThemeStylesheets(targetDocument) {
-    const existing = new Set([...targetDocument.querySelectorAll('link[rel~="stylesheet"][href]')].map(link => link.href));
-    getBiliThemeStylesheets().forEach(href => {
-      if (existing.has(href)) return;
-      const link = targetDocument.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = href;
-      targetDocument.head.appendChild(link);
-    });
+    ensureStylesheets(targetDocument, getBiliThemeStylesheets());
   }
   function getBiliThemeStylesheets() {
     const themeStyle = getThemeStyle();
-    if (themeStyle === 'dark') return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/dark.css`];
-    return [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
+    const theme = themeStyle === 'dark' ? [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/dark.css`] : [`${THEME_BASE}/map.css`, `${THEME_BASE}/light_u.css`, `${THEME_BASE}/light.css`];
+    return [...getBiliFontStylesheets(), ...theme];
   }
   function getThemeStyle() {
     const value = getCookieValue$1('theme_style');
     if (value === 'dark' || value === 'light') return value;
     const hasDarkTheme = [...document.querySelectorAll('link[rel~="stylesheet"][href]')].some(link => String(link.getAttribute('href')).includes('/bili-theme/dark.css'));
     return hasDarkTheme ? 'dark' : 'light';
+  }
+  function getBiliFontStylesheets() {
+    return [`${FONT_BASE}/regular.css`, `${FONT_BASE}/medium.css`];
+  }
+  function ensureStylesheets(targetDocument, stylesheets) {
+    return [...new Set(stylesheets)].map(href => ensureStylesheet(targetDocument, href));
+  }
+  function ensureStylesheet(targetDocument, href) {
+    const existing = findStylesheet(targetDocument, href);
+    if (existing) return existing;
+    const link = targetDocument.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    targetDocument.head.appendChild(link);
+    return link;
+  }
+  function findStylesheet(targetDocument, href) {
+    const absoluteHref = resolveHref(targetDocument, href);
+    return [...targetDocument.querySelectorAll('link[rel~="stylesheet"][href]')].find(link => link.href === absoluteHref || link.getAttribute('href') === href) || null;
+  }
+  function resolveHref(targetDocument, href) {
+    const anchor = targetDocument.createElement('a');
+    anchor.href = href;
+    return anchor.href;
   }
   function getCookieValue$1(name) {
     const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -5936,7 +5980,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const badge = document.createElement('div');
       badge.className = BADGE_CLASS;
       setCardDataset(badge, meta);
-      const overlayMode = shouldUseCardOverlayFor(link, card);
+      const overlayMode = shouldUseCardOverlayFor(link, card, meta);
       const host = overlayMode ? state.overlay : getCardControlHost(link, card);
       if (!overlayMode) ensureCardHost(host);
       host.append(button, badge);
@@ -5965,7 +6009,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         positionCardEntry(entry);
         return;
       }
-      const overlayMode = shouldUseCardOverlayFor(link, card);
+      const overlayMode = shouldUseCardOverlayFor(link, card, meta);
       const host = overlayMode ? state.overlay : getCardControlHost(link, card);
       if (!overlayMode) ensureCardHost(host);
       host.append(entry.button, entry.badge);
@@ -6055,7 +6099,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const host = getCardControlHost(target, entry.card);
       return (host || target).getBoundingClientRect();
     }
-    function shouldUseCardOverlayFor(link, card) {
+    function shouldUseCardOverlayFor(link, card, meta = null) {
+      if (isLiveMeta(meta)) return true;
       if (isPlaybackPage() || isSpacePage() || isDynamicPage()) return true;
       if (card?.tagName === 'A') return false;
       const host = getCardControlHost(link, card);
@@ -6123,8 +6168,6 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const style = getComputedStyle(card);
       if (style.position === 'static') card.style.position = 'relative';
       if (style.display === 'inline') card.style.display = 'inline-block';
-      if (style.overflow === 'visible') return;
-      card.style.overflow = 'visible';
     }
     function getCardControlHost(link, card) {
       const coverLink = getCardCoverLink(link, card) || link;
@@ -6606,6 +6649,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         if (meta.fromPagePart && state.home.pageCards.length) setSelectedPageKey('home', meta.pageKey);else renderPageParts('home', null);
       }
       renderRecommendations('home', null);
+      ensureBiliThemeStylesheets(document);
       return {
         ui,
         preservePageParts,
@@ -6634,6 +6678,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       renderRecommendations('home', bootstrap);
       syncVideoIntro('home');
+      ensureStylesheetsInWindow(window, bootstrap.stylesheets);
       await loadScriptOnce(document, bootstrap.coreScript, () => pageWindow.nano);
       if (token !== state.switchToken || !pageWindow.nano || homeRenderer.isClosed()) return;
       if (canReloadHome()) await reloadHomePlayer(bootstrap, token);else {
@@ -6712,6 +6757,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const ui = state.home.ui;
       state.home.overlay.classList.remove(`${APP}--hidden`);
       state.home.overlay.removeAttribute('aria-hidden');
+      ensureBiliThemeStylesheets(document);
       document.body.classList.add(`${APP}--modal-open`);
       setExternalPlayerFeaturesBlocked(true);
       setHomePlayerFeatureBlocked(false);
@@ -7247,6 +7293,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncVideoIntro('pip');
       syncCommentsTabs('pip');
       attachPipPlaylistAutoRefresh(pipWindow);
+      ensureStylesheetsInWindow(pipWindow, bootstrap.stylesheets);
       await loadScriptOnce(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
       if (token !== state.switchToken || pipWindow.closed) return;
       if (!pipWindow.nano) throw new Error('nano not available after core load');
