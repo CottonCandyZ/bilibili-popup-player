@@ -2,8 +2,9 @@ import { createEffect, createSignal, onCleanup } from 'solid-js';
 import { render } from 'solid-js/web';
 import { APP, SETTINGS_CLASS, STORAGE_DIRECT_CLICK, STORAGE_MODE } from './constants.js';
 import { createSettingsIcon } from './icons.js';
+import { setStorageItem } from './storage.js';
 
-export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
+export function createSettingsUi({ state, getShadowRoot, syncCardButtons, supportsPip }) {
   const [modeSignal, setModeSignal] = createSignal(state.mode);
   const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
@@ -35,15 +36,23 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
     const menu = document.createElement('div');
     menu.className = `${SETTINGS_CLASS}__menu`;
 
-    menu.append(
+    const supportsDocumentPip = supportsPip?.() !== false;
+    const items = [
       createSettingsLabel('播放模式'),
       createSettingsOption('mode', 'home', '网页内弹窗'),
-      createSettingsOption('mode', 'pip', 'Document PiP'),
-      createPipModeHint(),
+    ];
+    if (supportsDocumentPip) {
+      items.push(
+        createSettingsOption('mode', 'pip', 'Document PiP'),
+        createPipModeHint(),
+      );
+    }
+    items.push(
       createSettingsLabel('封面点击'),
       createSettingsOption('direct', 'off', '按钮起播'),
       createSettingsOption('direct', 'on', '封面起播'),
     );
+    menu.append(...items);
 
     button.addEventListener('click', (event) => {
       event.preventDefault();
@@ -125,15 +134,16 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons }) {
   }
 
   function setPlaybackMode(value) {
+    if (value === 'pip' && supportsPip?.() === false) value = 'home';
     state.mode = value;
-    localStorage.setItem(STORAGE_MODE, value);
+    setStorageItem(STORAGE_MODE, value);
     setModeSignal(value);
     syncCardButtons();
   }
 
   function setDirectCoverClick(value) {
     state.directClick = value;
-    localStorage.setItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
+    setStorageItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
     setDirectClickSignal(value);
     syncCardButtons();
   }

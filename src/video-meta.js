@@ -1,6 +1,11 @@
 import { BV_RE } from './constants.js';
 
 export const COVER_HOST_SELECTOR = [
+  '.bili-dyn-card-video',
+  '.bili-dyn-card-video__cover',
+  '.bili-dyn-card-video__image',
+  '.bili-dyn-card-video__body',
+  '.bili-dyn-card-reserve__cover',
   '.bili-video-card__image',
   '.bili-video-card__cover',
   '.pic-box',
@@ -19,6 +24,15 @@ export const COVER_HOST_SELECTOR = [
 ].join(',');
 
 const CARD_ROOT_SELECTORS = [
+  '.bili-dyn-card-video',
+  '.bili-dyn-content__orig__major.suit-video-card',
+  '.suit-video-card',
+  '.bili-dyn-card-video__body',
+  '.bili-dyn-card',
+  '.bili-dyn-item',
+  '.bili-dyn-list__item',
+  '.bili-rich-text-module',
+  '.bili-dyn-content',
   '.bili-video-card',
   '.feed-card',
   '.floor-single-card',
@@ -47,6 +61,9 @@ const CARD_ROOT_SELECTORS = [
   '[class*="list-item"]',
   '[class*="small-item"]',
   '[class*="feed-card"]',
+  '[class*="dyn-card-video"]',
+  '[class*="bili-dyn-card"]',
+  '[class*="bili-dyn-item"]',
 ];
 
 export const PLAYBACK_VIDEO_LINK_SELECTOR = [
@@ -56,6 +73,13 @@ export const PLAYBACK_VIDEO_LINK_SELECTOR = [
   '.rec-list .video-page-operator-card-small a[href*="/video/BV"]',
   '.recommend-list .video-page-card-small a[href*="/video/BV"]',
   '.recommend-list .video-page-operator-card-small a[href*="/video/BV"]',
+].join(',');
+
+export const DYNAMIC_VIDEO_LINK_SELECTOR = [
+  'a.bili-dyn-card-video[href*="/video/BV"]',
+  '.suit-video-card a[href*="/video/BV"]',
+  '.bili-dyn-content__orig__major a[href*="/video/BV"]',
+  '[class*="dyn-card-video"][href*="/video/BV"]',
 ].join(',');
 
 export function normalizeVideoHref(rawHref, baseUrl = location.href) {
@@ -82,7 +106,8 @@ export function getVideoMetaFromLink(link, baseUrl = location.href) {
   const href = normalizeVideoHref(link.getAttribute('href') || link.href, baseUrl);
   const match = href?.match(BV_RE);
   if (!match) return null;
-  const title = link.getAttribute('title') ||
+  const title = getDynamicCardTitle(link) ||
+    link.getAttribute('title') ||
     link.getAttribute('aria-label') ||
     link.querySelector('img')?.getAttribute('alt') ||
     link.textContent ||
@@ -100,6 +125,10 @@ export function isPlaybackPage() {
 
 export function isSpacePage() {
   return /^https?:\/\/space\.bilibili\.com\//.test(location.href);
+}
+
+export function isDynamicPage() {
+  return /^https?:\/\/t\.bilibili\.com\//.test(location.href);
 }
 
 export function getCardRoot(link) {
@@ -134,7 +163,12 @@ function countDistinctBvids(root) {
 }
 
 function cleanVideoTitle(value) {
-  const title = String(value || '').replace(/\s+/g, ' ').trim();
+  const title = String(value || '').replace(/\s+/g, ' ').trim().replace(/^(?:\d{1,2}:)?\d{1,2}:\d{2}\s+/, '');
   if (!title || title === '不感兴趣') return 'Bilibili 视频';
   return title;
+}
+
+function getDynamicCardTitle(link) {
+  const title = link.querySelector?.('.bili-dyn-card-video__title, [class*="dyn-card-video__title"]')?.textContent;
+  return title ? String(title).trim() : '';
 }

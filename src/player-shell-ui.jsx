@@ -24,6 +24,7 @@ export function mountHomePlayerPage({
   onOpenOriginal,
   onOpenPip,
   onPlayerControlClick,
+  supportsPip = true,
   onResetSize,
   onToggleAutoPlay,
   onModalResizeStart,
@@ -50,6 +51,7 @@ export function mountHomePlayerPage({
       onOpenOriginal={onOpenOriginal}
       onOpenPip={onOpenPip}
       onPlayerControlClick={onPlayerControlClick}
+      supportsPip={supportsPip}
       onResetSize={onResetSize}
       onToggleAutoPlay={onToggleAutoPlay}
       onModalResizeStart={onModalResizeStart}
@@ -163,16 +165,18 @@ function HomePlayerPage(props) {
             >
               {createAutoPlayIcon()}
             </button>
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
-              aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
-              ref={props.refs('openPip')}
-              onClick={() => props.onOpenPip?.()}
-            >
-              {createPictureInPictureIcon()}
-            </button>
+            {props.supportsPip && (
+              <button
+                type="button"
+                class={`${APP}__header-button`}
+                title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
+                aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
+                ref={props.refs('openPip')}
+                onClick={() => props.onOpenPip?.()}
+              >
+                {createPictureInPictureIcon()}
+              </button>
+            )}
             <button
               type="button"
               class={`${APP}__header-button`}
@@ -250,6 +254,12 @@ function HomePlayerPage(props) {
                 播放列表加载中...
               </div>
             </div>
+            <div id={`${APP}-live-panel`} class={`${APP}__comments-panel`} ref={props.refs('livePanel')}>
+              <div id={`${APP}-live-list`} class={`${APP}__playlist`} ref={props.refs('liveList')} />
+              <div id={`${APP}-live-empty`} class={`${APP}__playlist-empty`} ref={props.refs('liveEmpty')}>
+                直播列表加载中...
+              </div>
+            </div>
             <div id={`${APP}-recommend-panel`} class={`${APP}__comments-panel`} ref={props.refs('recommendPanel')}>
               <div id={`${APP}-recommend-list`} class={`${APP}__playlist`} ref={props.refs('recommendList')} />
               <div id={`${APP}-recommend-empty`} class={`${APP}__playlist-empty`} ref={props.refs('recommendEmpty')}>
@@ -311,6 +321,10 @@ function PipPlayerPage(props) {
           <div id="playlist-panel" class={`${APP}__comments-panel`}>
             <div id="playlist-list" class={`${APP}__playlist`} />
             <div id="playlist-empty" class={`${APP}__playlist-empty`}>播放列表加载中...</div>
+          </div>
+          <div id="live-panel" class={`${APP}__comments-panel`}>
+            <div id="live-list" class={`${APP}__playlist`} />
+            <div id="live-empty" class={`${APP}__playlist-empty`}>直播列表加载中...</div>
           </div>
           <div id="recommend-panel" class={`${APP}__comments-panel`}>
             <div id="recommend-list" class={`${APP}__playlist`} />

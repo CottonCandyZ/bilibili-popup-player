@@ -63,14 +63,15 @@ export function buildLivePipPlayerOptions(targetWindow, bootstrap) {
   };
 }
 
-export function createLivePipPlayerAdapter(targetWindow, player) {
+export function createLivePipPlayerAdapter(targetWindow, player, sizeElement = null) {
   return {
     raw: player,
     play: () => player?.play?.(),
     pause: () => player?.pause?.(),
     resize: () => {
+      const rect = sizeElement?.getBoundingClientRect?.();
       player?.resize?.();
-      player?.setSize?.(targetWindow.innerWidth, targetWindow.innerHeight);
+      player?.setSize?.(Math.round(rect?.width || targetWindow.innerWidth), Math.round(rect?.height || targetWindow.innerHeight));
     },
     disconnect: () => {
       player?.destroy?.();

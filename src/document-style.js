@@ -214,7 +214,8 @@ export function installDocumentStyle(targetDocument = document) {
 
       .${APP}__header-actions {
         display: inline-grid;
-        grid-template-columns: minmax(0, auto) repeat(6, 32px);
+        grid-auto-flow: column;
+        grid-auto-columns: 32px;
         gap: 4px;
         align-items: center;
         justify-content: end;
@@ -223,6 +224,7 @@ export function installDocumentStyle(targetDocument = document) {
 
       .${APP}__auto-play-hint {
         justify-self: end;
+        grid-column: auto / span 1;
         max-width: 0;
         overflow: hidden;
         white-space: nowrap;
@@ -253,8 +255,14 @@ export function installDocumentStyle(targetDocument = document) {
       .${APP}__header-button {
         width: 32px;
         height: 32px;
+        box-sizing: border-box;
+        padding: 0;
         display: inline-grid;
         place-items: center;
+        line-height: 1;
+        font: inherit;
+        appearance: none;
+        -moz-appearance: none;
         border: 1px solid transparent;
         border-radius: 6px;
         color: var(--${APP}-text-subtle);
@@ -273,6 +281,8 @@ export function installDocumentStyle(targetDocument = document) {
         width: 17px;
         height: 17px;
         display: block;
+        margin: 0;
+        flex: none;
         stroke: currentColor;
         transition: stroke 0.16s ease;
       }
@@ -532,6 +542,56 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         min-width: 0 !important;
         min-height: 0 !important;
         z-index: 1 !important;
+      }
+
+      #${APP}-player.${APP}__live-player-root,
+      #${APP}-player #fullscreen-container,
+      #${APP}-player #live-player {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #${APP}-player .${APP}__live-player-controls-layer {
+        overflow: visible !important;
+      }
+
+      #${APP}-player .${APP}__live-player-only-control {
+        position: absolute !important;
+        right: 14px;
+        bottom: calc(100% + 10px);
+        z-index: 60;
+        width: 34px;
+        height: 34px;
+        box-sizing: border-box;
+        padding: 0;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 6px;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(0, 0, 0, 0.56);
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+      }
+
+      #${APP}-player .${APP}__live-player-only-control:hover,
+      #${APP}-player .${APP}__live-player-only-control:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+        outline: none;
+      }
+
+      #${APP}-player .${APP}__live-player-only-control svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
       }
 
       #${APP}-comments {

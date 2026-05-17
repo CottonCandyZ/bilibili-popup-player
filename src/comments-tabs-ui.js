@@ -1,8 +1,9 @@
 import { APP } from './constants.js';
+import { getPlayableKey } from './live-cards.js';
 import { getVideoMetaFromLink, isCoverLink, normalizeResourceUrl, normalizeVideoHref } from './video-meta.js';
 import { createEffect, createRoot, createSignal } from 'solid-js';
 
-const TAB_KEYS = ['comments', 'pages', 'playlist', 'recommend'];
+const TAB_KEYS = ['comments', 'pages', 'playlist', 'live', 'recommend'];
 const PLAYING_ICON_URL = 'https://i0.hdslb.com/bfs/static/jinkela/playlist-video/asserts/playing.gif';
 
 export function createCommentsTabsUi({
@@ -18,6 +19,7 @@ export function createCommentsTabsUi({
 }) {
   const activeSignals = new Map();
   const selectedPageSignals = new Map();
+  const selectedLiveSignals = new Map();
   const selectedSignals = new Map();
   const listViews = new Map();
   const [lastPlayedKey, setLastPlayedKey] = createSignal(getLastPlayedKey());
@@ -32,6 +34,7 @@ export function createCommentsTabsUi({
       createTab(targetDocument, kind, 'comments', '评论'),
       createTab(targetDocument, kind, 'pages', '合集'),
       createTab(targetDocument, kind, 'playlist', '播放列表'),
+      createTab(targetDocument, kind, 'live', '直播列表'),
       createTab(targetDocument, kind, 'recommend', '相关推荐'),
     );
     const [, setActive] = getActiveSignal(kind);
@@ -57,6 +60,7 @@ export function createCommentsTabsUi({
     button.textContent = label;
     button.addEventListener('click', () => setTab(kind, tab, { forceLocate: true }));
     if (tab === 'pages') button.hidden = !state[kind].pageCards?.length;
+    if (tab === 'live') button.hidden = !state[kind].liveListMode;
     return button;
   }
 
@@ -66,6 +70,9 @@ export function createCommentsTabsUi({
     getActiveSignal(kind)[1](state[kind].activeCommentsTab);
     syncTabs(kind);
     if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind, {
+      force: forceLocate && previousTab === state[kind].activeCommentsTab,
+    });
+    if (state[kind].activeCommentsTab === 'live') scrollSelectedLiveIntoView(kind, {
       force: forceLocate && previousTab === state[kind].activeCommentsTab,
     });
     if (state[kind].activeCommentsTab === 'pages') scrollSelectedPageIntoView(kind, {
@@ -81,11 +88,12 @@ export function createCommentsTabsUi({
     if (!ui) return;
     const activeTab = TAB_KEYS.includes(state[kind].activeCommentsTab) ? state[kind].activeCommentsTab : 'comments';
     getActiveSignal(kind)[1](activeTab);
-    syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.recommendTab], activeTab);
+    syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.liveTab, ui.recommendTab], activeTab);
 
     ui.commentsPanel.hidden = activeTab !== 'comments';
     ui.pagesPanel.hidden = activeTab !== 'pages';
     ui.playlistPanel.hidden = activeTab !== 'playlist';
+    ui.livePanel.hidden = activeTab !== 'live';
     ui.recommendPanel.hidden = activeTab !== 'recommend';
   }
 
@@ -105,11 +113,12 @@ export function createCommentsTabsUi({
   function getUi(kind) {
     if (kind === 'home') {
       const ui = state.home.ui;
-      if (!ui?.commentsPanel || !ui.playlistPanel || !ui.recommendPanel) return null;
+      if (!ui?.commentsPanel || !ui.playlistPanel || !ui.livePanel || !ui.recommendPanel) return null;
       return {
         commentsTab: ui.commentsTabs?.querySelector?.('[data-tab="comments"]'),
         pagesTab: ui.commentsTabs?.querySelector?.('[data-tab="pages"]'),
         playlistTab: ui.commentsTabs?.querySelector?.('[data-tab="playlist"]'),
+        liveTab: ui.commentsTabs?.querySelector?.('[data-tab="live"]'),
         recommendTab: ui.commentsTabs?.querySelector?.('[data-tab="recommend"]'),
         commentsPanel: ui.commentsPanel,
         pagesPanel: ui.pagesPanel,
@@ -118,6 +127,9 @@ export function createCommentsTabsUi({
         playlistPanel: ui.playlistPanel,
         playlistList: ui.playlistList,
         playlistEmpty: ui.playlistEmpty,
+        livePanel: ui.livePanel,
+        liveList: ui.liveList,
+        liveEmpty: ui.liveEmpty,
         recommendPanel: ui.recommendPanel,
         recommendList: ui.recommendList,
         recommendEmpty: ui.recommendEmpty,
@@ -129,12 +141,14 @@ export function createCommentsTabsUi({
     const commentsPanel = doc.getElementById('comments-panel');
     const pagesPanel = doc.getElementById('pages-panel');
     const playlistPanel = doc.getElementById('playlist-panel');
+    const livePanel = doc.getElementById('live-panel');
     const recommendPanel = doc.getElementById('recommend-panel');
-    if (!commentsPanel || !pagesPanel || !playlistPanel || !recommendPanel) return null;
+    if (!commentsPanel || !pagesPanel || !playlistPanel || !livePanel || !recommendPanel) return null;
     return {
       commentsTab: doc.getElementById('tab-comments'),
       pagesTab: doc.getElementById('tab-pages'),
       playlistTab: doc.getElementById('tab-playlist'),
+      liveTab: doc.getElementById('tab-live'),
       recommendTab: doc.getElementById('tab-recommend'),
       commentsPanel,
       pagesPanel,
@@ -143,16 +157,26 @@ export function createCommentsTabsUi({
       playlistPanel,
       playlistList: doc.getElementById('playlist-list'),
       playlistEmpty: doc.getElementById('playlist-empty'),
+      livePanel,
+      liveList: doc.getElementById('live-list'),
+      liveEmpty: doc.getElementById('live-empty'),
       recommendPanel,
       recommendList: doc.getElementById('recommend-list'),
       recommendEmpty: doc.getElementById('recommend-empty'),
     };
   }
 
-  function capturePagePlaylist(kind, selectedBvid) {
-    state[kind].playlistCards = getScannedPlaylistCards();
+  function capturePagePlaylist(kind, selectedBvid, options = {}) {
+    state[kind].playlistCards = getScannedPlaylistCards()
+      .filter((card) => (card.kind || 'video') === 'video' && (!options.kind || (card.kind || 'video') === options.kind));
     setSelectedPlaylistBvid(kind, selectedBvid);
     renderPlaylist(kind);
+  }
+
+  function capturePageLiveList(kind, selectedKey) {
+    state[kind].liveCards = getScannedLiveCards();
+    setSelectedLiveKey(kind, selectedKey);
+    renderLiveList(kind);
   }
 
   function renderPageParts(kind, bootstrap, statusText = '合集加载中...') {
@@ -181,10 +205,23 @@ export function createCommentsTabsUi({
     if (!visible && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
   }
 
+  function syncLiveTabVisibility(kind, visible) {
+    const ui = getUi(kind);
+    if (!ui?.liveTab) return;
+    ui.liveTab.hidden = !visible;
+    if (!visible && state[kind].activeCommentsTab === 'live') setTab(kind, 'comments');
+  }
+
   function setSelectedPlaylistBvid(kind, bvid) {
     state[kind].selectedPlaylistBvid = bvid || '';
     getSelectedSignal(kind)[1](state[kind].selectedPlaylistBvid);
     scrollSelectedPlaylistIntoView(kind);
+  }
+
+  function setSelectedLiveKey(kind, key) {
+    state[kind].selectedLiveKey = key || '';
+    getSelectedLiveSignal(kind)[1](state[kind].selectedLiveKey);
+    scrollSelectedLiveIntoView(kind);
   }
 
   function setSelectedPageKey(kind, key) {
@@ -199,8 +236,22 @@ export function createCommentsTabsUi({
       .filter((entry) => entry.card?.isConnected && entry.link?.isConnected)
       .map((entry) => getPlaylistCardFromEntry(entry))
       .filter((card) => {
-        if (!card?.bvid || seen.has(card.bvid)) return false;
-        seen.add(card.bvid);
+        const key = getPlayableKey(card);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function getScannedLiveCards() {
+    const seen = new Set();
+    return state.cardEntries
+      .filter((entry) => entry.card?.isConnected && entry.link?.isConnected)
+      .map((entry) => getPlaylistCardFromEntry(entry))
+      .filter((card) => {
+        const key = getPlayableKey(card);
+        if ((card?.kind || 'video') !== 'live' || !key || seen.has(key)) return false;
+        seen.add(key);
         return true;
       });
   }
@@ -212,8 +263,8 @@ export function createCommentsTabsUi({
     return {
       ...meta,
       title: getEntryCardTitle(root, entry.link, meta.title),
-      cover: getEntryCardCover(root, entry.link),
-      subtitle: getEntryCardSubtitle(root),
+      cover: getEntryCardCover(root, entry.link) || meta.cover || meta.face || '',
+      subtitle: getEntryCardSubtitle(root) || meta.subtitle || '',
       duration: getEntryCardDuration(root),
       stats: getEntryCardStats(root),
     };
@@ -236,6 +287,26 @@ export function createCommentsTabsUi({
       ...options,
     });
     onListChange?.(kind, 'playlist');
+  }
+
+  function renderLiveList(kind, statusText = '当前页面没有扫到直播卡片', options = {}) {
+    if (typeof statusText === 'object') {
+      options = statusText;
+      statusText = '当前页面没有扫到直播卡片';
+    }
+    syncLiveTabVisibility(kind, Boolean(state[kind].liveListMode));
+    const ui = getUi(kind);
+    if (!ui?.liveList || !ui.liveEmpty) return;
+    renderCardList({
+      list: ui.liveList,
+      empty: ui.liveEmpty,
+      cards: state[kind].liveCards,
+      emptyText: statusText,
+      kind,
+      source: 'live',
+      ...options,
+    });
+    onListChange?.(kind, 'live');
   }
 
   function renderRecommendations(kind, bootstrap, statusText = '相关推荐加载中...') {
@@ -293,6 +364,8 @@ export function createCommentsTabsUi({
         const currentAppendLoading = appendLoading();
         const selected = source === 'playlist'
           ? getSelectedSignal(kind)[0]()
+          : source === 'live'
+            ? getSelectedLiveSignal(kind)[0]()
           : source === 'recommend'
             ? getSelectedSignal(kind)[0]()
             : source === 'pages'
@@ -311,6 +384,7 @@ export function createCommentsTabsUi({
         });
         if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
         if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
+        if (source === 'live' && autoScrollSelected()) scrollSelectedLiveIntoView(kind);
         if (source === 'pages' && autoScrollSelected()) scrollSelectedPageIntoView(kind);
       });
       return disposeRoot;
@@ -358,13 +432,16 @@ export function createCommentsTabsUi({
   }
 
   function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '', lastPlayedBvid = '') {
-    const selected = source === 'playlist' || source === 'recommend'
-      ? selectedBvid === card.bvid
+    const cardKey = source === 'pages' ? card.pageKey : getPlayableKey(card);
+    const selected = source === 'playlist' || source === 'live' || source === 'recommend'
+      ? selectedBvid === cardKey
       : source === 'pages' && selectedBvid === card.pageKey;
-    const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === card.bvid;
+    const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === cardKey;
     const button = targetDocument.createElement('div');
     button.className = `${APP}__playlist-card`;
     button.dataset.bvid = card.bvid || '';
+    button.dataset.roomId = card.roomId || '';
+    button.dataset.key = cardKey || '';
     button.dataset.pageKey = card.pageKey || '';
     button.dataset.source = source;
     button.tabIndex = 0;
@@ -377,11 +454,14 @@ export function createCommentsTabsUi({
     }
     button.addEventListener('click', () => {
       state.lastButton = null;
-      if (source === 'playlist') setSelectedPlaylistBvid(kind, card.bvid);
+      if (source === 'playlist') setSelectedPlaylistBvid(kind, cardKey);
+      if (source === 'live') setSelectedLiveKey(kind, cardKey);
       if (source === 'pages') setSelectedPageKey(kind, card.pageKey);
       const renderer = kind === 'pip' ? getPipRenderer() : getHomeRenderer();
       openWithRenderer(renderer, source === 'playlist'
         ? { ...card, fromPlaylist: true }
+        : source === 'live'
+          ? { ...card, fromLiveList: true }
         : source === 'pages'
           ? { ...card, fromPagePart: true }
           : card);
@@ -490,7 +570,17 @@ export function createCommentsTabsUi({
     return signal;
   }
 
+  function getSelectedLiveSignal(kind) {
+    let signal = selectedLiveSignals.get(kind);
+    if (!signal) {
+      signal = createSignal(state[kind].selectedLiveKey || '');
+      selectedLiveSignals.set(kind, signal);
+    }
+    return signal;
+  }
+
   function getLastPlayedKey() {
+    if (state.playlistLastPlayed?.kind === 'video' && state.playlistLastPlayed?.bvid) return state.playlistLastPlayed.bvid;
     return state.lastPlayed?.kind === 'video' && state.lastPlayed?.bvid ? state.lastPlayed.bvid : '';
   }
 
@@ -508,6 +598,18 @@ export function createCommentsTabsUi({
     const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])]
       .find((card) => card.dataset.bvid === bvid);
     scrollItemWithinPanel(ui.playlistPanel, item);
+  }
+
+  function scrollSelectedLiveIntoView(kind, { force = false } = {}) {
+    if (!force && getCommentLayout?.() !== 'right') return;
+    const key = state[kind].selectedLiveKey;
+    if (!key) return;
+    const ui = getUi(kind);
+    const list = ui?.liveList;
+    if (!list || ui.livePanel?.hidden) return;
+    const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])]
+      .find((card) => card.dataset.key === key);
+    scrollItemWithinPanel(ui.livePanel, item);
   }
 
   function scrollSelectedPageIntoView(kind, { force = false } = {}) {
@@ -538,12 +640,16 @@ export function createCommentsTabsUi({
 
   return {
     attachPipTabs,
+    capturePageLiveList,
     capturePagePlaylist,
     createTabs,
+    renderLiveList,
     renderPageParts,
     renderPlaylist,
     renderRecommendations,
+    scrollSelectedLiveIntoView,
     scrollSelectedPlaylistIntoView,
+    setSelectedLiveKey,
     setSelectedPageKey,
     setSelectedPlaylistBvid,
     syncLastPlayed,
@@ -724,6 +830,7 @@ function getEntryCardTitle(root, link, fallback) {
       '.bili-video-card__info--tit',
       '.video-page-card-small-title',
       '.title',
+      '.bili-dyn-live-users__item__title',
       '.info-title',
     ].join(',')) ||
     link?.getAttribute?.('title') ||
@@ -767,6 +874,7 @@ function getEntryCardSubtitle(root) {
   return cleanText(root?.querySelector?.([
     '.upname',
     '.name',
+    '.bili-dyn-live-users__item__uname',
     '.bili-video-card__info--author',
     '.video-page-card-small-author',
     '[class*="author"]',

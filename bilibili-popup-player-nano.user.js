@@ -1,15 +1,21 @@
 // ==UserScript==
 // @name         Bilibili Popup Player - Nano
 // @namespace    https://www.bilibili.com/
-// @version      3.4.8
-// @description  B 站小窗播放合并版：支持首页和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
+// @version      4.0.0
+// @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
+// @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
+// @updateURL    https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
 // @match        https://www.bilibili.com/*
 // @match        https://space.bilibili.com/*
 // @match        https://search.bilibili.com/*
 // @match        https://live.bilibili.com/*
+// @match        https://t.bilibili.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_deleteValue
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
 // ==/UserScript==
 (function () {
   'use strict';
@@ -28,7 +34,7 @@
   const STORAGE_LAST_PLAYED = `${APP}:last-played`;
   const STORAGE_MODAL_SIZE = `${APP}:modal-size`;
   const STORAGE_AUTO_PLAY_NEXT = `${APP}:auto-play-next`;
-  const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/)/;
+  const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/|t\.bilibili\.com\/)/;
   const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
   const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
   const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
@@ -206,9 +212,100 @@
     state[kind].comments = null;
   }
 
-  const COVER_HOST_SELECTOR = ['.bili-video-card__image', '.bili-video-card__cover', '.pic-box', '.pic', '.framepreview-box', '.video-awesome-img', '.cover', '.cover-contain', '.history-card__cover', '.bili-history-card__cover', '[class*="cover"]', '[class*="pic"]', '[class*="image"]', '[class*="poster"]', '[class*="thumbnail"]'].join(',');
-  const CARD_ROOT_SELECTORS = ['.bili-video-card', '.feed-card', '.floor-single-card', '.carousel-item', '[class*="carousel-item"]', '.bili-video-card__wrap', '.small-item', '.history-card', '.history-record', '.bili-history-card', '.video-item', '.video-list-item', '.search-card', '.search-item', '.list-item', '.section-item', '.video-card', '.video-page-card-small', '.video-page-operator-card-small', '.card-box', '.recommended-card', '[class*="video-card"]', '[class*="video-page-card"]', '[class*="history"]', '[class*="search"]', '[class*="list-item"]', '[class*="small-item"]', '[class*="feed-card"]'];
+  const LIVE_ROOM_HREF_RE = /^https?:\/\/live\.bilibili\.com\/(?:blanc\/)?(\d+)(?:[/?#]|$)/;
+  const LIVE_CARD_LINK_SELECTOR = ['a.bili-dyn-card-live[href*="live.bilibili.com/"]', 'a.user-row[href*="live.bilibili.com/"]', 'a[href*="live.bilibili.com/"]:not([href*="/p/"]):not([href*="/blackboard/"])'].join(',');
+  const LIVE_CARD_ROOT_SELECTORS = ['.bili-dyn-card-live', '.bili-dyn-live-users__item', '.bili-dyn-live-users__item-container', '.bili-dyn-content__orig__major.suit-video-card', '.suit-video-card', '.user-row', '.room-card-wrapper', '.room-card', '.live-card', '[class*="live-card"]', '[class*="room-card"]', '[class*="RoomCard"]'];
+  function getLiveMetaFromLink(link, baseUrl = location.href) {
+    const href = normalizeLiveHref$1(link.getAttribute('href') || link.href, baseUrl);
+    const roomId = href.match(LIVE_ROOM_HREF_RE)?.[1];
+    if (!roomId) return null;
+    return {
+      kind: 'live',
+      roomId,
+      href,
+      title: getLiveCardTitle(link) || `Bilibili 直播 ${roomId}`
+    };
+  }
+  function getLiveCardRoot(link) {
+    for (const selector of LIVE_CARD_ROOT_SELECTORS) {
+      const candidate = link.closest(selector);
+      if (candidate) return candidate;
+    }
+    return link;
+  }
+  function getPlayableKey(meta) {
+    if (meta?.kind === 'live' || meta?.roomId) return meta.roomId ? `live:${meta.roomId}` : '';
+    return meta?.bvid || '';
+  }
+  async function fetchDynamicLivePortalCards() {
+    const response = await fetch('https://api.bilibili.com/x/polymer/web-dynamic/v1/portal', {
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*'
+      }
+    });
+    if (!response.ok) throw new Error(`动态直播列表请求失败：${response.status}`);
+    const payload = await response.json();
+    if (payload?.code !== 0) throw new Error(payload?.message || `动态直播列表错误：${payload?.code}`);
+    return (payload?.data?.live_users?.items || []).map(item => ({
+      kind: 'live',
+      roomId: item.room_id ? String(item.room_id) : '',
+      href: normalizeLiveHref$1(item.jump_url || `https://live.bilibili.com/${item.room_id}`, location.href),
+      title: cleanLiveCardTitle(item.title) || item.uname || `Bilibili 直播 ${item.room_id}`,
+      subtitle: item.uname || '',
+      cover: normalizeImageUrl(item.cover || item.face),
+      face: normalizeImageUrl(item.face)
+    })).filter(card => card.roomId && card.href);
+  }
+  function findDynamicLiveUserElement(card, used = new Set(), root = document) {
+    const items = [...root.querySelectorAll('.bili-dyn-live-users__item')];
+    const title = String(card?.title || '').trim();
+    const subtitle = String(card?.subtitle || '').trim();
+    const candidates = items.filter(item => {
+      if (used.has(item)) return false;
+      return true;
+    }).map(item => ({
+      item,
+      title: item.querySelector('.bili-dyn-live-users__item__title')?.textContent?.trim() || '',
+      subtitle: item.querySelector('.bili-dyn-live-users__item__uname')?.textContent?.trim() || ''
+    }));
+    return candidates.find(candidate => {
+      return (!title || candidate.title === title) && (!subtitle || candidate.subtitle === subtitle);
+    })?.item || candidates.find(candidate => {
+      return subtitle && candidate.subtitle === subtitle;
+    })?.item || candidates.find(candidate => {
+      return title && candidate.title === title;
+    })?.item || null;
+  }
+  function normalizeLiveHref$1(rawHref, baseUrl) {
+    try {
+      const url = new URL(rawHref, baseUrl);
+      const roomId = url.href.match(LIVE_ROOM_HREF_RE)?.[1];
+      return roomId ? `https://live.bilibili.com/${roomId}` : '';
+    } catch {
+      return '';
+    }
+  }
+  function normalizeImageUrl(rawUrl) {
+    if (!rawUrl) return '';
+    try {
+      return new URL(rawUrl, location.href).href;
+    } catch {
+      return rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl;
+    }
+  }
+  function getLiveCardTitle(link) {
+    const title = link.querySelector?.(['.bili-dyn-card-live__title', '[class*="dyn-card-live__title"]', '.bili-dyn-live-users__item__title', '.room-title', '[class*="room-title"]', '[class*="title"]'].join(','))?.textContent || link.getAttribute('title') || link.textContent;
+    return cleanLiveCardTitle(title);
+  }
+  function cleanLiveCardTitle(value) {
+    return String(value || '').replace(/\s+/g, ' ').replace(/^直播中\s*/u, '').replace(/\s*(?:·\s*)?\d+(?:\.\d+)?万?人(?:看过|气)?\s*$/u, '').trim();
+  }
+
+  const COVER_HOST_SELECTOR = ['.bili-dyn-card-video', '.bili-dyn-card-video__cover', '.bili-dyn-card-video__image', '.bili-dyn-card-video__body', '.bili-dyn-card-reserve__cover', '.bili-video-card__image', '.bili-video-card__cover', '.pic-box', '.pic', '.framepreview-box', '.video-awesome-img', '.cover', '.cover-contain', '.history-card__cover', '.bili-history-card__cover', '[class*="cover"]', '[class*="pic"]', '[class*="image"]', '[class*="poster"]', '[class*="thumbnail"]'].join(',');
+  const CARD_ROOT_SELECTORS = ['.bili-dyn-card-video', '.bili-dyn-content__orig__major.suit-video-card', '.suit-video-card', '.bili-dyn-card-video__body', '.bili-dyn-card', '.bili-dyn-item', '.bili-dyn-list__item', '.bili-rich-text-module', '.bili-dyn-content', '.bili-video-card', '.feed-card', '.floor-single-card', '.carousel-item', '[class*="carousel-item"]', '.bili-video-card__wrap', '.small-item', '.history-card', '.history-record', '.bili-history-card', '.video-item', '.video-list-item', '.search-card', '.search-item', '.list-item', '.section-item', '.video-card', '.video-page-card-small', '.video-page-operator-card-small', '.card-box', '.recommended-card', '[class*="video-card"]', '[class*="video-page-card"]', '[class*="history"]', '[class*="search"]', '[class*="list-item"]', '[class*="small-item"]', '[class*="feed-card"]', '[class*="dyn-card-video"]', '[class*="bili-dyn-card"]', '[class*="bili-dyn-item"]'];
   const PLAYBACK_VIDEO_LINK_SELECTOR = ['.video-page-card-small a[href*="/video/BV"]', '.video-page-operator-card-small a[href*="/video/BV"]', '.rec-list .video-page-card-small a[href*="/video/BV"]', '.rec-list .video-page-operator-card-small a[href*="/video/BV"]', '.recommend-list .video-page-card-small a[href*="/video/BV"]', '.recommend-list .video-page-operator-card-small a[href*="/video/BV"]'].join(',');
+  const DYNAMIC_VIDEO_LINK_SELECTOR = ['a.bili-dyn-card-video[href*="/video/BV"]', '.suit-video-card a[href*="/video/BV"]', '.bili-dyn-content__orig__major a[href*="/video/BV"]', '[class*="dyn-card-video"][href*="/video/BV"]'].join(',');
   function normalizeVideoHref(rawHref, baseUrl = location.href) {
     if (!rawHref) return '';
     try {
@@ -231,7 +328,7 @@
     const href = normalizeVideoHref(link.getAttribute('href') || link.href, baseUrl);
     const match = href?.match(BV_RE);
     if (!match) return null;
-    const title = link.getAttribute('title') || link.getAttribute('aria-label') || link.querySelector('img')?.getAttribute('alt') || link.textContent || 'Bilibili 视频';
+    const title = getDynamicCardTitle(link) || link.getAttribute('title') || link.getAttribute('aria-label') || link.querySelector('img')?.getAttribute('alt') || link.textContent || 'Bilibili 视频';
     return {
       bvid: match[1],
       href,
@@ -246,6 +343,9 @@
   }
   function isSpacePage() {
     return /^https?:\/\/space\.bilibili\.com\//.test(location.href);
+  }
+  function isDynamicPage() {
+    return /^https?:\/\/t\.bilibili\.com\//.test(location.href);
   }
   function getCardRoot(link) {
     for (const selector of CARD_ROOT_SELECTORS) {
@@ -266,9 +366,13 @@
     return new Set([...(root.querySelectorAll?.('a[href*="/video/BV"]') || [])].map(link => normalizeVideoHref(link.getAttribute('href') || link.href).match(BV_RE)?.[1]).filter(Boolean)).size;
   }
   function cleanVideoTitle(value) {
-    const title = String(value).replace(/\s+/g, ' ').trim();
+    const title = String(value).replace(/\s+/g, ' ').trim().replace(/^(?:\d{1,2}:)?\d{1,2}:\d{2}\s+/, '');
     if (!title || title === '不感兴趣') return 'Bilibili 视频';
     return title;
+  }
+  function getDynamicCardTitle(link) {
+    const title = link.querySelector?.('.bili-dyn-card-video__title, [class*="dyn-card-video__title"]')?.textContent;
+    return title ? String(title).trim() : '';
   }
 
   const IS_DEV = false;
@@ -338,6 +442,15 @@
     const c = createComputation(fn, value, false, STALE);
     c.user = true;
     Effects ? Effects.push(c) : updateComputation(c);
+  }
+  function createMemo(fn, value, options) {
+    options = options ? Object.assign({}, signalOptions, options) : signalOptions;
+    const c = createComputation(fn, value, true, 0);
+    c.observers = null;
+    c.observerSlots = null;
+    c.comparator = options.equals || undefined;
+    updateComputation(c);
+    return readSignal.bind(c);
   }
   function untrack(fn) {
     if (Listener === null) return fn();
@@ -593,7 +706,7 @@
     return untrack(() => Comp(props || {}));
   }
 
-  const TAB_KEYS = ['comments', 'pages', 'playlist', 'recommend'];
+  const TAB_KEYS = ['comments', 'pages', 'playlist', 'live', 'recommend'];
   const PLAYING_ICON_URL = 'https://i0.hdslb.com/bfs/static/jinkela/playlist-video/asserts/playing.gif';
   function createCommentsTabsUi({
     state,
@@ -608,6 +721,7 @@
   }) {
     const activeSignals = new Map();
     const selectedPageSignals = new Map();
+    const selectedLiveSignals = new Map();
     const selectedSignals = new Map();
     const listViews = new Map();
     const [lastPlayedKey, setLastPlayedKey] = createSignal(getLastPlayedKey());
@@ -616,7 +730,7 @@
       tabs.className = `${APP}__comments-tabs`;
       tabs.setAttribute('role', 'tablist');
       tabs.setAttribute('aria-label', '评论区内容');
-      tabs.append(createTab(targetDocument, kind, 'comments', '评论'), createTab(targetDocument, kind, 'pages', '合集'), createTab(targetDocument, kind, 'playlist', '播放列表'), createTab(targetDocument, kind, 'recommend', '相关推荐'));
+      tabs.append(createTab(targetDocument, kind, 'comments', '评论'), createTab(targetDocument, kind, 'pages', '合集'), createTab(targetDocument, kind, 'playlist', '播放列表'), createTab(targetDocument, kind, 'live', '直播列表'), createTab(targetDocument, kind, 'recommend', '相关推荐'));
       const [, setActive] = getActiveSignal(kind);
       setActive(state[kind].activeCommentsTab || 'comments');
       tabs.__biliPopupPlayerNanoDisposeSolidTabs?.();
@@ -641,6 +755,7 @@
         forceLocate: true
       }));
       if (tab === 'pages') button.hidden = !state[kind].pageCards?.length;
+      if (tab === 'live') button.hidden = !state[kind].liveListMode;
       return button;
     }
     function setTab(kind, tab, {
@@ -651,6 +766,9 @@
       getActiveSignal(kind)[1](state[kind].activeCommentsTab);
       syncTabs(kind);
       if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind, {
+        force: forceLocate && previousTab === state[kind].activeCommentsTab
+      });
+      if (state[kind].activeCommentsTab === 'live') scrollSelectedLiveIntoView(kind, {
         force: forceLocate && previousTab === state[kind].activeCommentsTab
       });
       if (state[kind].activeCommentsTab === 'pages') scrollSelectedPageIntoView(kind, {
@@ -664,10 +782,11 @@
       if (!ui) return;
       const activeTab = TAB_KEYS.includes(state[kind].activeCommentsTab) ? state[kind].activeCommentsTab : 'comments';
       getActiveSignal(kind)[1](activeTab);
-      syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.recommendTab], activeTab);
+      syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.liveTab, ui.recommendTab], activeTab);
       ui.commentsPanel.hidden = activeTab !== 'comments';
       ui.pagesPanel.hidden = activeTab !== 'pages';
       ui.playlistPanel.hidden = activeTab !== 'playlist';
+      ui.livePanel.hidden = activeTab !== 'live';
       ui.recommendPanel.hidden = activeTab !== 'recommend';
     }
     function syncTabButtons(tabs, activeTab) {
@@ -684,11 +803,12 @@
     function getUi(kind) {
       if (kind === 'home') {
         const ui = state.home.ui;
-        if (!ui?.commentsPanel || !ui.playlistPanel || !ui.recommendPanel) return null;
+        if (!ui?.commentsPanel || !ui.playlistPanel || !ui.livePanel || !ui.recommendPanel) return null;
         return {
           commentsTab: ui.commentsTabs?.querySelector?.('[data-tab="comments"]'),
           pagesTab: ui.commentsTabs?.querySelector?.('[data-tab="pages"]'),
           playlistTab: ui.commentsTabs?.querySelector?.('[data-tab="playlist"]'),
+          liveTab: ui.commentsTabs?.querySelector?.('[data-tab="live"]'),
           recommendTab: ui.commentsTabs?.querySelector?.('[data-tab="recommend"]'),
           commentsPanel: ui.commentsPanel,
           pagesPanel: ui.pagesPanel,
@@ -697,6 +817,9 @@
           playlistPanel: ui.playlistPanel,
           playlistList: ui.playlistList,
           playlistEmpty: ui.playlistEmpty,
+          livePanel: ui.livePanel,
+          liveList: ui.liveList,
+          liveEmpty: ui.liveEmpty,
           recommendPanel: ui.recommendPanel,
           recommendList: ui.recommendList,
           recommendEmpty: ui.recommendEmpty
@@ -707,12 +830,14 @@
       const commentsPanel = doc.getElementById('comments-panel');
       const pagesPanel = doc.getElementById('pages-panel');
       const playlistPanel = doc.getElementById('playlist-panel');
+      const livePanel = doc.getElementById('live-panel');
       const recommendPanel = doc.getElementById('recommend-panel');
-      if (!commentsPanel || !pagesPanel || !playlistPanel || !recommendPanel) return null;
+      if (!commentsPanel || !pagesPanel || !playlistPanel || !livePanel || !recommendPanel) return null;
       return {
         commentsTab: doc.getElementById('tab-comments'),
         pagesTab: doc.getElementById('tab-pages'),
         playlistTab: doc.getElementById('tab-playlist'),
+        liveTab: doc.getElementById('tab-live'),
         recommendTab: doc.getElementById('tab-recommend'),
         commentsPanel,
         pagesPanel,
@@ -721,15 +846,23 @@
         playlistPanel,
         playlistList: doc.getElementById('playlist-list'),
         playlistEmpty: doc.getElementById('playlist-empty'),
+        livePanel,
+        liveList: doc.getElementById('live-list'),
+        liveEmpty: doc.getElementById('live-empty'),
         recommendPanel,
         recommendList: doc.getElementById('recommend-list'),
         recommendEmpty: doc.getElementById('recommend-empty')
       };
     }
-    function capturePagePlaylist(kind, selectedBvid) {
-      state[kind].playlistCards = getScannedPlaylistCards();
+    function capturePagePlaylist(kind, selectedBvid, options = {}) {
+      state[kind].playlistCards = getScannedPlaylistCards().filter(card => (card.kind || 'video') === 'video' && (!options.kind || (card.kind || 'video') === options.kind));
       setSelectedPlaylistBvid(kind, selectedBvid);
       renderPlaylist(kind);
+    }
+    function capturePageLiveList(kind, selectedKey) {
+      state[kind].liveCards = getScannedLiveCards();
+      setSelectedLiveKey(kind, selectedKey);
+      renderLiveList(kind);
     }
     function renderPageParts(kind, bootstrap, statusText = '合集加载中...') {
       const cards = bootstrap ? getPagePartCards(bootstrap) : [];
@@ -755,10 +888,21 @@
       ui.pagesTab.hidden = !visible;
       if (!visible && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
     }
+    function syncLiveTabVisibility(kind, visible) {
+      const ui = getUi(kind);
+      if (!ui?.liveTab) return;
+      ui.liveTab.hidden = !visible;
+      if (!visible && state[kind].activeCommentsTab === 'live') setTab(kind, 'comments');
+    }
     function setSelectedPlaylistBvid(kind, bvid) {
       state[kind].selectedPlaylistBvid = bvid || '';
       getSelectedSignal(kind)[1](state[kind].selectedPlaylistBvid);
       scrollSelectedPlaylistIntoView(kind);
+    }
+    function setSelectedLiveKey(kind, key) {
+      state[kind].selectedLiveKey = key || '';
+      getSelectedLiveSignal(kind)[1](state[kind].selectedLiveKey);
+      scrollSelectedLiveIntoView(kind);
     }
     function setSelectedPageKey(kind, key) {
       state[kind].selectedPageKey = key || '';
@@ -768,8 +912,18 @@
     function getScannedPlaylistCards() {
       const seen = new Set();
       return state.cardEntries.filter(entry => entry.card?.isConnected && entry.link?.isConnected).map(entry => getPlaylistCardFromEntry(entry)).filter(card => {
-        if (!card?.bvid || seen.has(card.bvid)) return false;
-        seen.add(card.bvid);
+        const key = getPlayableKey(card);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+    function getScannedLiveCards() {
+      const seen = new Set();
+      return state.cardEntries.filter(entry => entry.card?.isConnected && entry.link?.isConnected).map(entry => getPlaylistCardFromEntry(entry)).filter(card => {
+        const key = getPlayableKey(card);
+        if ((card?.kind || 'video') !== 'live' || !key || seen.has(key)) return false;
+        seen.add(key);
         return true;
       });
     }
@@ -780,8 +934,8 @@
       return {
         ...meta,
         title: getEntryCardTitle(root, entry.link, meta.title),
-        cover: getEntryCardCover(root, entry.link),
-        subtitle: getEntryCardSubtitle(root),
+        cover: getEntryCardCover(root, entry.link) || meta.cover || meta.face || '',
+        subtitle: getEntryCardSubtitle(root) || meta.subtitle || '',
         duration: getEntryCardDuration(root),
         stats: getEntryCardStats(root)
       };
@@ -803,6 +957,25 @@
         ...options
       });
       onListChange?.(kind, 'playlist');
+    }
+    function renderLiveList(kind, statusText = '当前页面没有扫到直播卡片', options = {}) {
+      if (typeof statusText === 'object') {
+        options = statusText;
+        statusText = '当前页面没有扫到直播卡片';
+      }
+      syncLiveTabVisibility(kind, Boolean(state[kind].liveListMode));
+      const ui = getUi(kind);
+      if (!ui?.liveList || !ui.liveEmpty) return;
+      renderCardList({
+        list: ui.liveList,
+        empty: ui.liveEmpty,
+        cards: state[kind].liveCards,
+        emptyText: statusText,
+        kind,
+        source: 'live',
+        ...options
+      });
+      onListChange?.(kind, 'live');
     }
     function renderRecommendations(kind, bootstrap, statusText = '相关推荐加载中...') {
       if (bootstrap) state[kind].recommendationCards = bootstrap.recommendationCards || bootstrap.playlistCards || [];else state[kind].recommendationCards = [];
@@ -863,7 +1036,7 @@
           const currentCards = cards();
           const currentLoading = loading();
           const currentAppendLoading = appendLoading();
-          const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : source === 'recommend' ? getSelectedSignal(kind)[0]() : source === 'pages' ? getSelectedPageSignal(kind)[0]() : '';
+          const selected = source === 'playlist' ? getSelectedSignal(kind)[0]() : source === 'live' ? getSelectedLiveSignal(kind)[0]() : source === 'recommend' ? getSelectedSignal(kind)[0]() : source === 'pages' ? getSelectedPageSignal(kind)[0]() : '';
           const lastPlayed = lastPlayedKey();
           list.textContent = '';
           empty.hidden = Boolean(currentLoading || currentAppendLoading || currentCards.length);
@@ -877,6 +1050,7 @@
           });
           if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
           if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
+          if (source === 'live' && autoScrollSelected()) scrollSelectedLiveIntoView(kind);
           if (source === 'pages' && autoScrollSelected()) scrollSelectedPageIntoView(kind);
         });
         return disposeRoot;
@@ -918,11 +1092,14 @@
       return card;
     }
     function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '', lastPlayedBvid = '') {
-      const selected = source === 'playlist' || source === 'recommend' ? selectedBvid === card.bvid : source === 'pages' && selectedBvid === card.pageKey;
-      const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === card.bvid;
+      const cardKey = source === 'pages' ? card.pageKey : getPlayableKey(card);
+      const selected = source === 'playlist' || source === 'live' || source === 'recommend' ? selectedBvid === cardKey : source === 'pages' && selectedBvid === card.pageKey;
+      const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === cardKey;
       const button = targetDocument.createElement('div');
       button.className = `${APP}__playlist-card`;
       button.dataset.bvid = card.bvid || '';
+      button.dataset.roomId = card.roomId || '';
+      button.dataset.key = cardKey || '';
       button.dataset.pageKey = card.pageKey || '';
       button.dataset.source = source;
       button.tabIndex = 0;
@@ -935,12 +1112,16 @@
       }
       button.addEventListener('click', () => {
         state.lastButton = null;
-        if (source === 'playlist') setSelectedPlaylistBvid(kind, card.bvid);
+        if (source === 'playlist') setSelectedPlaylistBvid(kind, cardKey);
+        if (source === 'live') setSelectedLiveKey(kind, cardKey);
         if (source === 'pages') setSelectedPageKey(kind, card.pageKey);
         const renderer = kind === 'pip' ? getPipRenderer() : getHomeRenderer();
         openWithRenderer(renderer, source === 'playlist' ? {
           ...card,
           fromPlaylist: true
+        } : source === 'live' ? {
+          ...card,
+          fromLiveList: true
         } : source === 'pages' ? {
           ...card,
           fromPagePart: true
@@ -1041,7 +1222,16 @@
       }
       return signal;
     }
+    function getSelectedLiveSignal(kind) {
+      let signal = selectedLiveSignals.get(kind);
+      if (!signal) {
+        signal = createSignal(state[kind].selectedLiveKey || '');
+        selectedLiveSignals.set(kind, signal);
+      }
+      return signal;
+    }
     function getLastPlayedKey() {
+      if (state.playlistLastPlayed?.kind === 'video' && state.playlistLastPlayed?.bvid) return state.playlistLastPlayed.bvid;
       return state.lastPlayed?.kind === 'video' && state.lastPlayed?.bvid ? state.lastPlayed.bvid : '';
     }
     function syncLastPlayed() {
@@ -1058,6 +1248,18 @@
       if (!list || ui.playlistPanel?.hidden) return;
       const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])].find(card => card.dataset.bvid === bvid);
       scrollItemWithinPanel(ui.playlistPanel, item);
+    }
+    function scrollSelectedLiveIntoView(kind, {
+      force = false
+    } = {}) {
+      if (!force && getCommentLayout?.() !== 'right') return;
+      const key = state[kind].selectedLiveKey;
+      if (!key) return;
+      const ui = getUi(kind);
+      const list = ui?.liveList;
+      if (!list || ui.livePanel?.hidden) return;
+      const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])].find(card => card.dataset.key === key);
+      scrollItemWithinPanel(ui.livePanel, item);
     }
     function scrollSelectedPageIntoView(kind, {
       force = false
@@ -1086,12 +1288,16 @@
     }
     return {
       attachPipTabs,
+      capturePageLiveList,
       capturePagePlaylist,
       createTabs,
+      renderLiveList,
       renderPageParts,
       renderPlaylist,
       renderRecommendations,
+      scrollSelectedLiveIntoView,
       scrollSelectedPlaylistIntoView,
+      setSelectedLiveKey,
       setSelectedPageKey,
       setSelectedPlaylistBvid,
       syncLastPlayed,
@@ -1267,7 +1473,7 @@
   function getEntryCardTitle(root, link, fallback) {
     const bvid = getVideoMetaFromLink(link)?.bvid;
     const textLink = getEntryTextLink(root, bvid);
-    const candidate = textLink?.textContent || getSafeTitleElementText(root, ['.bili-video-card__info--tit', '.video-page-card-small-title', '.title', '.info-title'].join(',')) || link?.getAttribute?.('title') || link?.getAttribute?.('aria-label') || root?.querySelector?.('img')?.getAttribute('alt') || fallback;
+    const candidate = textLink?.textContent || getSafeTitleElementText(root, ['.bili-video-card__info--tit', '.video-page-card-small-title', '.title', '.bili-dyn-live-users__item__title', '.info-title'].join(',')) || link?.getAttribute?.('title') || link?.getAttribute?.('aria-label') || root?.querySelector?.('img')?.getAttribute('alt') || fallback;
     return cleanTitle$1(candidate || fallback || 'Bilibili 视频');
   }
   function getEntryTextLink(root, bvid) {
@@ -1287,7 +1493,7 @@
     return normalizeResourceUrl(raw);
   }
   function getEntryCardSubtitle(root) {
-    return cleanText$1(root?.querySelector?.(['.upname', '.name', '.bili-video-card__info--author', '.video-page-card-small-author', '[class*="author"]'].join(','))?.textContent);
+    return cleanText$1(root?.querySelector?.(['.upname', '.name', '.bili-dyn-live-users__item__uname', '.bili-video-card__info--author', '.video-page-card-small-author', '[class*="author"]'].join(','))?.textContent);
   }
   function getEntryCardDuration(root) {
     return cleanText$1(root?.querySelector?.(['.duration', '.bili-video-card__stats__duration', '[class*="duration"]'].join(','))?.textContent);
@@ -1691,14 +1897,15 @@
       }
     };
   }
-  function createLivePipPlayerAdapter(targetWindow, player) {
+  function createLivePipPlayerAdapter(targetWindow, player, sizeElement = null) {
     return {
       raw: player,
       play: () => player?.play?.(),
       pause: () => player?.pause?.(),
       resize: () => {
+        const rect = sizeElement?.getBoundingClientRect?.();
         player?.resize?.();
-        player?.setSize?.(targetWindow.innerWidth, targetWindow.innerHeight);
+        player?.setSize?.(Math.round(rect?.width || targetWindow.innerWidth), Math.round(rect?.height || targetWindow.innerHeight));
       },
       disconnect: () => {
         player?.destroy?.();
@@ -1977,7 +2184,8 @@
 
       .${APP}__header-actions {
         display: inline-grid;
-        grid-template-columns: minmax(0, auto) repeat(6, 32px);
+        grid-auto-flow: column;
+        grid-auto-columns: 32px;
         gap: 4px;
         align-items: center;
         justify-content: end;
@@ -1986,6 +2194,7 @@
 
       .${APP}__auto-play-hint {
         justify-self: end;
+        grid-column: auto / span 1;
         max-width: 0;
         overflow: hidden;
         white-space: nowrap;
@@ -2016,8 +2225,14 @@
       .${APP}__header-button {
         width: 32px;
         height: 32px;
+        box-sizing: border-box;
+        padding: 0;
         display: inline-grid;
         place-items: center;
+        line-height: 1;
+        font: inherit;
+        appearance: none;
+        -moz-appearance: none;
         border: 1px solid transparent;
         border-radius: 6px;
         color: var(--${APP}-text-subtle);
@@ -2036,6 +2251,8 @@
         width: 17px;
         height: 17px;
         display: block;
+        margin: 0;
+        flex: none;
         stroke: currentColor;
         transition: stroke 0.16s ease;
       }
@@ -2295,6 +2512,56 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         min-width: 0 !important;
         min-height: 0 !important;
         z-index: 1 !important;
+      }
+
+      #${APP}-player.${APP}__live-player-root,
+      #${APP}-player #fullscreen-container,
+      #${APP}-player #live-player {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #${APP}-player .${APP}__live-player-controls-layer {
+        overflow: visible !important;
+      }
+
+      #${APP}-player .${APP}__live-player-only-control {
+        position: absolute !important;
+        right: 14px;
+        bottom: calc(100% + 10px);
+        z-index: 60;
+        width: 34px;
+        height: 34px;
+        box-sizing: border-box;
+        padding: 0;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 6px;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(0, 0, 0, 0.56);
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+      }
+
+      #${APP}-player .${APP}__live-player-only-control:hover,
+      #${APP}-player .${APP}__live-player-only-control:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+        outline: none;
+      }
+
+      #${APP}-player .${APP}__live-player-only-control svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
       }
 
       #${APP}-comments {
@@ -2795,6 +3062,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     targetDocument.head.appendChild(style);
   }
 
+  const memo = fn => createMemo(() => fn());
   function reconcileArrays(parentNode, a, b) {
     let bLength = b.length,
       aEnd = a.length,
@@ -3049,8 +3317,9 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
-    _tmpl$2 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=video-intro></div><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>相关推荐加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
+    _tmpl$2 = /*#__PURE__*/template(`<button type=button title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。">`),
+    _tmpl$3 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=video-intro></div><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=live-panel><div id=live-list></div><div id=live-empty>直播列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>相关推荐加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
     targetDocument = document,
     createCommentsTabs,
@@ -3063,6 +3332,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     onOpenOriginal,
     onOpenPip,
     onPlayerControlClick,
+    supportsPip = true,
     onResetSize,
     onToggleAutoPlay,
     onModalResizeStart,
@@ -3087,6 +3357,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       onOpenOriginal: onOpenOriginal,
       onOpenPip: onOpenPip,
       onPlayerControlClick: onPlayerControlClick,
+      supportsPip: supportsPip,
       onResetSize: onResetSize,
       onToggleAutoPlay: onToggleAutoPlay,
       onModalResizeStart: onModalResizeStart,
@@ -3142,26 +3413,28 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         _el$11 = _el$10.nextSibling,
         _el$12 = _el$11.nextSibling,
         _el$13 = _el$12.nextSibling,
-        _el$14 = _el$13.nextSibling,
-        _el$15 = _el$3.nextSibling,
+        _el$14 = _el$3.nextSibling,
+        _el$15 = _el$14.firstChild,
         _el$16 = _el$15.firstChild,
-        _el$17 = _el$16.firstChild,
-        _el$18 = _el$16.nextSibling,
-        _el$19 = _el$18.nextSibling,
+        _el$17 = _el$15.nextSibling,
+        _el$18 = _el$17.nextSibling,
+        _el$19 = _el$18.firstChild,
         _el$20 = _el$19.firstChild,
-        _el$21 = _el$20.firstChild,
-        _el$22 = _el$21.nextSibling,
-        _el$23 = _el$20.nextSibling,
-        _el$24 = _el$23.firstChild,
-        _el$25 = _el$24.nextSibling,
-        _el$26 = _el$23.nextSibling,
-        _el$27 = _el$26.firstChild,
-        _el$28 = _el$27.nextSibling,
-        _el$29 = _el$26.nextSibling,
-        _el$30 = _el$29.firstChild,
-        _el$31 = _el$30.nextSibling,
-        _el$32 = _el$15.nextSibling,
-        _el$33 = _el$32.nextSibling;
+        _el$21 = _el$20.nextSibling,
+        _el$22 = _el$19.nextSibling,
+        _el$23 = _el$22.firstChild,
+        _el$24 = _el$23.nextSibling,
+        _el$25 = _el$22.nextSibling,
+        _el$26 = _el$25.firstChild,
+        _el$27 = _el$26.nextSibling,
+        _el$28 = _el$25.nextSibling,
+        _el$29 = _el$28.firstChild,
+        _el$30 = _el$29.nextSibling,
+        _el$31 = _el$28.nextSibling,
+        _el$32 = _el$31.firstChild,
+        _el$33 = _el$32.nextSibling,
+        _el$34 = _el$14.nextSibling,
+        _el$35 = _el$34.nextSibling;
       _el$.addEventListener("pointercancel", event => {
         backdropPointer = '0';
         event.currentTarget.dataset.backdropPointer = '0';
@@ -3209,104 +3482,123 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       typeof _ref$8 === "function" && use(_ref$8, _el$1);
       className(_el$1, `${APP}__header-button`);
       insert(_el$1, createAutoPlayIcon);
-      _el$10.$$click = () => props.onOpenPip?.();
-      var _ref$9 = props.refs('openPip');
+      insert(_el$9, (() => {
+        var _c$ = memo(() => !!props.supportsPip);
+        return () => _c$() && (() => {
+          var _el$36 = _tmpl$2();
+          _el$36.$$click = () => props.onOpenPip?.();
+          var _ref$33 = props.refs('openPip');
+          typeof _ref$33 === "function" && use(_ref$33, _el$36);
+          className(_el$36, `${APP}__header-button`);
+          insert(_el$36, createPictureInPictureIcon);
+          return _el$36;
+        })();
+      })(), _el$10);
+      _el$10.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
+      var _ref$9 = props.refs('openOriginal');
       typeof _ref$9 === "function" && use(_ref$9, _el$10);
       className(_el$10, `${APP}__header-button`);
-      insert(_el$10, createPictureInPictureIcon);
-      _el$11.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
-      var _ref$0 = props.refs('openOriginal');
+      insert(_el$10, createExternalLinkIcon);
+      _el$11.$$click = () => props.onFullscreen?.();
+      var _ref$0 = props.refs('fullscreen');
       typeof _ref$0 === "function" && use(_ref$0, _el$11);
       className(_el$11, `${APP}__header-button`);
-      insert(_el$11, createExternalLinkIcon);
-      _el$12.$$click = () => props.onFullscreen?.();
-      var _ref$1 = props.refs('fullscreen');
+      insert(_el$11, createMaximizeIcon);
+      _el$12.$$click = () => props.onResetSize?.();
+      var _ref$1 = props.refs('resetSize');
       typeof _ref$1 === "function" && use(_ref$1, _el$12);
       className(_el$12, `${APP}__header-button`);
-      insert(_el$12, createMaximizeIcon);
-      _el$13.$$click = () => props.onResetSize?.();
-      var _ref$10 = props.refs('resetSize');
+      insert(_el$12, createResetSizeIcon);
+      _el$13.$$click = () => props.onClose?.();
+      var _ref$10 = props.refs('close');
       typeof _ref$10 === "function" && use(_ref$10, _el$13);
-      className(_el$13, `${APP}__header-button`);
-      insert(_el$13, createResetSizeIcon);
-      _el$14.$$click = () => props.onClose?.();
-      var _ref$11 = props.refs('close');
+      className(_el$13, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$13, createCloseIcon);
+      var _ref$11 = props.refs('content');
       typeof _ref$11 === "function" && use(_ref$11, _el$14);
-      className(_el$14, `${APP}__header-button ${APP}__header-button--close`);
-      insert(_el$14, createCloseIcon);
-      var _ref$12 = props.refs('content');
+      setAttribute(_el$14, "id", `${APP}-content`);
+      var _ref$12 = props.refs('playerWrap');
       typeof _ref$12 === "function" && use(_ref$12, _el$15);
-      setAttribute(_el$15, "id", `${APP}-content`);
-      var _ref$13 = props.refs('playerWrap');
+      setAttribute(_el$15, "id", `${APP}-player-wrap`);
+      _el$16.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
+      var _ref$13 = props.refs('playerRoot');
       typeof _ref$13 === "function" && use(_ref$13, _el$16);
-      setAttribute(_el$16, "id", `${APP}-player-wrap`);
-      _el$17.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
-      var _ref$14 = props.refs('playerRoot');
+      setAttribute(_el$16, "id", `${APP}-player`);
+      _el$17.$$pointerdown = event => props.onResizeStart?.(event);
+      var _ref$14 = props.refs('commentsResizer');
       typeof _ref$14 === "function" && use(_ref$14, _el$17);
-      setAttribute(_el$17, "id", `${APP}-player`);
-      _el$18.$$pointerdown = event => props.onResizeStart?.(event);
-      var _ref$15 = props.refs('commentsResizer');
+      setAttribute(_el$17, "id", `${APP}-comments-resizer`);
+      var _ref$15 = props.refs('comments');
       typeof _ref$15 === "function" && use(_ref$15, _el$18);
-      setAttribute(_el$18, "id", `${APP}-comments-resizer`);
-      var _ref$16 = props.refs('comments');
+      setAttribute(_el$18, "id", `${APP}-comments`);
+      insert(_el$18, () => props.commentsTabs, _el$19);
+      var _ref$16 = props.refs('commentsPanel');
       typeof _ref$16 === "function" && use(_ref$16, _el$19);
-      setAttribute(_el$19, "id", `${APP}-comments`);
-      insert(_el$19, () => props.commentsTabs, _el$20);
-      var _ref$17 = props.refs('commentsPanel');
+      setAttribute(_el$19, "id", `${APP}-comments-panel`);
+      className(_el$19, `${APP}__comments-panel`);
+      var _ref$17 = props.refs('videoIntro');
       typeof _ref$17 === "function" && use(_ref$17, _el$20);
-      setAttribute(_el$20, "id", `${APP}-comments-panel`);
-      className(_el$20, `${APP}__comments-panel`);
-      var _ref$18 = props.refs('videoIntro');
+      setAttribute(_el$20, "id", `${APP}-video-intro`);
+      var _ref$18 = props.refs('commentsMount');
       typeof _ref$18 === "function" && use(_ref$18, _el$21);
-      setAttribute(_el$21, "id", `${APP}-video-intro`);
-      var _ref$19 = props.refs('commentsMount');
+      setAttribute(_el$21, "id", `${APP}-comments-mount`);
+      var _ref$19 = props.refs('pagesPanel');
       typeof _ref$19 === "function" && use(_ref$19, _el$22);
-      setAttribute(_el$22, "id", `${APP}-comments-mount`);
-      var _ref$20 = props.refs('pagesPanel');
+      setAttribute(_el$22, "id", `${APP}-pages-panel`);
+      className(_el$22, `${APP}__comments-panel`);
+      var _ref$20 = props.refs('pagesList');
       typeof _ref$20 === "function" && use(_ref$20, _el$23);
-      setAttribute(_el$23, "id", `${APP}-pages-panel`);
-      className(_el$23, `${APP}__comments-panel`);
-      var _ref$21 = props.refs('pagesList');
+      setAttribute(_el$23, "id", `${APP}-pages-list`);
+      className(_el$23, `${APP}__playlist`);
+      var _ref$21 = props.refs('pagesEmpty');
       typeof _ref$21 === "function" && use(_ref$21, _el$24);
-      setAttribute(_el$24, "id", `${APP}-pages-list`);
-      className(_el$24, `${APP}__playlist`);
-      var _ref$22 = props.refs('pagesEmpty');
+      setAttribute(_el$24, "id", `${APP}-pages-empty`);
+      className(_el$24, `${APP}__playlist-empty`);
+      var _ref$22 = props.refs('playlistPanel');
       typeof _ref$22 === "function" && use(_ref$22, _el$25);
-      setAttribute(_el$25, "id", `${APP}-pages-empty`);
-      className(_el$25, `${APP}__playlist-empty`);
-      var _ref$23 = props.refs('playlistPanel');
+      setAttribute(_el$25, "id", `${APP}-playlist-panel`);
+      className(_el$25, `${APP}__comments-panel`);
+      var _ref$23 = props.refs('playlistList');
       typeof _ref$23 === "function" && use(_ref$23, _el$26);
-      setAttribute(_el$26, "id", `${APP}-playlist-panel`);
-      className(_el$26, `${APP}__comments-panel`);
-      var _ref$24 = props.refs('playlistList');
+      setAttribute(_el$26, "id", `${APP}-playlist-list`);
+      className(_el$26, `${APP}__playlist`);
+      var _ref$24 = props.refs('playlistEmpty');
       typeof _ref$24 === "function" && use(_ref$24, _el$27);
-      setAttribute(_el$27, "id", `${APP}-playlist-list`);
-      className(_el$27, `${APP}__playlist`);
-      var _ref$25 = props.refs('playlistEmpty');
+      setAttribute(_el$27, "id", `${APP}-playlist-empty`);
+      className(_el$27, `${APP}__playlist-empty`);
+      var _ref$25 = props.refs('livePanel');
       typeof _ref$25 === "function" && use(_ref$25, _el$28);
-      setAttribute(_el$28, "id", `${APP}-playlist-empty`);
-      className(_el$28, `${APP}__playlist-empty`);
-      var _ref$26 = props.refs('recommendPanel');
+      setAttribute(_el$28, "id", `${APP}-live-panel`);
+      className(_el$28, `${APP}__comments-panel`);
+      var _ref$26 = props.refs('liveList');
       typeof _ref$26 === "function" && use(_ref$26, _el$29);
-      setAttribute(_el$29, "id", `${APP}-recommend-panel`);
-      className(_el$29, `${APP}__comments-panel`);
-      var _ref$27 = props.refs('recommendList');
+      setAttribute(_el$29, "id", `${APP}-live-list`);
+      className(_el$29, `${APP}__playlist`);
+      var _ref$27 = props.refs('liveEmpty');
       typeof _ref$27 === "function" && use(_ref$27, _el$30);
-      setAttribute(_el$30, "id", `${APP}-recommend-list`);
-      className(_el$30, `${APP}__playlist`);
-      var _ref$28 = props.refs('recommendEmpty');
+      setAttribute(_el$30, "id", `${APP}-live-empty`);
+      className(_el$30, `${APP}__playlist-empty`);
+      var _ref$28 = props.refs('recommendPanel');
       typeof _ref$28 === "function" && use(_ref$28, _el$31);
-      setAttribute(_el$31, "id", `${APP}-recommend-empty`);
-      className(_el$31, `${APP}__playlist-empty`);
-      _el$32.$$click = () => props.onBackToTop?.();
-      var _ref$29 = props.refs('backToTop');
+      setAttribute(_el$31, "id", `${APP}-recommend-panel`);
+      className(_el$31, `${APP}__comments-panel`);
+      var _ref$29 = props.refs('recommendList');
       typeof _ref$29 === "function" && use(_ref$29, _el$32);
-      className(_el$32, `${APP}__back-to-top`);
-      insert(_el$32, () => backToTopIcon.content.firstElementChild);
-      _el$33.$$pointerdown = event => props.onModalResizeStart?.(event);
-      var _ref$30 = props.refs('modalResizeHandle');
+      setAttribute(_el$32, "id", `${APP}-recommend-list`);
+      className(_el$32, `${APP}__playlist`);
+      var _ref$30 = props.refs('recommendEmpty');
       typeof _ref$30 === "function" && use(_ref$30, _el$33);
-      className(_el$33, `${APP}__modal-resize-handle`);
+      setAttribute(_el$33, "id", `${APP}-recommend-empty`);
+      className(_el$33, `${APP}__playlist-empty`);
+      _el$34.$$click = () => props.onBackToTop?.();
+      var _ref$31 = props.refs('backToTop');
+      typeof _ref$31 === "function" && use(_ref$31, _el$34);
+      className(_el$34, `${APP}__back-to-top`);
+      insert(_el$34, () => backToTopIcon.content.firstElementChild);
+      _el$35.$$pointerdown = event => props.onModalResizeStart?.(event);
+      var _ref$32 = props.refs('modalResizeHandle');
+      typeof _ref$32 === "function" && use(_ref$32, _el$35);
+      className(_el$35, `${APP}__modal-resize-handle`);
       return _el$;
     })();
   }
@@ -3314,36 +3606,42 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     const backToTopIcon = props.targetDocument.createElement('template');
     backToTopIcon.innerHTML = arrowUpIconMarkup();
     return (() => {
-      var _el$34 = _tmpl$2(),
-        _el$35 = _el$34.firstChild,
-        _el$36 = _el$35.firstChild,
-        _el$37 = _el$36.nextSibling,
-        _el$38 = _el$37.nextSibling,
+      var _el$37 = _tmpl$3(),
+        _el$38 = _el$37.firstChild,
         _el$39 = _el$38.firstChild,
         _el$40 = _el$39.nextSibling,
-        _el$41 = _el$40.firstChild,
-        _el$42 = _el$41.nextSibling,
-        _el$43 = _el$40.nextSibling,
+        _el$41 = _el$40.nextSibling,
+        _el$42 = _el$41.firstChild,
+        _el$43 = _el$42.nextSibling,
         _el$44 = _el$43.firstChild,
         _el$45 = _el$44.nextSibling,
         _el$46 = _el$43.nextSibling,
         _el$47 = _el$46.firstChild,
         _el$48 = _el$47.nextSibling,
-        _el$49 = _el$35.nextSibling;
-      insert(_el$38, () => props.commentsTabs, _el$39);
-      className(_el$39, `${APP}__comments-panel`);
-      className(_el$40, `${APP}__comments-panel`);
-      className(_el$41, `${APP}__playlist`);
-      className(_el$42, `${APP}__playlist-empty`);
+        _el$49 = _el$46.nextSibling,
+        _el$50 = _el$49.firstChild,
+        _el$51 = _el$50.nextSibling,
+        _el$52 = _el$49.nextSibling,
+        _el$53 = _el$52.firstChild,
+        _el$54 = _el$53.nextSibling,
+        _el$55 = _el$38.nextSibling;
+      insert(_el$41, () => props.commentsTabs, _el$42);
+      className(_el$42, `${APP}__comments-panel`);
       className(_el$43, `${APP}__comments-panel`);
       className(_el$44, `${APP}__playlist`);
       className(_el$45, `${APP}__playlist-empty`);
       className(_el$46, `${APP}__comments-panel`);
       className(_el$47, `${APP}__playlist`);
       className(_el$48, `${APP}__playlist-empty`);
-      className(_el$49, `${APP}__back-to-top`);
-      insert(_el$49, () => backToTopIcon.content.firstElementChild);
-      return _el$34;
+      className(_el$49, `${APP}__comments-panel`);
+      className(_el$50, `${APP}__playlist`);
+      className(_el$51, `${APP}__playlist-empty`);
+      className(_el$52, `${APP}__comments-panel`);
+      className(_el$53, `${APP}__playlist`);
+      className(_el$54, `${APP}__playlist-empty`);
+      className(_el$55, `${APP}__back-to-top`);
+      insert(_el$55, () => backToTopIcon.content.firstElementChild);
+      return _el$37;
     })();
   }
   delegateEvents(["pointerdown", "pointerup", "click"]);
@@ -4627,10 +4925,72 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     };
   }
 
+  function getGmValue(key, fallback = null) {
+    if (typeof GM_getValue !== 'function') return fallback;
+    try {
+      return GM_getValue(key, fallback);
+    } catch {
+      return fallback;
+    }
+  }
+  function setGmValue(key, value) {
+    if (typeof GM_setValue !== 'function') return false;
+    try {
+      GM_setValue(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function deleteGmValue(key) {
+    if (typeof GM_deleteValue !== 'function') return false;
+    try {
+      GM_deleteValue(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function getLocalValue(key, fallback = null) {
+    try {
+      const value = localStorage.getItem(key);
+      return value == null ? fallback : value;
+    } catch {
+      return fallback;
+    }
+  }
+  function getStorageItem(key, fallback = null) {
+    const gmValue = getGmValue(key, undefined);
+    if (gmValue !== undefined) return gmValue;
+    const localValue = getLocalValue(key, fallback);
+    if (localValue !== fallback) setGmValue(key, localValue);
+    return localValue;
+  }
+  function setStorageItem(key, value) {
+    const stringValue = String(value);
+    if (!setGmValue(key, stringValue)) {
+      try {
+        localStorage.setItem(key, stringValue);
+      } catch {
+        // Storage can be unavailable in strict privacy modes.
+      }
+    }
+  }
+  function removeStorageItem(key) {
+    if (!deleteGmValue(key)) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // Storage can be unavailable in strict privacy modes.
+      }
+    }
+  }
+
   function createSettingsUi({
     state,
     getShadowRoot,
-    syncCardButtons
+    syncCardButtons,
+    supportsPip
   }) {
     const [modeSignal, setModeSignal] = createSignal(state.mode);
     const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
@@ -4660,7 +5020,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       button.appendChild(createSettingsIcon());
       const menu = document.createElement('div');
       menu.className = `${SETTINGS_CLASS}__menu`;
-      menu.append(createSettingsLabel('播放模式'), createSettingsOption('mode', 'home', '网页内弹窗'), createSettingsOption('mode', 'pip', 'Document PiP'), createPipModeHint(), createSettingsLabel('封面点击'), createSettingsOption('direct', 'off', '按钮起播'), createSettingsOption('direct', 'on', '封面起播'));
+      const supportsDocumentPip = supportsPip?.() !== false;
+      const items = [createSettingsLabel('播放模式'), createSettingsOption('mode', 'home', '网页内弹窗')];
+      if (supportsDocumentPip) {
+        items.push(createSettingsOption('mode', 'pip', 'Document PiP'), createPipModeHint());
+      }
+      items.push(createSettingsLabel('封面点击'), createSettingsOption('direct', 'off', '按钮起播'), createSettingsOption('direct', 'on', '封面起播'));
+      menu.append(...items);
       button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -4727,14 +5093,15 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncCardButtons();
     }
     function setPlaybackMode(value) {
+      if (value === 'pip' && supportsPip?.() === false) value = 'home';
       state.mode = value;
-      localStorage.setItem(STORAGE_MODE, value);
+      setStorageItem(STORAGE_MODE, value);
       setModeSignal(value);
       syncCardButtons();
     }
     function setDirectCoverClick(value) {
       state.directClick = value;
-      localStorage.setItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
+      setStorageItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
       setDirectClickSignal(value);
       syncCardButtons();
     }
@@ -4978,6 +5345,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     bootstrap();
   }
   function bootstrap() {
+    const pageWindow = typeof unsafeWindow === 'object' && unsafeWindow ? unsafeWindow : window;
     const COMMENT_WIDTH_DEFAULT = 420;
     const COMMENT_WIDTH_MIN = 300;
     const COMMENT_WIDTH_MAX = 720;
@@ -4999,23 +5367,24 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     const PLAYER_CHROME_HEIGHT = 48;
     const PLAYER_CHROME_HEIGHT_WIDE = 56;
     const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
+    const supportsDocumentPip = () => typeof window.documentPictureInPicture?.requestWindow === 'function';
     const initialLastPlayed = (() => {
       try {
-        const value = JSON.parse(localStorage.getItem(STORAGE_LAST_PLAYED) || 'null');
-        if (!value?.href || !value?.bvid && !value?.roomId && !value?.id) return null;
+        const value = JSON.parse(getStorageItem(STORAGE_LAST_PLAYED, 'null') || 'null');
+        if (!value?.href || value?.kind === 'live' || value?.roomId || !value?.bvid) return null;
         return value;
       } catch {
         return null;
       }
     })();
     const initialCommentWidth = (() => {
-      const value = Number(localStorage.getItem(STORAGE_COMMENT_WIDTH));
+      const value = Number(getStorageItem(STORAGE_COMMENT_WIDTH));
       return clampCommentWidth(Number.isFinite(value) ? value : COMMENT_WIDTH_DEFAULT);
     })();
-    const initialCommentLayout = localStorage.getItem(STORAGE_COMMENT_LAYOUT) === 'bottom' ? 'bottom' : 'right';
+    const initialCommentLayout = getStorageItem(STORAGE_COMMENT_LAYOUT) === 'bottom' ? 'bottom' : 'right';
     const initialModalSize = (() => {
       try {
-        const value = JSON.parse(localStorage.getItem(STORAGE_MODAL_SIZE) || 'null');
+        const value = JSON.parse(getStorageItem(STORAGE_MODAL_SIZE, 'null') || 'null');
         if (!value) return null;
         return clampHomeModalSize(value);
       } catch {
@@ -5033,13 +5402,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       autoPlayHintTimer: 0,
       lastFocus: null,
       lastButton: null,
-      mode: localStorage.getItem(STORAGE_MODE) === 'pip' ? 'pip' : 'home',
-      directClick: localStorage.getItem(STORAGE_DIRECT_CLICK) === '1',
-      autoPlayNext: localStorage.getItem(STORAGE_AUTO_PLAY_NEXT) === '1',
+      mode: getStorageItem(STORAGE_MODE) === 'pip' && supportsDocumentPip() ? 'pip' : 'home',
+      directClick: getStorageItem(STORAGE_DIRECT_CLICK) === '1',
+      autoPlayNext: getStorageItem(STORAGE_AUTO_PLAY_NEXT) === '1',
       commentLayout: initialCommentLayout,
       commentWidth: initialCommentWidth,
       modalSize: initialModalSize,
       lastPlayed: initialLastPlayed,
+      playlistLastPlayed: initialLastPlayed,
       pipPlaying: null,
       switchToken: 0,
       externalFeatureBlocks: [],
@@ -5057,6 +5427,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       shadowRoot: null,
       overlay: null,
       cardEntries: [],
+      dynamicLivePortal: {
+        cards: [],
+        error: '',
+        loaded: false,
+        loading: false,
+        requestId: 0
+      },
       live: {
         button: null,
         buttonFrame: 0
@@ -5080,6 +5457,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         likeBurstTimer: 0,
         featureBlocked: false,
         activeCommentsTab: 'comments',
+        liveListMode: false,
         feed: {
           error: '',
           exhausted: false,
@@ -5090,9 +5468,11 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         playlistRefreshFrame: 0,
         pageCards: [],
         playlistCards: [],
+        liveCards: [],
         recommendationCards: [],
         selectedPageKey: '',
-        selectedPlaylistBvid: ''
+        selectedPlaylistBvid: '',
+        selectedLiveKey: ''
       },
       pip: {
         win: null,
@@ -5110,6 +5490,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         keydownHandler: null,
         switchingWindow: false,
         activeCommentsTab: 'comments',
+        liveListMode: false,
         feed: {
           error: '',
           exhausted: false,
@@ -5120,15 +5501,19 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         playlistRefreshFrame: 0,
         pageCards: [],
         playlistCards: [],
+        liveCards: [],
         recommendationCards: [],
         selectedPageKey: '',
-        selectedPlaylistBvid: ''
+        selectedPlaylistBvid: '',
+        selectedLiveKey: ''
       }
     };
     const settingsUi = createSettingsUi({
       state,
       getShadowRoot: () => state.shadowRoot,
-      syncCardButtons});
+      syncCardButtons,
+      supportsPip: supportsDocumentPip
+    });
     const commentsTabsUi = createCommentsTabsUi({
       state,
       getHomeRenderer: () => homeRenderer,
@@ -5142,19 +5527,23 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     });
     const {
       attachPipTabs: attachPipCommentsTabs,
+      capturePageLiveList,
       capturePagePlaylist,
       createTabs: createCommentsTabs,
+      renderLiveList,
       renderPageParts,
       renderPlaylist,
       renderRecommendations,
+      scrollSelectedLiveIntoView,
       scrollSelectedPlaylistIntoView,
+      setSelectedLiveKey,
       setSelectedPageKey,
       setSelectedPlaylistBvid,
       syncLastPlayed,
       syncTabs: syncCommentsTabs
     } = commentsTabsUi;
     let rendererOrchestrator = null;
-    window.__biliPopupPlayerNano = {
+    pageWindow.__biliPopupPlayerNano = {
       scan,
       close: closeHome,
       destroy,
@@ -5491,9 +5880,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         seen.add(player);
         players.push(player);
       };
-      PLAYER_GLOBAL_KEYS.forEach(key => add(window[key]));
-      add(window.playerAgent?.player);
-      add(window.bilibili?.player);
+      PLAYER_GLOBAL_KEYS.forEach(key => add(pageWindow[key]));
+      add(pageWindow.playerAgent?.player);
+      add(pageWindow.bilibili?.player);
       return players;
     }
     function setPipPlaying(bootstrap) {
@@ -5511,7 +5900,17 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function bindLink(link, meta = getVideoMetaFromLink(link)) {
       if (!meta) return;
-      const card = getCardRoot(link);
+      bindPlayableLink(link, getCardRoot(link), meta);
+    }
+    function bindLiveLink(link, meta = getLiveMetaFromLink(link)) {
+      if (!meta) return;
+      bindPlayableLink(link, getLiveCardRoot(link), meta);
+    }
+    function bindLiveCardElement(element, meta) {
+      if (!element || !meta) return;
+      bindPlayableLink(element, getLiveCardRoot(element), meta);
+    }
+    function bindPlayableLink(link, card, meta) {
       if (!card) return;
       const existing = state.cardEntries.find(entry => entry.card === card || entry.link === link);
       if (existing) {
@@ -5521,9 +5920,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const button = document.createElement('button');
       button.type = 'button';
       button.className = BUTTON_CLASS;
-      button.dataset.bvid = meta.bvid;
-      button.dataset.href = meta.href;
-      button.dataset.title = meta.title;
+      setCardDataset(button, meta);
       syncCardButton(button);
       button.addEventListener('click', event => {
         event.preventDefault();
@@ -5534,15 +5931,11 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
           openOriginalPage(button.dataset.href);
           return;
         }
-        openByMode({
-          bvid: button.dataset.bvid,
-          href: button.dataset.href,
-          title: button.dataset.title
-        });
+        openByMode(getMetaFromCardDataset(button));
       });
       const badge = document.createElement('div');
       badge.className = BADGE_CLASS;
-      badge.dataset.bvid = meta.bvid;
+      setCardDataset(badge, meta);
       const overlayMode = shouldUseCardOverlayFor(link, card);
       const host = overlayMode ? state.overlay : getCardControlHost(link, card);
       if (!overlayMode) ensureCardHost(host);
@@ -5560,14 +5953,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncVideoBadge(badge);
     }
     function upgradeCardEntry(entry, link, card, meta) {
-      const currentIsCover = isCoverLink(entry.link);
-      const nextIsCover = isCoverLink(link);
+      const isLive = isLiveMeta(meta);
+      const currentIsCover = !isLive && isCoverLink(entry.link);
+      const nextIsCover = !isLive && isCoverLink(link);
       if (entry.link === link || currentIsCover || !nextIsCover) {
         entry.meta = meta;
-        entry.button.dataset.bvid = meta.bvid;
-        entry.button.dataset.href = meta.href;
-        entry.button.dataset.title = meta.title;
-        entry.badge.dataset.bvid = meta.bvid;
+        setCardDataset(entry.button, meta);
+        setCardDataset(entry.badge, meta);
         syncCardButton(entry.button);
         syncVideoBadge(entry.badge);
         positionCardEntry(entry);
@@ -5582,10 +5974,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       entry.link = link;
       entry.meta = meta;
       entry.overlayMode = overlayMode;
-      entry.button.dataset.bvid = meta.bvid;
-      entry.button.dataset.href = meta.href;
-      entry.button.dataset.title = meta.title;
-      entry.badge.dataset.bvid = meta.bvid;
+      setCardDataset(entry.button, meta);
+      setCardDataset(entry.badge, meta);
       syncCardButton(entry.button);
       syncVideoBadge(entry.badge);
       positionCardEntry(entry);
@@ -5603,13 +5993,38 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.cardEntries.forEach(entry => syncVideoBadge(entry.badge));
     }
     function syncVideoBadge(badge) {
-      const bvid = badge.dataset.bvid;
-      const isPlaying = Boolean(state.pipPlaying?.bvid && state.pipPlaying.bvid === bvid);
-      const isLastPlayed = Boolean(state.lastPlayed?.bvid && state.lastPlayed.bvid === bvid);
+      const key = badge.dataset.key || '';
+      const playingKey = getPlayableKey(state.pipPlaying);
+      const lastPlayedKey = getPlayableKey(state.lastPlayed);
+      const isPlaying = Boolean(key && playingKey && playingKey === key);
+      const isLastPlayed = Boolean(key && lastPlayedKey && lastPlayedKey === key);
       const active = isPlaying || isLastPlayed;
       badge.textContent = isPlaying ? '正在播放' : isLastPlayed ? '上次播放' : '';
       badge.classList.toggle(`${APP}--active`, active);
       badge.classList.toggle(`${APP}--playing`, isPlaying);
+    }
+    function setCardDataset(element, meta) {
+      element.dataset.kind = meta.kind || 'video';
+      element.dataset.bvid = meta.bvid || '';
+      element.dataset.roomId = meta.roomId || '';
+      element.dataset.key = getPlayableKey(meta);
+      element.dataset.href = meta.href || '';
+      element.dataset.title = meta.title || (isLiveMeta(meta) ? `Bilibili 直播 ${meta.roomId}` : 'Bilibili 视频');
+    }
+    function getMetaFromCardDataset(element) {
+      if (element.dataset.kind === 'live' || element.dataset.roomId) {
+        return {
+          kind: 'live',
+          roomId: element.dataset.roomId,
+          href: element.dataset.href,
+          title: element.dataset.title
+        };
+      }
+      return {
+        bvid: element.dataset.bvid,
+        href: element.dataset.href,
+        title: element.dataset.title
+      };
     }
     function syncOverlayPositions() {
       state.cardEntries = state.cardEntries.filter(entry => {
@@ -5641,7 +6056,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       return (host || target).getBoundingClientRect();
     }
     function shouldUseCardOverlayFor(link, card) {
-      if (isPlaybackPage() || isSpacePage()) return true;
+      if (isPlaybackPage() || isSpacePage() || isDynamicPage()) return true;
       if (card?.tagName === 'A') return false;
       const host = getCardControlHost(link, card);
       return host?.tagName === 'A' && !(host.parentElement && card?.contains?.(host.parentElement));
@@ -5726,7 +6141,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       return [...(card.querySelectorAll?.('a[href*="/video/BV"]') || [])].find(candidate => getVideoMetaFromLink(candidate)?.bvid === bvid && isCoverLink(candidate)) || null;
     }
     function syncLivePageButton() {
-      if (!isLivePage()) {
+      if (!supportsDocumentPip() || !isLivePage()) {
         removeLivePageButton();
         return;
       }
@@ -5749,7 +6164,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
           const nextMeta = getCurrentLiveMeta();
           if (nextMeta) {
             pauseLivePagePlayer();
-            openWithRenderer(pipRenderer, nextMeta);
+            openWithRenderer(pipRenderer, {
+              ...nextMeta,
+              fromLivePageButton: true
+            });
           }
         });
         state.live.button = button;
@@ -5763,7 +6181,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
     }
     function syncPlaybackPagePipButton() {
-      if (!isPlaybackPage()) {
+      if (!supportsDocumentPip() || !isPlaybackPage()) {
         removePlaybackPagePipButton();
         return;
       }
@@ -5825,7 +6243,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       return document.getElementById('live-player') || document.getElementById('player-ctnr') || document.querySelector('.live-player-ctnr, .player-section, [class*="player"]');
     }
     function pauseLivePagePlayer() {
-      const candidates = [window.__PLAYER_GLOBAL_INSTANCE__, window.EmbedPlayer?.instance, window.Player?.instance];
+      const candidates = [pageWindow.__PLAYER_GLOBAL_INSTANCE__, pageWindow.EmbedPlayer?.instance, pageWindow.Player?.instance];
       for (const player of candidates) {
         if (tryPauseLivePlayer(player)) return true;
       }
@@ -5839,7 +6257,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       });
     }
     function pausePlaybackPagePlayer() {
-      const candidates = [...PLAYER_GLOBAL_KEYS.map(key => window[key]), window.playerAgent?.player, window.bilibili?.player, window.__PLAYER_GLOBAL_INSTANCE__, window.EmbedPlayer?.instance];
+      const candidates = [...PLAYER_GLOBAL_KEYS.map(key => pageWindow[key]), pageWindow.playerAgent?.player, pageWindow.bilibili?.player, pageWindow.__PLAYER_GLOBAL_INSTANCE__, pageWindow.EmbedPlayer?.instance];
       for (const player of candidates) {
         if (tryPauseLivePlayer(player)) return true;
       }
@@ -5873,6 +6291,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         if (!meta || meta.bvid === getCurrentPageBvid()) return;
         bindLink(link, meta);
       });
+      [...document.querySelectorAll(LIVE_CARD_LINK_SELECTOR)].forEach(link => {
+        const meta = getLiveMetaFromLink(link);
+        const currentLive = getCurrentLiveMeta();
+        if (!meta || currentLive?.roomId && String(meta.roomId) === String(currentLive.roomId)) return;
+        bindLiveLink(link, meta);
+      });
+      syncDynamicPortalLiveCards();
       ensureSettings();
       syncLivePageButton();
       syncPlaybackPagePipButton();
@@ -5880,6 +6305,50 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncVideoBadges();
       syncOverlayPositions();
       state.cardEntries.forEach(positionCardEntry);
+    }
+    function syncDynamicPortalLiveCards() {
+      if (!isDynamicPage()) return;
+      bindDynamicPortalLiveCards(state.dynamicLivePortal.cards);
+      if (state.dynamicLivePortal.loading || state.dynamicLivePortal.loaded) return;
+      const requestId = state.dynamicLivePortal.requestId + 1;
+      state.dynamicLivePortal.requestId = requestId;
+      state.dynamicLivePortal.loading = true;
+      fetchDynamicLivePortalCards().then(cards => {
+        if (requestId !== state.dynamicLivePortal.requestId) return;
+        state.dynamicLivePortal.cards = cards;
+        state.dynamicLivePortal.error = '';
+        state.dynamicLivePortal.loaded = true;
+        bindDynamicPortalLiveCards(cards);
+        refreshOpenLiveLists();
+      }).catch(error => {
+        if (requestId !== state.dynamicLivePortal.requestId) return;
+        state.dynamicLivePortal.error = error?.message || String(error || '动态直播列表请求失败');
+        state.dynamicLivePortal.loaded = true;
+      }).finally(() => {
+        if (requestId === state.dynamicLivePortal.requestId) state.dynamicLivePortal.loading = false;
+      });
+    }
+    function bindDynamicPortalLiveCards(cards) {
+      if (!cards?.length) return;
+      const currentLive = getCurrentLiveMeta();
+      const used = new Set();
+      cards.forEach(card => {
+        if (!card?.roomId || currentLive?.roomId && String(card.roomId) === String(currentLive.roomId)) return;
+        const element = findDynamicLiveUserElement(card, used);
+        if (!element) return;
+        used.add(element);
+        bindLiveCardElement(element, card);
+      });
+    }
+    function refreshOpenLiveLists() {
+      if (state.home.liveListMode) {
+        capturePageLiveList('home', state.home.selectedLiveKey);
+        renderLiveList('home', '当前页面没有扫到直播卡片');
+      }
+      if (state.pip.liveListMode) {
+        capturePageLiveList('pip', state.pip.selectedLiveKey);
+        renderLiveList('pip', '当前页面没有扫到直播卡片');
+      }
     }
     function onDomMutated(mutations) {
       if (mutations.some(shouldSyncSettingsVisibilityMutation)) scheduleSettingsVisibilitySync();
@@ -5900,7 +6369,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (mutation.type !== 'attributes') return false;
       const target = mutation.target;
       if (!(target instanceof Element)) return false;
-      return target.matches?.('a[href*="/video/"], a[href], [title], [aria-label]') || target.closest?.('.bili-video-card, .feed-card, .video-card, [class*="video-card"], [class*="feed-card"]');
+      return target.matches?.('a[href*="/video/"], a[href*="live.bilibili.com/"], a[href], [title], [aria-label]') || target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bili-dyn"]');
     }
     function isPlaybackPageWebFullscreen() {
       if (!isPlaybackPage()) return false;
@@ -5960,12 +6429,23 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.scanWarmupTimer = 0;
     }
     function getVideoLinkSelector() {
+      if (isDynamicPage()) return DYNAMIC_VIDEO_LINK_SELECTOR;
       if (!isPlaybackPage()) return 'a[href*="/video/BV"]';
       return PLAYBACK_VIDEO_LINK_SELECTOR;
     }
     function onDirectCoverClick(event) {
       if (!state.directClick || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       if (event.target.closest?.(`.${BUTTON_CLASS}, .${SETTINGS_CLASS}, #${APP}-overlay`)) return;
+      const liveEntry = getDirectLiveCardEntry(event.target);
+      if (liveEntry) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        state.lastFocus = liveEntry.card || liveEntry.link;
+        state.lastButton = null;
+        openByMode(liveEntry.meta);
+        return;
+      }
       const link = event.target.closest?.('a[href*="/video/BV"]');
       if (!link || !isCoverLink(link)) return;
       const meta = getVideoMetaFromLink(link);
@@ -5977,11 +6457,23 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.lastButton = null;
       openByMode(meta);
     }
+    function getDirectLiveCardEntry(target) {
+      if (!(target instanceof Element)) return null;
+      return state.cardEntries.find(entry => {
+        if (!isLiveMeta(entry.meta) || !entry.card?.isConnected || !entry.link?.isConnected) return false;
+        return entry.card.contains(target) || entry.link.contains(target);
+      }) || null;
+    }
     function openByMode(meta) {
+      if (state.mode === 'pip' && !supportsDocumentPip()) {
+        state.mode = 'home';
+        setStorageItem(STORAGE_MODE, 'home');
+        syncSettings();
+      }
       rendererOrchestrator.openByMode(meta);
     }
     function getActiveRenderer() {
-      return state.mode === 'pip' ? pipRenderer : homeRenderer;
+      return state.mode === 'pip' && supportsDocumentPip() ? pipRenderer : homeRenderer;
     }
     function openWithRenderer(renderer, meta) {
       return rendererOrchestrator.openWithRenderer(renderer, meta);
@@ -6091,7 +6583,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       playHomeSoon(token, 80);
     }
     async function prepareHome(meta) {
+      if (isLiveMeta(meta)) return prepareLiveHome(meta);
       const ui = ensureHomeShell();
+      setLiveListMode('home', false);
       const preserveRightList = Boolean(meta.fromHistory);
       const preservePageParts = preserveRightList && isBvidInCurrentPageCards('home', meta.bvid);
       showHomeShell(meta.title || meta.bvid, {
@@ -6119,6 +6613,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       };
     }
     async function playHome(context, bootstrap, token) {
+      if (isLiveBootstrap(bootstrap)) {
+        await bootLiveHome(context, bootstrap, token);
+        return;
+      }
       const {
         ui
       } = context;
@@ -6136,13 +6634,47 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       renderRecommendations('home', bootstrap);
       syncVideoIntro('home');
-      await loadScriptOnce(document, bootstrap.coreScript, () => window.nano);
-      if (token !== state.switchToken || !window.nano || homeRenderer.isClosed()) return;
+      await loadScriptOnce(document, bootstrap.coreScript, () => pageWindow.nano);
+      if (token !== state.switchToken || !pageWindow.nano || homeRenderer.isClosed()) return;
       if (canReloadHome()) await reloadHomePlayer(bootstrap, token);else {
         disposeHomePlayer();
         createHomePlayer(bootstrap, token);
       }
       mountHomeComments(bootstrap, token);
+    }
+    function prepareLiveHome(meta) {
+      const ui = ensureHomeShell();
+      showHomeShell(meta.title || `Bilibili 直播 ${meta.roomId}`);
+      ui.openOriginal.dataset.href = meta.href;
+      ui.status.textContent = state.home.player ? '直播参数：解析中，准备换源' : '直播参数：解析中';
+      setLiveListMode('home', true);
+      state.home.pageCards = [];
+      state.home.recommendationCards = [];
+      capturePageLiveList('home', getPlayableKey(meta));
+      renderLiveList('home', '当前页面没有扫到直播卡片');
+      return {
+        ui,
+        live: true
+      };
+    }
+    async function bootLiveHome(context, bootstrap, token) {
+      const {
+        ui
+      } = context;
+      state.home.bootstrap = bootstrap;
+      ui.title.textContent = bootstrap.title || ui.title.textContent;
+      ui.openOriginal.dataset.href = bootstrap.href;
+      ui.status.textContent = `直播参数：room=${bootstrap.playerInfo.roomId}`;
+      setSelectedLiveKey('home', getPlayableKey(bootstrap.playerInfo));
+      renderLiveList('home', '当前页面没有扫到直播卡片');
+      disposeHomePlayer();
+      disposeHomeComments();
+      mountLiveHomePlayerShell();
+      installLivePipGlobals(pageWindow, bootstrap);
+      await loadScriptOnce(document, bootstrap.playerScript, () => pageWindow.Player);
+      if (token !== state.switchToken || homeRenderer.isClosed()) return;
+      if (!pageWindow.Player) throw new Error('live Player not available after load');
+      connectLiveHomePlayer(bootstrap, token);
     }
     function failHome(context, error) {
       console.error('[bili-popup-player] modal init failed', error);
@@ -6164,7 +6696,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         onPlayerControlClick: onHomePlayerControlClick,
         onResetSize: resetHomeModalSize,
         onToggleAutoPlay: toggleAutoPlayNext,
-        onResizeStart: event => startCommentWidthDrag(event, window)
+        onResizeStart: event => startCommentWidthDrag(event, window),
+        supportsPip: supportsDocumentPip()
       });
       state.home.overlay = state.home.ui.overlay;
       attachHomeBackToTopSync();
@@ -6204,10 +6737,23 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const ui = state.home.ui;
       const info = bootstrap?.playerInfo;
       const href = bootstrap?.href || ui?.openOriginal?.dataset.href || '';
-      const bvid = info?.bvid || getCurrentPageBvid();
-      if (!bootstrap || !href || !bvid) return;
+      if (!bootstrap || !href) return;
       pausePlayer(state.home.player);
       if (ui?.status) ui.status.textContent = '已暂停，正在打开 PiP';
+      if (isLiveBootstrap(bootstrap) || info?.roomId) {
+        const roomId = info?.roomId;
+        if (!roomId) return;
+        openWithRenderer(pipRenderer, {
+          kind: 'live',
+          roomId,
+          href,
+          title: bootstrap.title || ui?.title?.textContent || `Bilibili 直播 ${roomId}`,
+          fromLivePageButton: !state.home.liveListMode
+        });
+        return;
+      }
+      const bvid = info?.bvid || getCurrentPageBvid();
+      if (!bvid) return;
       openWithRenderer(pipRenderer, {
         bvid,
         href,
@@ -6452,16 +6998,18 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         const pipWindow = state.pip.win;
         return pipWindow && !pipWindow.closed ? pipWindow.nano : null;
       }
-      return window.nano;
+      return pageWindow.nano;
     }
     function setHomeFullscreen(active) {
       if (!state.home.overlay) return;
       state.home.overlay.classList.toggle(`${APP}--fullscreen`, Boolean(active));
       syncHomeFullscreenButton();
+      syncHomePlayerOnlyControl();
       syncHomeModalSizeButton();
       syncHomeSize();
     }
     function buildHomePrimarySetting(bootstrap) {
+      const runtime = getPlayerApiForKind('home');
       const info = bootstrap.playerInfo;
       const handoff = getPlayerHandoffAvailability('home');
       const setting = {
@@ -6474,7 +7022,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         hasPrev: handoff?.hasPrev ?? Boolean(info.hasPrev),
         hasNext: handoff?.hasNext ?? Boolean(info.hasNext),
         seasonId: info.seasonId,
-        kind: nano.GroupKind.Ugc,
+        kind: runtime.GroupKind.Ugc,
         featureList: new Set(['blackGap']),
         stats: {
           spmId: '333.788.0.0',
@@ -6484,7 +7032,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         autoplay: true,
         enableHEVC: true,
         enableAV1: true,
-        screenKind: getScreenKind(nano),
+        screenKind: getScreenKind(runtime),
         revision: 1,
         viewInfo: getPlayerViewInfo(bootstrap.initialState)
       };
@@ -6515,7 +7063,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function createHomePlayer(bootstrap, token) {
       const setting = buildHomePrimarySetting(bootstrap);
-      state.home.player = nano.createPlayer(setting, bootstrap.initialState?.nanoTheme);
+      const runtime = getPlayerApiForKind('home');
+      state.home.ui.playerRoot.textContent = '';
+      state.home.ui.playerRoot.classList.remove(`${APP}__live-player-root`);
+      state.home.player = runtime.createPlayer(setting, bootstrap.initialState?.nanoTheme);
       bindHomeScreenChange(state.home.player);
       bindHomePlayerNavigate(state.home.player);
       bindHomePlayerHandoff(state.home.player);
@@ -6535,7 +7086,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         slot: state.home,
         mount: state.home.ui?.commentsMount,
         targetDocument: document,
-        getCtor: () => window.BiliComments,
+        getCtor: () => pageWindow.BiliComments,
         beforeLoad: () => ensureBiliThemeStylesheets(document),
         getPlayer: () => state.home.player,
         getScrollContainer: getHomeCommentInstanceScrollContainer,
@@ -6596,7 +7147,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
     }
     async function preparePip(meta) {
-      if (!('documentPictureInPicture' in window)) {
+      if (!supportsDocumentPip()) {
         setLastButtonStatus('不支持 PiP');
         return null;
       }
@@ -6619,15 +7170,26 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       attachPipWindowCloseSync(pipWindow);
       if (isLiveMeta(meta)) {
+        setLiveListMode('pip', true);
         state.pip.pageCards = [];
-        state.pip.playlistCards = [];
         state.pip.recommendationCards = [];
         state.pip.selectedPageKey = '';
-        state.pip.selectedPlaylistBvid = '';
+        if (meta.fromLiveList && state.pip.liveCards.some(card => getPlayableKey(card) === getPlayableKey(meta))) {
+          setSelectedLiveKey('pip', getPlayableKey(meta));
+          renderLiveList('pip', '当前页面没有扫到直播卡片');
+        } else if (meta.fromLivePageButton) {
+          state.pip.liveCards = [];
+          setSelectedLiveKey('pip', '');
+        } else {
+          capturePageLiveList('pip', getPlayableKey(meta));
+          renderLiveList('pip', '当前页面没有扫到直播卡片');
+        }
       } else if (meta.fromPlaylist && state.pip.playlistCards.length) {
+        setLiveListMode('pip', false);
         setSelectedPlaylistBvid('pip', meta.bvid);
         renderPlaylist('pip');
       } else {
+        setLiveListMode('pip', false);
         resetPlaylistFeed('pip');
         capturePagePlaylist('pip', meta.bvid);
       }
@@ -6694,10 +7256,108 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       connectPipPlayer(pipWindow, bootstrap, token);
       mountPipComments(pipWindow, bootstrap, token);
     }
+    function mountLiveHomePlayerShell() {
+      const root = state.home.ui?.playerRoot;
+      if (!root) return;
+      root.textContent = '';
+      root.classList.add(`${APP}__live-player-root`);
+      root.insertAdjacentHTML('beforeend', getLivePlayerShellMarkup());
+    }
+    function connectLiveHomePlayer(bootstrap, token) {
+      if (token !== state.switchToken || homeRenderer.isClosed()) return;
+      const playerRoot = document.getElementById('live-player');
+      if (!playerRoot) throw new Error('live-player container not found');
+      const player = new pageWindow.Player(playerRoot, buildLivePipPlayerOptions(pageWindow, bootstrap));
+      pageWindow.EmbedPlayer = {
+        instance: player
+      };
+      pageWindow.__PLAYER_GLOBAL_INSTANCE__ = player;
+      state.home.player = createLivePipPlayerAdapter(pageWindow, player, state.home.ui?.playerWrap || playerRoot);
+      setHomePlayerFeatureBlocked(false);
+      syncHomeSize();
+      window.setTimeout(() => syncHomeSize(), 600);
+      window.setTimeout(() => syncHomeSize(), 1600);
+      attachLivePlayerOnlyControl();
+      window.setTimeout(attachLivePlayerOnlyControl, 600);
+      window.setTimeout(attachLivePlayerOnlyControl, 1600);
+      state.home.ui.status.textContent = '直播播放器：播放中';
+    }
+    function attachLivePlayerOnlyControl() {
+      const playerRoot = state.home.ui?.playerRoot;
+      const liveRoot = playerRoot?.querySelector?.('#live-player');
+      if (!liveRoot || !isLiveBootstrap(state.home.bootstrap)) return;
+      const layer = findLivePlayerControlLayer(liveRoot);
+      if (!layer) return;
+      let button = liveRoot.querySelector(`.${APP}__live-player-only-control`);
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = `${APP}__live-player-only-control`;
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation?.();
+          toggleHomePlayerOnly();
+        });
+      }
+      layer.classList.add(`${APP}__live-player-controls-layer`);
+      if (button.parentElement !== layer) layer.appendChild(button);
+      syncHomePlayerOnlyControl();
+    }
+    function findLivePlayerControlLayer(liveRoot) {
+      const rootRect = liveRoot.getBoundingClientRect();
+      const candidates = [...liveRoot.querySelectorAll('[class]')].map(element => {
+        const rect = element.getBoundingClientRect();
+        const className = String(element.className || '');
+        if (rect.width < rootRect.width * 0.35 || rect.height < 24 || rect.height > 180) return null;
+        if (rect.bottom < rootRect.bottom - 220 || rect.top < rootRect.top + rootRect.height * 0.35) return null;
+        if (!/(?:control|controller|toolbar|bottom|operate|panel|wrap)/i.test(className)) return null;
+        const score = (/controller|control/i.test(className) ? 8 : 0) + (/wrap|bar|bottom/i.test(className) ? 4 : 0) + Math.max(0, 220 - Math.abs(rootRect.bottom - rect.bottom)) / 20 + rect.width / Math.max(rootRect.width, 1);
+        return {
+          element,
+          score
+        };
+      }).filter(Boolean).sort((a, b) => b.score - a.score);
+      return candidates[0]?.element || null;
+    }
+    function toggleHomePlayerOnly() {
+      setCommentLayout(state.commentLayout === 'right' ? 'bottom' : 'right');
+    }
+    function syncHomePlayerOnlyControl() {
+      const button = state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`);
+      if (!button) return;
+      const active = state.commentLayout !== 'right';
+      button.title = active ? '退出宽屏' : '宽屏';
+      button.setAttribute('aria-label', button.title);
+      button.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
+    }
     async function bootLivePipWindow(pipWindow, bootstrap, token) {
       disposePipPlayer();
       disposePipComments();
-      writeLivePipDocument(pipWindow, bootstrap);
+      const liveListCards = state.pip.liveCards || [];
+      const hasLiveList = liveListCards.length > 0;
+      if (hasLiveList) {
+        writePipDocument(pipWindow, renderPipPlayerDocument({
+          title: bootstrap.title,
+          stylesheets: getBiliThemeStylesheets(),
+          themeClassMarkup: getPipThemeClassMarkup(),
+          commentLayoutClass: 'comments-right'
+        }));
+        mountPipPlayerPage({
+          targetDocument: pipWindow.document,
+          createCommentsTabs
+        });
+        const stage = pipWindow.document.getElementById('stage');
+        if (stage) stage.innerHTML = getLivePlayerShellMarkup();
+        attachPipKeyboardShortcuts(pipWindow);
+        attachPipCommentsTabs(pipWindow);
+        setLiveListMode('pip', true);
+        setSelectedLiveKey('pip', getPlayableKey(bootstrap.playerInfo));
+        renderLiveList('pip', '当前页面没有扫到直播卡片');
+        syncCommentsTabs('pip');
+      } else {
+        writeLivePipDocument(pipWindow, bootstrap);
+      }
       installLivePipGlobals(pipWindow, bootstrap);
       await loadScriptOnce(pipWindow.document, bootstrap.playerScript, () => pipWindow.Player);
       if (token !== state.switchToken || pipWindow.closed) return;
@@ -6725,7 +7385,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         getBootstrap: () => bootstrap,
         getPrimarySetting: () => buildLivePipPlayerOptions(targetWindow, bootstrap)
       };
-      state.pip.player = createLivePipPlayerAdapter(targetWindow, player);
+      state.pip.player = createLivePipPlayerAdapter(targetWindow, player, targetWindow.document.getElementById('stage') || playerRoot);
       attachPipWindowResizeSync(targetWindow);
       syncPipSize(targetWindow);
       targetWindow.setTimeout(() => syncPipSize(targetWindow), 600);
@@ -6934,8 +7594,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const next = value === 'right' ? 'right' : 'bottom';
       if (state.commentLayout === next) return;
       state.commentLayout = next;
-      localStorage.setItem(STORAGE_COMMENT_LAYOUT, next);
+      setStorageItem(STORAGE_COMMENT_LAYOUT, next);
       syncCommentLayout();
+      syncHomePlayerOnlyControl();
       remountCommentsForLayout();
     }
     function syncCommentLayout() {
@@ -6945,12 +7606,32 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       scheduleHomeBottomFixedWrapperSync();
       if (state.pip.win && !state.pip.win.closed) schedulePipBottomFixedWrapperSync(state.pip.win);
     }
+    function setLiveListMode(kind, active) {
+      const scope = state[kind];
+      if (!scope) return;
+      scope.liveListMode = Boolean(active);
+      if (active) scope.activeCommentsTab = 'live';else if (scope.activeCommentsTab === 'live') scope.activeCommentsTab = 'comments';
+      const doc = kind === 'pip' ? state.pip.win?.document : document;
+      const root = kind === 'pip' ? doc?.getElementById('comments') : state.home.ui?.comments;
+      root?.querySelectorAll?.(`.${APP}__comments-tab`)?.forEach(button => {
+        button.hidden = active ? button.dataset.tab !== 'live' : button.dataset.tab === 'pages' && !scope.pageCards?.length || button.dataset.tab === 'live';
+      });
+      if (kind === 'home') syncAutoPlayNextButton();
+      syncCommentsTabs(kind);
+    }
+    function getLivePlayerShellMarkup() {
+      return '<div id="fullscreen-container"><div id="live-player"><div id="fullscreen-danmaku-vm"><fullscreen-danmaku></fullscreen-danmaku></div></div></div>';
+    }
     function scheduleSelectedPlaylistScrollForLayout() {
       window.requestAnimationFrame(() => {
         if (state.commentLayout !== 'right') return;
         if (state.home.activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView('home');
+        if (state.home.activeCommentsTab === 'live') scrollSelectedLiveIntoView('home');
         if (state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'playlist') {
           scrollSelectedPlaylistIntoView('pip');
+        }
+        if (state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'live') {
+          scrollSelectedLiveIntoView('pip');
         }
       });
     }
@@ -7294,9 +7975,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function bindHomeScreenChange(player) {
       unbindHomeScreenChange();
-      const eventType = window.nano?.EventType?.Player_Statue_Changed;
+      const runtime = getPlayerApiForKind('home');
+      const eventType = runtime?.EventType?.Player_Statue_Changed;
       if (!player?.on || !eventType) return;
-      const handler = event => handleScreenChanged(window.nano, event?.detail);
+      const handler = event => handleScreenChanged(runtime, event?.detail);
       player.on(eventType, handler);
       state.home.screenHandler = {
         player,
@@ -7316,7 +7998,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function bindHomePlayerNavigate(player) {
       unbindHomePlayerNavigate();
-      const eventTypes = getPlayerNavigationEventTypes(window.nano);
+      const eventTypes = getPlayerNavigationEventTypes(getPlayerApiForKind('home'));
       if (!player?.on || !eventTypes.length) return;
       const bindings = eventTypes.map(({
         eventType,
@@ -7355,7 +8037,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function bindHomePlayerHandoff(player) {
       unbindHomePlayerHandoff();
-      const eventType = window.nano?.EventType?.Player_Handoff_Signal;
+      const eventType = getPlayerApiForKind('home')?.EventType?.Player_Handoff_Signal;
       if (!player?.on || !eventType) return;
       const handler = event => handlePlayerHandoff('home', event?.detail);
       player.on(eventType, handler);
@@ -7377,7 +8059,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function bindHomePlayerEnded(player) {
       unbindHomePlayerEnded();
-      const eventType = window.nano?.EventType?.Player_Ended;
+      const eventType = getPlayerApiForKind('home')?.EventType?.Player_Ended;
       if (!player?.on || !eventType) return;
       const handler = () => handlePlayerEnded('home');
       player.on(eventType, handler);
@@ -7655,7 +8337,10 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         return getCardHandoffAvailability(state[kind].pageCards, findCurrentPageCardIndex(kind, state[kind].pageCards));
       }
       if (tab === 'playlist' || tab === 'comments') {
-        return getCardHandoffAvailability(state[kind].playlistCards, findSelectedCardIndex(state[kind].playlistCards, state[kind].selectedPlaylistBvid, card => card.bvid));
+        return getCardHandoffAvailability(state[kind].playlistCards, findSelectedCardIndex(state[kind].playlistCards, state[kind].selectedPlaylistBvid, getPlayableKey));
+      }
+      if (tab === 'live') {
+        return getCardHandoffAvailability(state[kind].liveCards, findSelectedCardIndex(state[kind].liveCards, state[kind].selectedLiveKey, getPlayableKey));
       }
       if (tab === 'recommend') {
         return {
@@ -7730,8 +8415,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (tab === 'playlist' || tab === 'comments') return playAdjacentCard(kind, state[kind].playlistCards, direction, {
         ...options,
         selectedKey: state[kind].selectedPlaylistBvid,
-        getKey: card => card.bvid,
+        getKey: getPlayableKey,
         fromPlaylist: true
+      });
+      if (tab === 'live') return playAdjacentCard(kind, state[kind].liveCards, direction, {
+        ...options,
+        selectedKey: state[kind].selectedLiveKey,
+        getKey: getPlayableKey,
+        fromLiveList: true
       });
       if (tab === 'recommend') return playFirstRecommendation(kind);
       return false;
@@ -7752,13 +8443,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const targetIndex = options.absolute ? offset - 1 : currentIndex + offset;
       if (targetIndex < 0 || targetIndex >= cards.length) return false;
       const card = cards[targetIndex];
-      if (!card?.bvid || !card.href) return false;
+      if (!getPlayableKey(card) || !card.href) return false;
       maybePrefetchHomePlaylistForContinuation(kind, cards, targetIndex, options);
       const renderer = kind === 'pip' ? pipRenderer : homeRenderer;
       openWithRenderer(renderer, {
         ...card,
         fromPagePart: Boolean(options.fromPagePart),
-        fromPlaylist: Boolean(options.fromPlaylist)
+        fromPlaylist: Boolean(options.fromPlaylist),
+        fromLiveList: Boolean(options.fromLiveList)
       });
       return true;
     }
@@ -7781,7 +8473,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function playFirstRecommendation(kind) {
       const card = state[kind]?.recommendationCards?.[0];
-      if (!card?.bvid || !card.href) return false;
+      if (!getPlayableKey(card) || !card.href) return false;
       const renderer = kind === 'pip' ? pipRenderer : homeRenderer;
       openWithRenderer(renderer, card);
       return true;
@@ -7860,7 +8552,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         doc.removeEventListener('pointermove', onMove, true);
         doc.removeEventListener('pointerup', onEnd, true);
         doc.removeEventListener('pointercancel', onEnd, true);
-        localStorage.setItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
+        setStorageItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
       };
       doc.addEventListener('pointermove', onMove, true);
       doc.addEventListener('pointerup', onEnd, true);
@@ -7986,11 +8678,23 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         title: bootstrap.title || meta.title,
         savedAt: Date.now()
       };
+      if (next.kind === 'live' || next.roomId) {
+        syncVideoBadges();
+        return;
+      }
+      const previous = state.lastPlayed;
+      if (isDifferentPlayback(previous, next)) state.playlistLastPlayed = previous;
       state.lastPlayed = next;
-      localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
+      setStorageItem(STORAGE_LAST_PLAYED, JSON.stringify(next));
       syncLastPlayed();
       syncSettings();
       syncVideoBadges();
+    }
+    function isDifferentPlayback(previous, next) {
+      const previousKey = getPlayableKey(previous);
+      const nextKey = getPlayableKey(next);
+      if (!previousKey || !nextKey) return false;
+      return previousKey !== nextKey;
     }
     function recordPlaybackHistory(meta, bootstrap) {
       const playbackId = getPlaybackIdentity(meta, bootstrap);
@@ -8034,7 +8738,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (!entry) return;
       history.index = nextIndex;
       syncPlaybackHistoryButtons();
-      openWithRenderer(entry.kind === 'live' ? pipRenderer : homeRenderer, {
+      openWithRenderer(homeRenderer, {
         ...entry,
         fromHistory: true,
         historyIndex: nextIndex
@@ -8076,7 +8780,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       return bvid ? `video:${bvid}` : '';
     }
     function updateDebug(primarySetting, bootstrap) {
-      window.__biliPopupPlayerNanoDebug = {
+      pageWindow.__biliPopupPlayerNanoDebug = {
         getMode: () => state.mode,
         getHomePlayer: () => state.home.player,
         getPipPlayer: () => state.pip.player,
@@ -8123,7 +8827,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         document.removeEventListener('pointermove', onMove, true);
         document.removeEventListener('pointerup', onEnd, true);
         document.removeEventListener('pointercancel', onEnd, true);
-        if (state.modalSize) localStorage.setItem(STORAGE_MODAL_SIZE, JSON.stringify(state.modalSize));
+        if (state.modalSize) setStorageItem(STORAGE_MODAL_SIZE, JSON.stringify(state.modalSize));
       };
       document.addEventListener('pointermove', onMove, true);
       document.addEventListener('pointerup', onEnd, true);
@@ -8137,7 +8841,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function resetHomeModalSize() {
       state.modalSize = null;
-      localStorage.removeItem(STORAGE_MODAL_SIZE);
+      removeStorageItem(STORAGE_MODAL_SIZE);
       syncHomeSize();
       syncHomeModalSizeButton();
     }
@@ -8229,17 +8933,20 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       ui.resetSize.disabled = Boolean(disabled);
     }
     function toggleAutoPlayNext() {
+      if (state.home.liveListMode) return;
       setAutoPlayNext(!state.autoPlayNext);
       showAutoPlayHint();
     }
     function setAutoPlayNext(value) {
       state.autoPlayNext = Boolean(value);
-      localStorage.setItem(STORAGE_AUTO_PLAY_NEXT, state.autoPlayNext ? '1' : '0');
+      setStorageItem(STORAGE_AUTO_PLAY_NEXT, state.autoPlayNext ? '1' : '0');
       syncAutoPlayNextButton();
     }
     function syncAutoPlayNextButton() {
       const button = state.home.ui?.autoPlayNext;
       if (!button) return;
+      button.hidden = Boolean(state.home.liveListMode);
+      if (state.home.liveListMode) return;
       const active = Boolean(state.autoPlayNext);
       button.classList.toggle(`${APP}__header-button--active`, active);
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -8452,6 +9159,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       unbindHomePlayerNavigate();
       unbindHomePlayerHandoff();
       unbindHomePlayerEnded();
+      state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
       setHomePlayerFeatureBlocked(false);
       try {
         state.home.player.disconnect?.();
@@ -8515,7 +9223,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.overlay?.remove();
       document.getElementById(DOCUMENT_STYLE_ID)?.remove();
       document.documentElement.style.overflow = '';
-      delete window.__biliPopupPlayerNano;
+      delete pageWindow.__biliPopupPlayerNano;
     }
   }
 

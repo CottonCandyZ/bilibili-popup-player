@@ -18,12 +18,38 @@
   a {
     color: #00aeec;
   }
+
+  h2 {
+    margin-top: 28px;
+    font-size: 18px;
+  }
+
+  ul {
+    padding-left: 22px;
+  }
+
+  .note {
+    color: color-mix(in srgb, currentColor 72%, transparent);
+  }
 </style>
 <h1>Bilibili Popup Player Nano</h1>
 <p><a href="./bilibili-popup-player-nano.user.js">安装 userscript</a></p>
-<p>需要先安装下面任意一个用户脚本管理器：</p>
+<p>需要先安装对应浏览器的用户脚本管理器：</p>
+<h2>Chrome</h2>
 <ul>
   <li><a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo">Tampermonkey</a></li>
-  <li><a href="https://violentmonkey.github.io/get-it/">Violentmonkey</a></li>
   <li><a href="https://chromewebstore.google.com/detail/scriptcat/ndcooeababalnlpkfedmmbbbgkljhpjf">ScriptCat</a></li>
+</ul>
+<h2>Firefox</h2>
+<p class="note">Firefox 当前不支持 Document PiP，本脚本会隐藏 PiP 入口，仅提供网页内弹窗模式。</p>
+<ul>
+  <li><a href="https://addons.mozilla.org/firefox/addon/tampermonkey/">Tampermonkey</a></li>
+  <li><a href="https://addons.mozilla.org/firefox/addon/violentmonkey/">Violentmonkey</a></li>
+  <li><a href="https://addons.mozilla.org/firefox/addon/scriptcat/">ScriptCat</a></li>
+</ul>
+<h2>Microsoft Edge</h2>
+<ul>
+  <li><a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd">Tampermonkey</a></li>
+  <li><a href="https://microsoftedge.microsoft.com/addons/detail/violentmonkey/eeagobfjdenkkddmbclomhiblgggliao">Violentmonkey</a></li>
+  <li><a href="https://microsoftedge.microsoft.com/addons/detail/scriptcat/liilgpjgabokdklappibcjfablkpcekh">ScriptCat</a></li>
 </ul>
