@@ -2,6 +2,7 @@ import { render } from 'solid-js/web';
 import { APP } from './constants.js';
 import {
   arrowUpIconMarkup,
+  createAutoPlayIcon,
   createCloseIcon,
   createExternalLinkIcon,
   createHistoryBackIcon,
@@ -24,6 +25,7 @@ export function mountHomePlayerPage({
   onOpenPip,
   onPlayerControlClick,
   onResetSize,
+  onToggleAutoPlay,
   onModalResizeStart,
   onResizeStart,
 }) {
@@ -49,6 +51,7 @@ export function mountHomePlayerPage({
       onOpenPip={onOpenPip}
       onPlayerControlClick={onPlayerControlClick}
       onResetSize={onResetSize}
+      onToggleAutoPlay={onToggleAutoPlay}
       onModalResizeStart={onModalResizeStart}
       onResizeStart={onResizeStart}
       targetDocument={targetDocument}
@@ -144,6 +147,22 @@ function HomePlayerPage(props) {
           <div id={`${APP}-title`} ref={props.refs('title')} />
           <div id={`${APP}-status`} ref={props.refs('status')} />
           <div class={`${APP}__header-actions`}>
+            <span
+              class={`${APP}__auto-play-hint`}
+              ref={props.refs('autoPlayHint')}
+              role="status"
+              aria-live="polite"
+            />
+            <button
+              type="button"
+              class={`${APP}__header-button`}
+              title="自动联播。按 J / L 手动切换"
+              aria-label="自动联播。按 J / L 手动切换"
+              ref={props.refs('autoPlayNext')}
+              onClick={() => props.onToggleAutoPlay?.()}
+            >
+              {createAutoPlayIcon()}
+            </button>
             <button
               type="button"
               class={`${APP}__header-button`}
@@ -216,6 +235,7 @@ function HomePlayerPage(props) {
           <section id={`${APP}-comments`} ref={props.refs('comments')}>
             {props.commentsTabs}
             <div id={`${APP}-comments-panel`} class={`${APP}__comments-panel`} ref={props.refs('commentsPanel')}>
+              <div id={`${APP}-video-intro`} ref={props.refs('videoIntro')} />
               <div id={`${APP}-comments-mount`} ref={props.refs('commentsMount')} />
             </div>
             <div id={`${APP}-pages-panel`} class={`${APP}__comments-panel`} ref={props.refs('pagesPanel')}>
@@ -233,7 +253,7 @@ function HomePlayerPage(props) {
             <div id={`${APP}-recommend-panel`} class={`${APP}__comments-panel`} ref={props.refs('recommendPanel')}>
               <div id={`${APP}-recommend-list`} class={`${APP}__playlist`} ref={props.refs('recommendList')} />
               <div id={`${APP}-recommend-empty`} class={`${APP}__playlist-empty`} ref={props.refs('recommendEmpty')}>
-                推荐列表加载中...
+                相关推荐加载中...
               </div>
             </div>
           </section>
@@ -281,6 +301,7 @@ function PipPlayerPage(props) {
         <section id="comments">
           {props.commentsTabs}
           <div id="comments-panel" class={`${APP}__comments-panel`}>
+            <div id="video-intro" />
             <div id="comments-mount">评论加载中...</div>
           </div>
           <div id="pages-panel" class={`${APP}__comments-panel`}>
@@ -293,7 +314,7 @@ function PipPlayerPage(props) {
           </div>
           <div id="recommend-panel" class={`${APP}__comments-panel`}>
             <div id="recommend-list" class={`${APP}__playlist`} />
-            <div id="recommend-empty" class={`${APP}__playlist-empty`}>推荐列表加载中...</div>
+            <div id="recommend-empty" class={`${APP}__playlist-empty`}>相关推荐加载中...</div>
           </div>
         </section>
       </main>

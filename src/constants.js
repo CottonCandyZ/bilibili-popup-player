@@ -11,6 +11,7 @@ export const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
 export const STORAGE_COMMENT_WIDTH = `${APP}:comment-width`;
 export const STORAGE_LAST_PLAYED = `${APP}:last-played`;
 export const STORAGE_MODAL_SIZE = `${APP}:modal-size`;
+export const STORAGE_AUTO_PLAY_NEXT = `${APP}:auto-play-next`;
 export const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/)/;
 export const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
 export const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';

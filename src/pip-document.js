@@ -102,6 +102,62 @@ export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, 
         height: 100% !important;
       }
 ${getPlayerThemeVariableCss('#bilibili-player')}
+      .${APP}__like-burst {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        z-index: 80;
+        box-sizing: border-box;
+        min-width: 112px;
+        height: 46px;
+        padding: 0 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.62);
+        box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+        font: 700 16px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0;
+        pointer-events: none;
+        transform: translate(-50%, -50%) scale(0.86);
+        animation: ${APP}-like-burst 0.9s ease forwards;
+      }
+      .${APP}__like-burst--success {
+        background: rgba(251, 114, 153, 0.92);
+      }
+      .${APP}__like-burst--neutral {
+        background: rgba(77, 84, 96, 0.9);
+      }
+      .${APP}__like-burst--error {
+        background: rgba(174, 45, 45, 0.92);
+      }
+      .${APP}__like-burst svg {
+        width: 22px;
+        height: 22px;
+        flex: 0 0 auto;
+      }
+      @keyframes ${APP}-like-burst {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -50%) scale(0.72);
+        }
+        18% {
+          opacity: 1;
+          transform: translate(-50%, -50%) scale(1.06);
+        }
+        62% {
+          opacity: 1;
+          transform: translate(-50%, -50%) scale(1);
+        }
+        100% {
+          opacity: 0;
+          transform: translate(-50%, calc(-50% - 24px)) scale(0.98);
+        }
+      }
       #comments {
         display: flex;
         flex-direction: column;
@@ -277,6 +333,120 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       body.comments-right #comments-mount {
         padding: 8px 16px 0 0;
+      }
+      .${APP}__video-intro {
+        box-sizing: border-box;
+        margin: 0 18px 0 0;
+        padding: 14px 0 16px;
+        color: var(--text1, #18191c);
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        background: var(--bg1, #fff);
+      }
+      body.comments-right .${APP}__video-intro {
+        margin-right: 16px;
+      }
+      .${APP}__video-intro-up {
+        display: grid;
+        grid-template-columns: 40px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-width: 0;
+      }
+      .${APP}__video-intro-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
+        background: var(--graph_bg_thin, #f1f2f3);
+      }
+      .${APP}__video-intro-main {
+        min-width: 0;
+      }
+      .${APP}__video-intro-name {
+        display: block;
+        overflow: hidden;
+        color: var(--text1, #18191c);
+        font: 600 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-decoration: none;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .${APP}__video-intro-name:hover,
+      .${APP}__video-intro-name:focus-visible {
+        color: var(--brand_pink, #fb7299);
+        outline: none;
+      }
+      .${APP}__video-intro-meta {
+        overflow: hidden;
+        color: var(--text3, #9499a0);
+        font: 400 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .${APP}__video-intro-owner-desc {
+        display: -webkit-box;
+        margin-top: 3px;
+        overflow: hidden;
+        color: var(--text2, #61666d);
+        font: 400 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+      .${APP}__video-intro-follow {
+        position: relative;
+        height: 30px;
+        min-width: 58px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        background: var(--brand_pink, #fb7299);
+        font: 600 13px/30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .${APP}__video-intro-follow::after {
+        content: attr(data-label);
+      }
+      .${APP}__video-intro-follow:hover,
+      .${APP}__video-intro-follow:focus-visible {
+        background: #ff85ad;
+        outline: none;
+      }
+      .${APP}__video-intro-follow--active {
+        color: var(--text2, #61666d);
+        background: var(--graph_bg_thick, #e3e5e7);
+      }
+      .${APP}__video-intro-follow--active:hover,
+      .${APP}__video-intro-follow--active:focus-visible {
+        color: #fff;
+        background: #9499a0;
+      }
+      .${APP}__video-intro-follow--active:hover::after,
+      .${APP}__video-intro-follow--active:focus-visible::after {
+        content: attr(data-hover-label);
+      }
+      .${APP}__video-intro-follow:disabled {
+        color: var(--text3, #9499a0);
+        background: var(--graph_bg_thick, #e3e5e7);
+        cursor: default;
+      }
+      .${APP}__video-intro-desc {
+        margin-top: 12px;
+      }
+      .${APP}__video-intro-desc-title {
+        margin-bottom: 5px;
+        color: var(--text2, #61666d);
+        font: 600 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__video-intro-desc-text {
+        max-height: 144px;
+        overflow: auto;
+        color: var(--text2, #61666d);
+        font: 400 13px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       .${APP}__playlist {
         display: grid;

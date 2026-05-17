@@ -11,6 +11,7 @@ export function createCommentsTabsUi({
   getPipRenderer,
   getCommentLayout,
   onTabChange,
+  onListChange,
   openWithRenderer,
   syncHomeSize,
   schedulePipLayoutSync,
@@ -30,7 +31,7 @@ export function createCommentsTabsUi({
       createTab(targetDocument, kind, 'comments', '评论'),
       createTab(targetDocument, kind, 'pages', '合集'),
       createTab(targetDocument, kind, 'playlist', '播放列表'),
-      createTab(targetDocument, kind, 'recommend', '推荐列表'),
+      createTab(targetDocument, kind, 'recommend', '相关推荐'),
     );
     const [, setActive] = getActiveSignal(kind);
     setActive(state[kind].activeCommentsTab || 'comments');
@@ -53,17 +54,22 @@ export function createCommentsTabsUi({
     button.__biliPopupPlayerNanoTabsBound = true;
     button.setAttribute('role', 'tab');
     button.textContent = label;
-    button.addEventListener('click', () => setTab(kind, tab));
+    button.addEventListener('click', () => setTab(kind, tab, { forceLocate: true }));
     if (tab === 'pages') button.hidden = !state[kind].pageCards?.length;
     return button;
   }
 
-  function setTab(kind, tab) {
+  function setTab(kind, tab, { forceLocate = false } = {}) {
+    const previousTab = state[kind].activeCommentsTab;
     state[kind].activeCommentsTab = TAB_KEYS.includes(tab) ? tab : 'comments';
     getActiveSignal(kind)[1](state[kind].activeCommentsTab);
     syncTabs(kind);
-    if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind);
-    if (state[kind].activeCommentsTab === 'pages') scrollSelectedPageIntoView(kind);
+    if (state[kind].activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView(kind, {
+      force: forceLocate && previousTab === state[kind].activeCommentsTab,
+    });
+    if (state[kind].activeCommentsTab === 'pages') scrollSelectedPageIntoView(kind, {
+      force: forceLocate && previousTab === state[kind].activeCommentsTab,
+    });
     onTabChange?.(kind, state[kind].activeCommentsTab);
     if (kind === 'home') syncHomeSize();
     else if (state.pip.win && !state.pip.win.closed) schedulePipLayoutSync(state.pip.win);
@@ -164,6 +170,7 @@ export function createCommentsTabsUi({
       source: 'pages',
       loading: !bootstrap,
     });
+    onListChange?.(kind, 'pages');
   }
 
   function syncPageTabVisibility(kind, visible) {
@@ -227,9 +234,10 @@ export function createCommentsTabsUi({
       source: 'playlist',
       ...options,
     });
+    onListChange?.(kind, 'playlist');
   }
 
-  function renderRecommendations(kind, bootstrap, statusText = '推荐列表加载中...') {
+  function renderRecommendations(kind, bootstrap, statusText = '相关推荐加载中...') {
     if (bootstrap) state[kind].recommendationCards = bootstrap.recommendationCards || bootstrap.playlistCards || [];
     else state[kind].recommendationCards = [];
     const ui = getUi(kind);
@@ -243,6 +251,7 @@ export function createCommentsTabsUi({
       source: 'recommend',
       loading: !bootstrap,
     });
+    onListChange?.(kind, 'recommend');
   }
 
   function renderCardList({
@@ -438,7 +447,7 @@ export function createCommentsTabsUi({
     if (!tabs.length || tabs[0].__biliPopupPlayerNanoTabsBound) return;
     tabs.forEach((tab) => {
       tab.__biliPopupPlayerNanoTabsBound = true;
-      tab.addEventListener('click', () => setTab('pip', tab.dataset.tab));
+      tab.addEventListener('click', () => setTab('pip', tab.dataset.tab, { forceLocate: true }));
     });
     syncTabs('pip');
   }
@@ -470,8 +479,8 @@ export function createCommentsTabsUi({
     return signal;
   }
 
-  function scrollSelectedPlaylistIntoView(kind) {
-    if (getCommentLayout?.() !== 'right') return;
+  function scrollSelectedPlaylistIntoView(kind, { force = false } = {}) {
+    if (!force && getCommentLayout?.() !== 'right') return;
     const bvid = state[kind].selectedPlaylistBvid;
     if (!bvid) return;
     const ui = getUi(kind);
@@ -482,8 +491,8 @@ export function createCommentsTabsUi({
     scrollItemWithinPanel(ui.playlistPanel, item);
   }
 
-  function scrollSelectedPageIntoView(kind) {
-    if (getCommentLayout?.() !== 'right') return;
+  function scrollSelectedPageIntoView(kind, { force = false } = {}) {
+    if (!force && getCommentLayout?.() !== 'right') return;
     const pageKey = state[kind].selectedPageKey;
     if (!pageKey) return;
     const ui = getUi(kind);
