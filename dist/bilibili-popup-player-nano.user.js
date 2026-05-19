@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Bilibili Popup Player - Nano
+// @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.4
+// @version      4.0.13
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
@@ -1717,6 +1717,9 @@
   function createResetSizeIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M3 12a9 9 0 1 0 3-6.7', 'M3 3v6h6']));
   }
+  function createFitLayoutIcon() {
+    return createIconFromMarkup(lucideIconMarkup(['M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1', 'M14 5v14', 'M7 9h4', 'M7 15h4', 'M17 12h1']));
+  }
   function createCloseIcon() {
     return createIconFromMarkup(lucideIconMarkup(['M18 6 6 18', 'm6 6 12 12']));
   }
@@ -2528,13 +2531,6 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         }
       }
 
-      #${APP}-player .bpx-player-ctrl-web,
-      #${APP}-player .bpx-player-ctrl-web-enter,
-      #${APP}-player .bpx-player-ctrl-web-leave,
-      #${APP}-player .bilibili-player-video-btn-web-fullscreen {
-        display: none !important;
-      }
-
       #${APP}-player.bpx-player-web-full,
       #${APP}-player .bpx-player-web-full,
       #${APP}-player.bilibili-player-video-web-fullscreen,
@@ -2626,7 +2622,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         box-sizing: border-box;
         min-height: 42px;
         margin: 0;
-        padding: 6px 0 0;
+        padding: 6px 18px 0;
         border-bottom: 1px solid var(--line_regular, #e3e5e7);
         background: var(--bg1, #fff);
         overflow: visible;
@@ -2689,7 +2685,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       #${APP}-comments-mount {
         box-sizing: border-box;
         min-height: 360px;
-        padding: 8px 18px 0 0;
+        padding: 8px 18px 0;
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
       }
@@ -2700,7 +2696,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
 
       .${APP}__video-intro {
         box-sizing: border-box;
-        margin: 0 18px 0 0;
+        margin: 0 18px;
         padding: 14px 0 16px;
         color: var(--text1, #18191c);
         border-bottom: 1px solid var(--line_regular, #e3e5e7);
@@ -2708,7 +2704,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       }
 
       #${APP}-overlay.${APP}--comments-right .${APP}__video-intro {
-        margin-right: 16px;
+        margin: 0 16px 0 0;
       }
 
       .${APP}__video-intro-up {
@@ -3351,7 +3347,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section tabindex=-1><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=自动适配视频和评论区 aria-label=自动适配视频和评论区></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div tabindex=-1><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
     _tmpl$2 = /*#__PURE__*/template(`<button type=button title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。">`),
     _tmpl$3 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=video-intro></div><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=live-panel><div id=live-list></div><div id=live-empty>直播列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>相关推荐加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
@@ -3360,6 +3356,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     onBackToTop,
     onBackdropClose,
     onClose,
+    onFitLayout,
     onFullscreen,
     onHistoryNext,
     onHistoryPrevious,
@@ -3385,6 +3382,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       onBackToTop: onBackToTop,
       onBackdropClose: onBackdropClose,
       onClose: onClose,
+      onFitLayout: onFitLayout,
       onFullscreen: onFullscreen,
       onHistoryNext: onHistoryNext,
       onHistoryPrevious: onHistoryPrevious,
@@ -3447,28 +3445,29 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         _el$11 = _el$10.nextSibling,
         _el$12 = _el$11.nextSibling,
         _el$13 = _el$12.nextSibling,
-        _el$14 = _el$3.nextSibling,
-        _el$15 = _el$14.firstChild,
+        _el$14 = _el$13.nextSibling,
+        _el$15 = _el$3.nextSibling,
         _el$16 = _el$15.firstChild,
-        _el$17 = _el$15.nextSibling,
-        _el$18 = _el$17.nextSibling,
-        _el$19 = _el$18.firstChild,
+        _el$17 = _el$16.firstChild,
+        _el$18 = _el$16.nextSibling,
+        _el$19 = _el$18.nextSibling,
         _el$20 = _el$19.firstChild,
-        _el$21 = _el$20.nextSibling,
-        _el$22 = _el$19.nextSibling,
-        _el$23 = _el$22.firstChild,
-        _el$24 = _el$23.nextSibling,
-        _el$25 = _el$22.nextSibling,
-        _el$26 = _el$25.firstChild,
-        _el$27 = _el$26.nextSibling,
-        _el$28 = _el$25.nextSibling,
-        _el$29 = _el$28.firstChild,
-        _el$30 = _el$29.nextSibling,
-        _el$31 = _el$28.nextSibling,
-        _el$32 = _el$31.firstChild,
-        _el$33 = _el$32.nextSibling,
-        _el$34 = _el$14.nextSibling,
-        _el$35 = _el$34.nextSibling;
+        _el$21 = _el$20.firstChild,
+        _el$22 = _el$21.nextSibling,
+        _el$23 = _el$20.nextSibling,
+        _el$24 = _el$23.firstChild,
+        _el$25 = _el$24.nextSibling,
+        _el$26 = _el$23.nextSibling,
+        _el$27 = _el$26.firstChild,
+        _el$28 = _el$27.nextSibling,
+        _el$29 = _el$26.nextSibling,
+        _el$30 = _el$29.firstChild,
+        _el$31 = _el$30.nextSibling,
+        _el$32 = _el$29.nextSibling,
+        _el$33 = _el$32.firstChild,
+        _el$34 = _el$33.nextSibling,
+        _el$35 = _el$15.nextSibling,
+        _el$36 = _el$35.nextSibling;
       _el$.addEventListener("pointercancel", event => {
         backdropPointer = '0';
         event.currentTarget.dataset.backdropPointer = '0';
@@ -3519,13 +3518,13 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       insert(_el$9, (() => {
         var _c$ = memo(() => !!props.supportsPip);
         return () => _c$() && (() => {
-          var _el$36 = _tmpl$2();
-          _el$36.$$click = () => props.onOpenPip?.();
+          var _el$37 = _tmpl$2();
+          _el$37.$$click = () => props.onOpenPip?.();
           var _ref$33 = props.refs('openPip');
-          typeof _ref$33 === "function" && use(_ref$33, _el$36);
-          className(_el$36, `${APP}__header-button`);
-          insert(_el$36, createPictureInPictureIcon);
-          return _el$36;
+          typeof _ref$33 === "function" && use(_ref$33, _el$37);
+          className(_el$37, `${APP}__header-button`);
+          insert(_el$37, createPictureInPictureIcon);
+          return _el$37;
         })();
       })(), _el$10);
       _el$10.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
@@ -3538,101 +3537,103 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       typeof _ref$0 === "function" && use(_ref$0, _el$11);
       className(_el$11, `${APP}__header-button`);
       insert(_el$11, createMaximizeIcon);
-      _el$12.$$click = () => props.onResetSize?.();
-      var _ref$1 = props.refs('resetSize');
-      typeof _ref$1 === "function" && use(_ref$1, _el$12);
+      _el$12.$$click = () => props.onFitLayout?.();
       className(_el$12, `${APP}__header-button`);
-      insert(_el$12, createResetSizeIcon);
-      _el$13.$$click = () => props.onClose?.();
+      insert(_el$12, createFitLayoutIcon);
+      _el$13.$$click = () => props.onResetSize?.();
+      var _ref$1 = props.refs('resetSize');
+      typeof _ref$1 === "function" && use(_ref$1, _el$13);
+      className(_el$13, `${APP}__header-button`);
+      insert(_el$13, createResetSizeIcon);
+      _el$14.$$click = () => props.onClose?.();
       var _ref$10 = props.refs('close');
-      typeof _ref$10 === "function" && use(_ref$10, _el$13);
-      className(_el$13, `${APP}__header-button ${APP}__header-button--close`);
-      insert(_el$13, createCloseIcon);
+      typeof _ref$10 === "function" && use(_ref$10, _el$14);
+      className(_el$14, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$14, createCloseIcon);
       var _ref$11 = props.refs('content');
-      typeof _ref$11 === "function" && use(_ref$11, _el$14);
-      setAttribute(_el$14, "id", `${APP}-content`);
+      typeof _ref$11 === "function" && use(_ref$11, _el$15);
+      setAttribute(_el$15, "id", `${APP}-content`);
       var _ref$12 = props.refs('playerWrap');
-      typeof _ref$12 === "function" && use(_ref$12, _el$15);
-      setAttribute(_el$15, "id", `${APP}-player-wrap`);
-      _el$16.addEventListener("clickcapture", event => props.onPlayerControlClick?.(event));
+      typeof _ref$12 === "function" && use(_ref$12, _el$16);
+      setAttribute(_el$16, "id", `${APP}-player-wrap`);
       var _ref$13 = props.refs('playerRoot');
-      typeof _ref$13 === "function" && use(_ref$13, _el$16);
-      setAttribute(_el$16, "id", `${APP}-player`);
-      _el$17.$$pointerdown = event => props.onResizeStart?.(event);
+      typeof _ref$13 === "function" && use(_ref$13, _el$17);
+      setAttribute(_el$17, "id", `${APP}-player`);
+      _el$18.$$pointerdown = event => props.onResizeStart?.(event);
       var _ref$14 = props.refs('commentsResizer');
-      typeof _ref$14 === "function" && use(_ref$14, _el$17);
-      setAttribute(_el$17, "id", `${APP}-comments-resizer`);
+      typeof _ref$14 === "function" && use(_ref$14, _el$18);
+      setAttribute(_el$18, "id", `${APP}-comments-resizer`);
       var _ref$15 = props.refs('comments');
-      typeof _ref$15 === "function" && use(_ref$15, _el$18);
-      setAttribute(_el$18, "id", `${APP}-comments`);
-      insert(_el$18, () => props.commentsTabs, _el$19);
+      typeof _ref$15 === "function" && use(_ref$15, _el$19);
+      setAttribute(_el$19, "id", `${APP}-comments`);
+      insert(_el$19, () => props.commentsTabs, _el$20);
       var _ref$16 = props.refs('commentsPanel');
-      typeof _ref$16 === "function" && use(_ref$16, _el$19);
-      setAttribute(_el$19, "id", `${APP}-comments-panel`);
-      className(_el$19, `${APP}__comments-panel`);
+      typeof _ref$16 === "function" && use(_ref$16, _el$20);
+      setAttribute(_el$20, "id", `${APP}-comments-panel`);
+      className(_el$20, `${APP}__comments-panel`);
       var _ref$17 = props.refs('videoIntro');
-      typeof _ref$17 === "function" && use(_ref$17, _el$20);
-      setAttribute(_el$20, "id", `${APP}-video-intro`);
+      typeof _ref$17 === "function" && use(_ref$17, _el$21);
+      setAttribute(_el$21, "id", `${APP}-video-intro`);
       var _ref$18 = props.refs('commentsMount');
-      typeof _ref$18 === "function" && use(_ref$18, _el$21);
-      setAttribute(_el$21, "id", `${APP}-comments-mount`);
+      typeof _ref$18 === "function" && use(_ref$18, _el$22);
+      setAttribute(_el$22, "id", `${APP}-comments-mount`);
       var _ref$19 = props.refs('pagesPanel');
-      typeof _ref$19 === "function" && use(_ref$19, _el$22);
-      setAttribute(_el$22, "id", `${APP}-pages-panel`);
-      className(_el$22, `${APP}__comments-panel`);
+      typeof _ref$19 === "function" && use(_ref$19, _el$23);
+      setAttribute(_el$23, "id", `${APP}-pages-panel`);
+      className(_el$23, `${APP}__comments-panel`);
       var _ref$20 = props.refs('pagesList');
-      typeof _ref$20 === "function" && use(_ref$20, _el$23);
-      setAttribute(_el$23, "id", `${APP}-pages-list`);
-      className(_el$23, `${APP}__playlist`);
+      typeof _ref$20 === "function" && use(_ref$20, _el$24);
+      setAttribute(_el$24, "id", `${APP}-pages-list`);
+      className(_el$24, `${APP}__playlist`);
       var _ref$21 = props.refs('pagesEmpty');
-      typeof _ref$21 === "function" && use(_ref$21, _el$24);
-      setAttribute(_el$24, "id", `${APP}-pages-empty`);
-      className(_el$24, `${APP}__playlist-empty`);
+      typeof _ref$21 === "function" && use(_ref$21, _el$25);
+      setAttribute(_el$25, "id", `${APP}-pages-empty`);
+      className(_el$25, `${APP}__playlist-empty`);
       var _ref$22 = props.refs('playlistPanel');
-      typeof _ref$22 === "function" && use(_ref$22, _el$25);
-      setAttribute(_el$25, "id", `${APP}-playlist-panel`);
-      className(_el$25, `${APP}__comments-panel`);
+      typeof _ref$22 === "function" && use(_ref$22, _el$26);
+      setAttribute(_el$26, "id", `${APP}-playlist-panel`);
+      className(_el$26, `${APP}__comments-panel`);
       var _ref$23 = props.refs('playlistList');
-      typeof _ref$23 === "function" && use(_ref$23, _el$26);
-      setAttribute(_el$26, "id", `${APP}-playlist-list`);
-      className(_el$26, `${APP}__playlist`);
+      typeof _ref$23 === "function" && use(_ref$23, _el$27);
+      setAttribute(_el$27, "id", `${APP}-playlist-list`);
+      className(_el$27, `${APP}__playlist`);
       var _ref$24 = props.refs('playlistEmpty');
-      typeof _ref$24 === "function" && use(_ref$24, _el$27);
-      setAttribute(_el$27, "id", `${APP}-playlist-empty`);
-      className(_el$27, `${APP}__playlist-empty`);
+      typeof _ref$24 === "function" && use(_ref$24, _el$28);
+      setAttribute(_el$28, "id", `${APP}-playlist-empty`);
+      className(_el$28, `${APP}__playlist-empty`);
       var _ref$25 = props.refs('livePanel');
-      typeof _ref$25 === "function" && use(_ref$25, _el$28);
-      setAttribute(_el$28, "id", `${APP}-live-panel`);
-      className(_el$28, `${APP}__comments-panel`);
+      typeof _ref$25 === "function" && use(_ref$25, _el$29);
+      setAttribute(_el$29, "id", `${APP}-live-panel`);
+      className(_el$29, `${APP}__comments-panel`);
       var _ref$26 = props.refs('liveList');
-      typeof _ref$26 === "function" && use(_ref$26, _el$29);
-      setAttribute(_el$29, "id", `${APP}-live-list`);
-      className(_el$29, `${APP}__playlist`);
+      typeof _ref$26 === "function" && use(_ref$26, _el$30);
+      setAttribute(_el$30, "id", `${APP}-live-list`);
+      className(_el$30, `${APP}__playlist`);
       var _ref$27 = props.refs('liveEmpty');
-      typeof _ref$27 === "function" && use(_ref$27, _el$30);
-      setAttribute(_el$30, "id", `${APP}-live-empty`);
-      className(_el$30, `${APP}__playlist-empty`);
+      typeof _ref$27 === "function" && use(_ref$27, _el$31);
+      setAttribute(_el$31, "id", `${APP}-live-empty`);
+      className(_el$31, `${APP}__playlist-empty`);
       var _ref$28 = props.refs('recommendPanel');
-      typeof _ref$28 === "function" && use(_ref$28, _el$31);
-      setAttribute(_el$31, "id", `${APP}-recommend-panel`);
-      className(_el$31, `${APP}__comments-panel`);
+      typeof _ref$28 === "function" && use(_ref$28, _el$32);
+      setAttribute(_el$32, "id", `${APP}-recommend-panel`);
+      className(_el$32, `${APP}__comments-panel`);
       var _ref$29 = props.refs('recommendList');
-      typeof _ref$29 === "function" && use(_ref$29, _el$32);
-      setAttribute(_el$32, "id", `${APP}-recommend-list`);
-      className(_el$32, `${APP}__playlist`);
+      typeof _ref$29 === "function" && use(_ref$29, _el$33);
+      setAttribute(_el$33, "id", `${APP}-recommend-list`);
+      className(_el$33, `${APP}__playlist`);
       var _ref$30 = props.refs('recommendEmpty');
-      typeof _ref$30 === "function" && use(_ref$30, _el$33);
-      setAttribute(_el$33, "id", `${APP}-recommend-empty`);
-      className(_el$33, `${APP}__playlist-empty`);
-      _el$34.$$click = () => props.onBackToTop?.();
+      typeof _ref$30 === "function" && use(_ref$30, _el$34);
+      setAttribute(_el$34, "id", `${APP}-recommend-empty`);
+      className(_el$34, `${APP}__playlist-empty`);
+      _el$35.$$click = () => props.onBackToTop?.();
       var _ref$31 = props.refs('backToTop');
-      typeof _ref$31 === "function" && use(_ref$31, _el$34);
-      className(_el$34, `${APP}__back-to-top`);
-      insert(_el$34, () => backToTopIcon.content.firstElementChild);
-      _el$35.$$pointerdown = event => props.onModalResizeStart?.(event);
+      typeof _ref$31 === "function" && use(_ref$31, _el$35);
+      className(_el$35, `${APP}__back-to-top`);
+      insert(_el$35, () => backToTopIcon.content.firstElementChild);
+      _el$36.$$pointerdown = event => props.onModalResizeStart?.(event);
       var _ref$32 = props.refs('modalResizeHandle');
-      typeof _ref$32 === "function" && use(_ref$32, _el$35);
-      className(_el$35, `${APP}__modal-resize-handle`);
+      typeof _ref$32 === "function" && use(_ref$32, _el$36);
+      className(_el$36, `${APP}__modal-resize-handle`);
       return _el$;
     })();
   }
@@ -3640,42 +3641,42 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     const backToTopIcon = props.targetDocument.createElement('template');
     backToTopIcon.innerHTML = arrowUpIconMarkup();
     return (() => {
-      var _el$37 = _tmpl$3(),
-        _el$38 = _el$37.firstChild,
+      var _el$38 = _tmpl$3(),
         _el$39 = _el$38.firstChild,
-        _el$40 = _el$39.nextSibling,
+        _el$40 = _el$39.firstChild,
         _el$41 = _el$40.nextSibling,
-        _el$42 = _el$41.firstChild,
-        _el$43 = _el$42.nextSibling,
-        _el$44 = _el$43.firstChild,
-        _el$45 = _el$44.nextSibling,
-        _el$46 = _el$43.nextSibling,
-        _el$47 = _el$46.firstChild,
-        _el$48 = _el$47.nextSibling,
-        _el$49 = _el$46.nextSibling,
-        _el$50 = _el$49.firstChild,
-        _el$51 = _el$50.nextSibling,
-        _el$52 = _el$49.nextSibling,
-        _el$53 = _el$52.firstChild,
-        _el$54 = _el$53.nextSibling,
-        _el$55 = _el$38.nextSibling;
-      insert(_el$41, () => props.commentsTabs, _el$42);
-      className(_el$42, `${APP}__comments-panel`);
+        _el$42 = _el$41.nextSibling,
+        _el$43 = _el$42.firstChild,
+        _el$44 = _el$43.nextSibling,
+        _el$45 = _el$44.firstChild,
+        _el$46 = _el$45.nextSibling,
+        _el$47 = _el$44.nextSibling,
+        _el$48 = _el$47.firstChild,
+        _el$49 = _el$48.nextSibling,
+        _el$50 = _el$47.nextSibling,
+        _el$51 = _el$50.firstChild,
+        _el$52 = _el$51.nextSibling,
+        _el$53 = _el$50.nextSibling,
+        _el$54 = _el$53.firstChild,
+        _el$55 = _el$54.nextSibling,
+        _el$56 = _el$39.nextSibling;
+      insert(_el$42, () => props.commentsTabs, _el$43);
       className(_el$43, `${APP}__comments-panel`);
-      className(_el$44, `${APP}__playlist`);
-      className(_el$45, `${APP}__playlist-empty`);
-      className(_el$46, `${APP}__comments-panel`);
-      className(_el$47, `${APP}__playlist`);
-      className(_el$48, `${APP}__playlist-empty`);
-      className(_el$49, `${APP}__comments-panel`);
-      className(_el$50, `${APP}__playlist`);
-      className(_el$51, `${APP}__playlist-empty`);
-      className(_el$52, `${APP}__comments-panel`);
-      className(_el$53, `${APP}__playlist`);
-      className(_el$54, `${APP}__playlist-empty`);
-      className(_el$55, `${APP}__back-to-top`);
-      insert(_el$55, () => backToTopIcon.content.firstElementChild);
-      return _el$37;
+      className(_el$44, `${APP}__comments-panel`);
+      className(_el$45, `${APP}__playlist`);
+      className(_el$46, `${APP}__playlist-empty`);
+      className(_el$47, `${APP}__comments-panel`);
+      className(_el$48, `${APP}__playlist`);
+      className(_el$49, `${APP}__playlist-empty`);
+      className(_el$50, `${APP}__comments-panel`);
+      className(_el$51, `${APP}__playlist`);
+      className(_el$52, `${APP}__playlist-empty`);
+      className(_el$53, `${APP}__comments-panel`);
+      className(_el$54, `${APP}__playlist`);
+      className(_el$55, `${APP}__playlist-empty`);
+      className(_el$56, `${APP}__back-to-top`);
+      insert(_el$56, () => backToTopIcon.content.firstElementChild);
+      return _el$38;
     })();
   }
   delegateEvents(["pointerdown", "pointerup", "click"]);
@@ -3782,6 +3783,40 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       #bilibili-player .bpx-player-container {
         width: 100% !important;
         height: 100% !important;
+      }
+      #stage .${APP}__live-player-controls-layer {
+        overflow: visible !important;
+      }
+      #stage .${APP}__live-player-only-control {
+        position: absolute !important;
+        right: 14px;
+        bottom: calc(100% + 10px);
+        z-index: 60;
+        width: 34px;
+        height: 34px;
+        box-sizing: border-box;
+        padding: 0;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 6px;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(0, 0, 0, 0.56);
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+      }
+      #stage .${APP}__live-player-only-control:hover,
+      #stage .${APP}__live-player-only-control:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+        outline: none;
+      }
+      #stage .${APP}__live-player-only-control svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
       }
 ${getPlayerThemeVariableCss('#bilibili-player')}
       .${APP}__like-burst {
@@ -3955,7 +3990,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         box-sizing: border-box;
         min-height: 42px;
         margin: 0;
-        padding: 6px 0 0;
+        padding: 6px 18px 0;
         border-bottom: 1px solid var(--line_regular, #e3e5e7);
         background: var(--bg1, #fff);
         overflow: visible;
@@ -4009,7 +4044,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       #comments-mount {
         box-sizing: border-box;
         min-height: 360px;
-        padding: 8px 18px 0 0;
+        padding: 8px 18px 0;
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
       }
@@ -4018,14 +4053,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       .${APP}__video-intro {
         box-sizing: border-box;
-        margin: 0 18px 0 0;
+        margin: 0 18px;
         padding: 14px 0 16px;
         color: var(--text1, #18191c);
         border-bottom: 1px solid var(--line_regular, #e3e5e7);
         background: var(--bg1, #fff);
       }
       body.comments-right .${APP}__video-intro {
-        margin-right: 16px;
+        margin: 0 16px 0 0;
       }
       .${APP}__video-intro-up {
         display: grid;
@@ -5457,6 +5492,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       pipPlaying: null,
       switchToken: 0,
       externalFeatureBlocks: [],
+      externalPlaybackResume: null,
       ownerProfileCache: new Map(),
       ownerProfileRequests: new Map(),
       originalPageMeta: null,
@@ -5496,6 +5532,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         handoffHandler: null,
         endedHandler: null,
         navigateSyncTimer: 0,
+        liveControlFrame: 0,
+        liveControlObserver: null,
         followBusy: false,
         likeBusy: false,
         likeBurstTimer: 0,
@@ -5528,6 +5566,9 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         handoffHandler: null,
         endedHandler: null,
         navigateSyncTimer: 0,
+        liveControlFrame: 0,
+        liveControlObserver: null,
+        liveControlWindow: null,
         followBusy: false,
         likeBusy: false,
         likeBurstTimer: 0,
@@ -5914,6 +5955,37 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
           known.add(player);
         }
       });
+    }
+    function pauseExternalPlaybackPagePlayer() {
+      if (!isPlaybackPage() && !isLivePage()) return false;
+      state.externalPlaybackResume ||= captureExternalPlaybackResume();
+      if (isLivePage()) return pauseLivePagePlayer();
+      return pausePlaybackPagePlayer();
+    }
+    function captureExternalPlaybackResume() {
+      const videos = getExternalPageVideos();
+      const playingVideos = videos.filter(video => !video.paused && !video.ended);
+      return {
+        shouldResume: playingVideos.length > 0,
+        videos: playingVideos
+      };
+    }
+    function restoreExternalPlaybackPagePlayer() {
+      const resume = state.externalPlaybackResume;
+      state.externalPlaybackResume = null;
+      if (!resume?.shouldResume) return false;
+      return resume.videos.filter(video => video?.isConnected).some(video => {
+        try {
+          const result = video.play?.();
+          result?.catch?.(() => {});
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
+    function getExternalPageVideos() {
+      return [...document.querySelectorAll('video')].filter(video => !state.home.ui?.overlay?.contains(video));
     }
     function getExternalFeaturePlayers() {
       const players = [];
@@ -6513,12 +6585,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         setStorageItem(STORAGE_MODE, 'home');
         syncSettings();
       }
+      pauseExternalPlaybackPagePlayer();
       rendererOrchestrator.openByMode(meta);
     }
     function getActiveRenderer() {
       return state.mode === 'pip' && supportsDocumentPip() ? pipRenderer : homeRenderer;
     }
     function openWithRenderer(renderer, meta) {
+      pauseExternalPlaybackPagePlayer();
       return rendererOrchestrator.openWithRenderer(renderer, meta);
     }
     function resolveBootstrap(meta) {
@@ -6732,6 +6806,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         onBackToTop: scrollHomeCommentsToTop,
         onBackdropClose: closeHome,
         onClose: closeHome,
+        onFitLayout: fitHomeLayout,
         onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
         onHistoryNext: () => openPlaybackHistoryOffset(1),
         onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
@@ -6745,6 +6820,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         supportsPip: supportsDocumentPip()
       });
       state.home.overlay = state.home.ui.overlay;
+      attachHomePlayerControlCapture(state.home.ui);
       attachHomeBackToTopSync();
       attachHomePlaylistAutoRefresh();
       syncHomeCommentLayout();
@@ -6768,7 +6844,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncCommentsTabs('home');
       document.documentElement.style.overflow = 'hidden';
       document.addEventListener('keydown', onKeydown, true);
-      ui.close.focus();
+      focusHomePlayerWrap();
       syncHomeSize();
       syncHomeModalSizeButton();
       syncAutoPlayNextButton();
@@ -6813,7 +6889,22 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
+      if (event.type === 'click' && control.__biliPopupPlayerNanoWebFullscreenPointer) {
+        control.__biliPopupPlayerNanoWebFullscreenPointer = false;
+        return;
+      }
+      if (event.type === 'pointerdown') {
+        if (event.button != null && event.button !== 0) return;
+        control.__biliPopupPlayerNanoWebFullscreenPointer = true;
+      }
       setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+    }
+    function attachHomePlayerControlCapture(ui) {
+      const root = ui?.playerRoot;
+      if (!root || root.__biliPopupPlayerNanoControlCaptureBound) return;
+      root.__biliPopupPlayerNanoControlCaptureBound = true;
+      root.addEventListener('pointerdown', onHomePlayerControlClick, true);
+      root.addEventListener('click', onHomePlayerControlClick, true);
     }
     async function likeCurrentPlayback(kind) {
       const slot = state[kind];
@@ -7325,9 +7416,19 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       window.setTimeout(() => syncHomeSize(), 600);
       window.setTimeout(() => syncHomeSize(), 1600);
       attachLivePlayerOnlyControl();
+      startLivePlayerOnlyControlObserver();
       window.setTimeout(attachLivePlayerOnlyControl, 600);
       window.setTimeout(attachLivePlayerOnlyControl, 1600);
+      window.setTimeout(focusHomePlayerWrap, 0);
       state.home.ui.status.textContent = '直播播放器：播放中';
+    }
+    function focusHomePlayerWrap() {
+      const ui = state.home.ui;
+      if (!ui || ui.overlay?.classList.contains(`${APP}--hidden`)) return;
+      ui.playerWrap?.focus?.({
+        preventScroll: true
+      });
+      ui.close?.blur?.();
     }
     function attachLivePlayerOnlyControl() {
       const playerRoot = state.home.ui?.playerRoot;
@@ -7340,16 +7441,38 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         button = document.createElement('button');
         button.type = 'button';
         button.className = `${APP}__live-player-only-control`;
-        button.addEventListener('click', event => {
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-          toggleHomePlayerOnly();
-        });
       }
+      installLivePlayerOnlyControlHandlers(button);
       layer.classList.add(`${APP}__live-player-controls-layer`);
       if (button.parentElement !== layer) layer.appendChild(button);
       syncHomePlayerOnlyControl();
+    }
+    function startLivePlayerOnlyControlObserver() {
+      stopLivePlayerOnlyControlObserver();
+      const playerRoot = state.home.ui?.playerRoot;
+      if (!playerRoot || !isLiveBootstrap(state.home.bootstrap)) return;
+      state.home.liveControlObserver = new MutationObserver(() => scheduleLivePlayerOnlyControlAttach());
+      state.home.liveControlObserver.observe(playerRoot, {
+        childList: true,
+        subtree: true
+      });
+      scheduleLivePlayerOnlyControlAttach();
+    }
+    function scheduleLivePlayerOnlyControlAttach() {
+      if (state.home.liveControlFrame) return;
+      state.home.liveControlFrame = window.requestAnimationFrame(() => {
+        state.home.liveControlFrame = 0;
+        attachLivePlayerOnlyControl();
+      });
+    }
+    function stopLivePlayerOnlyControlObserver() {
+      if (state.home.liveControlFrame) {
+        window.cancelAnimationFrame(state.home.liveControlFrame);
+        state.home.liveControlFrame = 0;
+      }
+      state.home.liveControlObserver?.disconnect();
+      state.home.liveControlObserver = null;
+      state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
     }
     function findLivePlayerControlLayer(liveRoot) {
       const rootRect = liveRoot.getBoundingClientRect();
@@ -7370,6 +7493,29 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     function toggleHomePlayerOnly() {
       setCommentLayout(state.commentLayout === 'right' ? 'bottom' : 'right');
     }
+    function installLivePlayerOnlyControlHandlers(button) {
+      if (!button || button.__biliPopupPlayerNanoLiveOnlyBound) return;
+      button.__biliPopupPlayerNanoLiveOnlyBound = true;
+      button.addEventListener('pointerdown', event => {
+        if (event.button != null && event.button !== 0) return;
+        stopLivePlayerOnlyControlEvent(event);
+        button.__biliPopupPlayerNanoLiveOnlyPointer = true;
+        toggleHomePlayerOnly();
+      });
+      button.addEventListener('click', event => {
+        stopLivePlayerOnlyControlEvent(event);
+        if (button.__biliPopupPlayerNanoLiveOnlyPointer) {
+          button.__biliPopupPlayerNanoLiveOnlyPointer = false;
+          return;
+        }
+        toggleHomePlayerOnly();
+      });
+    }
+    function stopLivePlayerOnlyControlEvent(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+    }
     function syncHomePlayerOnlyControl() {
       const button = state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`);
       if (!button) return;
@@ -7388,7 +7534,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
           title: bootstrap.title,
           stylesheets: getBiliThemeStylesheets(),
           themeClassMarkup: getPipThemeClassMarkup(),
-          commentLayoutClass: 'comments-right'
+          commentLayoutClass: state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom'
         }));
         mountPipPlayerPage({
           targetDocument: pipWindow.document,
@@ -7437,12 +7583,77 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       syncPipSize(targetWindow);
       targetWindow.setTimeout(() => syncPipSize(targetWindow), 600);
       targetWindow.setTimeout(() => syncPipSize(targetWindow), 1600);
+      attachPipLivePlayerOnlyControl(targetWindow);
+      startPipLivePlayerOnlyControlObserver(targetWindow);
+      targetWindow.setTimeout(() => attachPipLivePlayerOnlyControl(targetWindow), 600);
+      targetWindow.setTimeout(() => attachPipLivePlayerOnlyControl(targetWindow), 1600);
       setPipStatus('播放中');
       targetWindow.addEventListener('pagehide', () => {
         if (state.pip.switchingWindow) return;
+        stopPipLivePlayerOnlyControlObserver();
         if (state.pip.player) disposePipPlayer();
         if (state.pip.win === targetWindow) state.pip.win = null;
       });
+    }
+    function attachPipLivePlayerOnlyControl(targetWindow = state.pip.win) {
+      if (!targetWindow || targetWindow.closed || !isLiveBootstrap(state.pip.bootstrap) || !state.pip.liveCards?.length) return;
+      const liveRoot = targetWindow.document?.getElementById('live-player');
+      if (!liveRoot) return;
+      const layer = findLivePlayerControlLayer(liveRoot);
+      if (!layer) return;
+      let button = liveRoot.querySelector(`.${APP}__live-player-only-control`);
+      if (!button) {
+        button = targetWindow.document.createElement('button');
+        button.type = 'button';
+        button.className = `${APP}__live-player-only-control`;
+      }
+      installLivePlayerOnlyControlHandlers(button);
+      layer.classList.add(`${APP}__live-player-controls-layer`);
+      if (button.parentElement !== layer) layer.appendChild(button);
+      syncPipLivePlayerOnlyControl(targetWindow);
+    }
+    function startPipLivePlayerOnlyControlObserver(targetWindow = state.pip.win) {
+      stopPipLivePlayerOnlyControlObserver();
+      if (!targetWindow || targetWindow.closed || !isLiveBootstrap(state.pip.bootstrap) || !state.pip.liveCards?.length) return;
+      const playerRoot = targetWindow.document?.getElementById('stage');
+      if (!playerRoot || !targetWindow.MutationObserver) return;
+      state.pip.liveControlWindow = targetWindow;
+      state.pip.liveControlObserver = new targetWindow.MutationObserver(() => schedulePipLivePlayerOnlyControlAttach());
+      state.pip.liveControlObserver.observe(playerRoot, {
+        childList: true,
+        subtree: true
+      });
+      schedulePipLivePlayerOnlyControlAttach();
+    }
+    function schedulePipLivePlayerOnlyControlAttach() {
+      const targetWindow = state.pip.liveControlWindow || state.pip.win;
+      if (!targetWindow || targetWindow.closed || state.pip.liveControlFrame) return;
+      state.pip.liveControlFrame = targetWindow.requestAnimationFrame(() => {
+        state.pip.liveControlFrame = 0;
+        attachPipLivePlayerOnlyControl(targetWindow);
+      });
+    }
+    function stopPipLivePlayerOnlyControlObserver() {
+      const targetWindow = state.pip.liveControlWindow || state.pip.win;
+      if (state.pip.liveControlFrame && targetWindow && !targetWindow.closed) {
+        targetWindow.cancelAnimationFrame(state.pip.liveControlFrame);
+      }
+      state.pip.liveControlFrame = 0;
+      state.pip.liveControlObserver?.disconnect();
+      state.pip.liveControlObserver = null;
+      state.pip.liveControlWindow = null;
+      if (targetWindow && !targetWindow.closed) {
+        targetWindow.document?.getElementById('live-player')?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
+      }
+    }
+    function syncPipLivePlayerOnlyControl(targetWindow = state.pip.win) {
+      if (!targetWindow || targetWindow.closed) return;
+      const button = targetWindow.document?.getElementById('live-player')?.querySelector?.(`.${APP}__live-player-only-control`);
+      if (!button) return;
+      const active = state.commentLayout !== 'right';
+      button.title = active ? '退出宽屏' : '宽屏';
+      button.setAttribute('aria-label', button.title);
+      button.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
     }
     function attachPipWindowResizeSync(targetWindow) {
       if (!targetWindow || targetWindow.closed) return;
@@ -7472,9 +7683,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         if (state.pip.switchingWindow) return;
         targetWindow.__biliPopupPlayerNanoClosed = true;
         if (state.pip.win === targetWindow) state.pip.win = null;
+        if (!isHomeShellOpen()) restoreExternalPlaybackPagePlayer();
       }, {
         capture: true
       });
+    }
+    function isHomeShellOpen() {
+      return Boolean(state.home.overlay && !state.home.overlay.classList.contains(`${APP}--hidden`));
     }
     function attachPipKeyboardShortcuts(targetWindow) {
       if (!targetWindow || targetWindow.closed || targetWindow.__biliPopupPlayerNanoKeydownBound) return;
@@ -7644,6 +7859,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       setStorageItem(STORAGE_COMMENT_LAYOUT, next);
       syncCommentLayout();
       syncHomePlayerOnlyControl();
+      syncPipLivePlayerOnlyControl(state.pip.win);
       remountCommentsForLayout();
     }
     function syncCommentLayout() {
@@ -8618,6 +8834,33 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.commentWidth = next;
       syncCommentWidth();
     }
+    function fitHomeLayout() {
+      const ui = state.home.ui;
+      if (!ui?.dialog || !ui.content) return;
+      if (state.commentLayout === 'right') {
+        const rect = ui.content.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const targetPlayerWidth = Math.round(Math.max(1, (rect.height - getHomePlayerChromeHeight()) * 16 / 9));
+        const nextWidth = clampCommentWidth(rect.width - MODAL_COMMENTS_RESIZER_WIDTH - targetPlayerWidth, rect.width);
+        state.commentWidth = nextWidth;
+        setStorageItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
+        syncCommentWidth();
+        return;
+      }
+      if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) {
+        syncHomeSize();
+        return;
+      }
+      const rect = ui.dialog.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      state.modalSize = fitHomeModalSizeToPlayerRatio({
+        width: rect.width,
+        height: rect.height
+      }, 'width');
+      setStorageItem(STORAGE_MODAL_SIZE, JSON.stringify(state.modalSize));
+      syncHomeSize();
+      syncHomeModalSizeButton();
+    }
     function clampCommentWidth(width, containerWidth) {
       const numeric = Number(width);
       const fallback = Number.isFinite(numeric) ? numeric : COMMENT_WIDTH_DEFAULT;
@@ -9150,6 +9393,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       setHomePlayerFeatureBlocked(true);
       setExternalPlayerFeaturesBlocked(false);
+      restoreExternalPlaybackPagePlayer();
       document.documentElement.style.overflow = '';
       document.body.classList.remove(`${APP}--modal-open`);
       document.removeEventListener('keydown', onKeydown, true);
@@ -9201,12 +9445,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         state.home.likeBurstTimer = 0;
       }
       state.home.likeBusy = false;
+      stopLivePlayerOnlyControlObserver();
       if (!state.home.player) return;
       unbindHomeScreenChange();
       unbindHomePlayerNavigate();
       unbindHomePlayerHandoff();
       unbindHomePlayerEnded();
-      state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
       setHomePlayerFeatureBlocked(false);
       try {
         state.home.player.disconnect?.();
@@ -9222,6 +9466,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         state.pip.likeBurstTimer = 0;
       }
       state.pip.likeBusy = false;
+      stopPipLivePlayerOnlyControlObserver();
       if (!state.pip.player) return;
       unbindPipScreenChange();
       unbindPipPlayerNavigate();

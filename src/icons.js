@@ -88,6 +88,16 @@ export function createResetSizeIcon() {
   ]));
 }
 
+export function createFitLayoutIcon() {
+  return createIconFromMarkup(lucideIconMarkup([
+    'M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1',
+    'M14 5v14',
+    'M7 9h4',
+    'M7 15h4',
+    'M17 12h1',
+  ]));
+}
+
 export function createCloseIcon() {
   return createIconFromMarkup(lucideIconMarkup([
     'M18 6 6 18',

@@ -5,6 +5,7 @@ import {
   createAutoPlayIcon,
   createCloseIcon,
   createExternalLinkIcon,
+  createFitLayoutIcon,
   createHistoryBackIcon,
   createHistoryForwardIcon,
   createMaximizeIcon,
@@ -18,6 +19,7 @@ export function mountHomePlayerPage({
   onBackToTop,
   onBackdropClose,
   onClose,
+  onFitLayout,
   onFullscreen,
   onHistoryNext,
   onHistoryPrevious,
@@ -45,6 +47,7 @@ export function mountHomePlayerPage({
       onBackToTop={onBackToTop}
       onBackdropClose={onBackdropClose}
       onClose={onClose}
+      onFitLayout={onFitLayout}
       onFullscreen={onFullscreen}
       onHistoryNext={onHistoryNext}
       onHistoryPrevious={onHistoryPrevious}
@@ -122,7 +125,7 @@ function HomePlayerPage(props) {
         event.currentTarget.dataset.backdropPointer = '0';
       }}
     >
-      <section id={`${APP}-dialog`} ref={props.refs('dialog')}>
+      <section id={`${APP}-dialog`} ref={props.refs('dialog')} tabIndex={-1}>
         <header id={`${APP}-header`}>
           <div class={`${APP}__header-history`}>
             <button
@@ -200,6 +203,15 @@ function HomePlayerPage(props) {
             <button
               type="button"
               class={`${APP}__header-button`}
+              title="自动适配视频和评论区"
+              aria-label="自动适配视频和评论区"
+              onClick={() => props.onFitLayout?.()}
+            >
+              {createFitLayoutIcon()}
+            </button>
+            <button
+              type="button"
+              class={`${APP}__header-button`}
               title="重置窗口尺寸"
               aria-label="重置窗口尺寸"
               ref={props.refs('resetSize')}
@@ -224,7 +236,6 @@ function HomePlayerPage(props) {
             <div
               id={`${APP}-player`}
               ref={props.refs('playerRoot')}
-              onClickCapture={(event) => props.onPlayerControlClick?.(event)}
             />
           </div>
           <div

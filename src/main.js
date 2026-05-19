@@ -164,6 +164,7 @@ import {
     pipPlaying: null,
     switchToken: 0,
     externalFeatureBlocks: [],
+    externalPlaybackResume: null,
     ownerProfileCache: new Map(),
     ownerProfileRequests: new Map(),
     originalPageMeta: null,
@@ -203,6 +204,8 @@ import {
       handoffHandler: null,
       endedHandler: null,
       navigateSyncTimer: 0,
+      liveControlFrame: 0,
+      liveControlObserver: null,
       followBusy: false,
       likeBusy: false,
       likeBurstTimer: 0,
@@ -235,6 +238,9 @@ import {
       handoffHandler: null,
       endedHandler: null,
       navigateSyncTimer: 0,
+      liveControlFrame: 0,
+      liveControlObserver: null,
+      liveControlWindow: null,
       followBusy: false,
       likeBusy: false,
       likeBurstTimer: 0,
@@ -645,6 +651,45 @@ import {
         known.add(player);
       }
     });
+  }
+
+  function pauseExternalPlaybackPagePlayer() {
+    if (!isPlaybackPage() && !isLivePage()) return false;
+    state.externalPlaybackResume ||= captureExternalPlaybackResume();
+    if (isLivePage()) return pauseLivePagePlayer();
+    return pausePlaybackPagePlayer();
+  }
+
+  function captureExternalPlaybackResume() {
+    const videos = getExternalPageVideos();
+    const playingVideos = videos.filter((video) => !video.paused && !video.ended);
+    return {
+      shouldResume: playingVideos.length > 0,
+      videos: playingVideos,
+    };
+  }
+
+  function restoreExternalPlaybackPagePlayer() {
+    const resume = state.externalPlaybackResume;
+    state.externalPlaybackResume = null;
+    if (!resume?.shouldResume) return false;
+
+    return resume.videos
+      .filter((video) => video?.isConnected)
+      .some((video) => {
+        try {
+          const result = video.play?.();
+          result?.catch?.(() => {});
+          return true;
+        } catch {
+          return false;
+        }
+      });
+  }
+
+  function getExternalPageVideos() {
+    return [...document.querySelectorAll('video')]
+      .filter((video) => !state.home.ui?.overlay?.contains(video));
   }
 
   function getExternalFeaturePlayers() {
@@ -1353,6 +1398,7 @@ import {
       setStorageItem(STORAGE_MODE, 'home');
       syncSettings();
     }
+    pauseExternalPlaybackPagePlayer();
     rendererOrchestrator.openByMode(meta);
   }
 
@@ -1361,6 +1407,7 @@ import {
   }
 
   function openWithRenderer(renderer, meta) {
+    pauseExternalPlaybackPagePlayer();
     return rendererOrchestrator.openWithRenderer(renderer, meta);
   }
 
@@ -1588,6 +1635,7 @@ import {
       onBackToTop: scrollHomeCommentsToTop,
       onBackdropClose: closeHome,
       onClose: closeHome,
+      onFitLayout: fitHomeLayout,
       onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
       onHistoryNext: () => openPlaybackHistoryOffset(1),
       onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
@@ -1601,6 +1649,7 @@ import {
       supportsPip: supportsDocumentPip(),
     });
     state.home.overlay = state.home.ui.overlay;
+    attachHomePlayerControlCapture(state.home.ui);
     attachHomeBackToTopSync();
     attachHomePlaylistAutoRefresh();
     syncHomeCommentLayout();
@@ -1623,7 +1672,7 @@ import {
     syncCommentsTabs('home');
     document.documentElement.style.overflow = 'hidden';
     document.addEventListener('keydown', onKeydown, true);
-    ui.close.focus();
+    ui.dialog?.focus?.({ preventScroll: true });
     syncHomeSize();
     syncHomeModalSizeButton();
     syncAutoPlayNextButton();
@@ -1675,7 +1724,23 @@ import {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
+    if (event.type === 'click' && control.__biliPopupPlayerNanoWebFullscreenPointer) {
+      control.__biliPopupPlayerNanoWebFullscreenPointer = false;
+      return;
+    }
+    if (event.type === 'pointerdown') {
+      if (event.button != null && event.button !== 0) return;
+      control.__biliPopupPlayerNanoWebFullscreenPointer = true;
+    }
     setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+  }
+
+  function attachHomePlayerControlCapture(ui) {
+    const root = ui?.playerRoot;
+    if (!root || root.__biliPopupPlayerNanoControlCaptureBound) return;
+    root.__biliPopupPlayerNanoControlCaptureBound = true;
+    root.addEventListener('pointerdown', onHomePlayerControlClick, true);
+    root.addEventListener('click', onHomePlayerControlClick, true);
   }
 
   async function likeCurrentPlayback(kind) {
@@ -2224,6 +2289,7 @@ import {
     window.setTimeout(() => syncHomeSize(), 600);
     window.setTimeout(() => syncHomeSize(), 1600);
     attachLivePlayerOnlyControl();
+    startLivePlayerOnlyControlObserver();
     window.setTimeout(attachLivePlayerOnlyControl, 600);
     window.setTimeout(attachLivePlayerOnlyControl, 1600);
     state.home.ui.status.textContent = '直播播放器：播放中';
@@ -2241,16 +2307,38 @@ import {
       button = document.createElement('button');
       button.type = 'button';
       button.className = `${APP}__live-player-only-control`;
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation?.();
-        toggleHomePlayerOnly();
-      });
     }
+    installLivePlayerOnlyControlHandlers(button);
     layer.classList.add(`${APP}__live-player-controls-layer`);
     if (button.parentElement !== layer) layer.appendChild(button);
     syncHomePlayerOnlyControl();
+  }
+
+  function startLivePlayerOnlyControlObserver() {
+    stopLivePlayerOnlyControlObserver();
+    const playerRoot = state.home.ui?.playerRoot;
+    if (!playerRoot || !isLiveBootstrap(state.home.bootstrap)) return;
+    state.home.liveControlObserver = new MutationObserver(() => scheduleLivePlayerOnlyControlAttach());
+    state.home.liveControlObserver.observe(playerRoot, { childList: true, subtree: true });
+    scheduleLivePlayerOnlyControlAttach();
+  }
+
+  function scheduleLivePlayerOnlyControlAttach() {
+    if (state.home.liveControlFrame) return;
+    state.home.liveControlFrame = window.requestAnimationFrame(() => {
+      state.home.liveControlFrame = 0;
+      attachLivePlayerOnlyControl();
+    });
+  }
+
+  function stopLivePlayerOnlyControlObserver() {
+    if (state.home.liveControlFrame) {
+      window.cancelAnimationFrame(state.home.liveControlFrame);
+      state.home.liveControlFrame = 0;
+    }
+    state.home.liveControlObserver?.disconnect();
+    state.home.liveControlObserver = null;
+    state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
   }
 
   function findLivePlayerControlLayer(liveRoot) {
@@ -2278,6 +2366,31 @@ import {
     setCommentLayout(state.commentLayout === 'right' ? 'bottom' : 'right');
   }
 
+  function installLivePlayerOnlyControlHandlers(button) {
+    if (!button || button.__biliPopupPlayerNanoLiveOnlyBound) return;
+    button.__biliPopupPlayerNanoLiveOnlyBound = true;
+    button.addEventListener('pointerdown', (event) => {
+      if (event.button != null && event.button !== 0) return;
+      stopLivePlayerOnlyControlEvent(event);
+      button.__biliPopupPlayerNanoLiveOnlyPointer = true;
+      toggleHomePlayerOnly();
+    });
+    button.addEventListener('click', (event) => {
+      stopLivePlayerOnlyControlEvent(event);
+      if (button.__biliPopupPlayerNanoLiveOnlyPointer) {
+        button.__biliPopupPlayerNanoLiveOnlyPointer = false;
+        return;
+      }
+      toggleHomePlayerOnly();
+    });
+  }
+
+  function stopLivePlayerOnlyControlEvent(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+
   function syncHomePlayerOnlyControl() {
     const button = state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`);
     if (!button) return;
@@ -2298,7 +2411,7 @@ import {
         title: bootstrap.title,
         stylesheets: getBiliThemeStylesheets(),
         themeClassMarkup: getPipThemeClassMarkup(),
-        commentLayoutClass: 'comments-right',
+        commentLayoutClass: state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom',
       }));
       mountPipPlayerPage({
         targetDocument: pipWindow.document,
@@ -2351,13 +2464,81 @@ import {
     syncPipSize(targetWindow);
     targetWindow.setTimeout(() => syncPipSize(targetWindow), 600);
     targetWindow.setTimeout(() => syncPipSize(targetWindow), 1600);
+    attachPipLivePlayerOnlyControl(targetWindow);
+    startPipLivePlayerOnlyControlObserver(targetWindow);
+    targetWindow.setTimeout(() => attachPipLivePlayerOnlyControl(targetWindow), 600);
+    targetWindow.setTimeout(() => attachPipLivePlayerOnlyControl(targetWindow), 1600);
     setPipStatus('播放中');
 
     targetWindow.addEventListener('pagehide', () => {
       if (state.pip.switchingWindow) return;
+      stopPipLivePlayerOnlyControlObserver();
       if (state.pip.player) disposePipPlayer();
       if (state.pip.win === targetWindow) state.pip.win = null;
     });
+  }
+
+  function attachPipLivePlayerOnlyControl(targetWindow = state.pip.win) {
+    if (!targetWindow || targetWindow.closed || !isLiveBootstrap(state.pip.bootstrap) || !state.pip.liveCards?.length) return;
+    const liveRoot = targetWindow.document?.getElementById('live-player');
+    if (!liveRoot) return;
+    const layer = findLivePlayerControlLayer(liveRoot);
+    if (!layer) return;
+
+    let button = liveRoot.querySelector(`.${APP}__live-player-only-control`);
+    if (!button) {
+      button = targetWindow.document.createElement('button');
+      button.type = 'button';
+      button.className = `${APP}__live-player-only-control`;
+    }
+    installLivePlayerOnlyControlHandlers(button);
+    layer.classList.add(`${APP}__live-player-controls-layer`);
+    if (button.parentElement !== layer) layer.appendChild(button);
+    syncPipLivePlayerOnlyControl(targetWindow);
+  }
+
+  function startPipLivePlayerOnlyControlObserver(targetWindow = state.pip.win) {
+    stopPipLivePlayerOnlyControlObserver();
+    if (!targetWindow || targetWindow.closed || !isLiveBootstrap(state.pip.bootstrap) || !state.pip.liveCards?.length) return;
+    const playerRoot = targetWindow.document?.getElementById('stage');
+    if (!playerRoot || !targetWindow.MutationObserver) return;
+    state.pip.liveControlWindow = targetWindow;
+    state.pip.liveControlObserver = new targetWindow.MutationObserver(() => schedulePipLivePlayerOnlyControlAttach());
+    state.pip.liveControlObserver.observe(playerRoot, { childList: true, subtree: true });
+    schedulePipLivePlayerOnlyControlAttach();
+  }
+
+  function schedulePipLivePlayerOnlyControlAttach() {
+    const targetWindow = state.pip.liveControlWindow || state.pip.win;
+    if (!targetWindow || targetWindow.closed || state.pip.liveControlFrame) return;
+    state.pip.liveControlFrame = targetWindow.requestAnimationFrame(() => {
+      state.pip.liveControlFrame = 0;
+      attachPipLivePlayerOnlyControl(targetWindow);
+    });
+  }
+
+  function stopPipLivePlayerOnlyControlObserver() {
+    const targetWindow = state.pip.liveControlWindow || state.pip.win;
+    if (state.pip.liveControlFrame && targetWindow && !targetWindow.closed) {
+      targetWindow.cancelAnimationFrame(state.pip.liveControlFrame);
+    }
+    state.pip.liveControlFrame = 0;
+    state.pip.liveControlObserver?.disconnect();
+    state.pip.liveControlObserver = null;
+    state.pip.liveControlWindow = null;
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.document?.getElementById('live-player')?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
+    }
+  }
+
+  function syncPipLivePlayerOnlyControl(targetWindow = state.pip.win) {
+    if (!targetWindow || targetWindow.closed) return;
+    const button = targetWindow.document?.getElementById('live-player')?.querySelector?.(`.${APP}__live-player-only-control`);
+    if (!button) return;
+    const active = state.commentLayout !== 'right';
+    button.title = active ? '退出宽屏' : '宽屏';
+    button.setAttribute('aria-label', button.title);
+    button.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
   }
 
   function attachPipWindowResizeSync(targetWindow) {
@@ -2391,7 +2572,12 @@ import {
       if (state.pip.switchingWindow) return;
       targetWindow.__biliPopupPlayerNanoClosed = true;
       if (state.pip.win === targetWindow) state.pip.win = null;
+      if (!isHomeShellOpen()) restoreExternalPlaybackPagePlayer();
     }, { capture: true });
+  }
+
+  function isHomeShellOpen() {
+    return Boolean(state.home.overlay && !state.home.overlay.classList.contains(`${APP}--hidden`));
   }
 
   function attachPipKeyboardShortcuts(targetWindow) {
@@ -2577,6 +2763,7 @@ import {
     setStorageItem(STORAGE_COMMENT_LAYOUT, next);
     syncCommentLayout();
     syncHomePlayerOnlyControl();
+    syncPipLivePlayerOnlyControl(state.pip.win);
     remountCommentsForLayout();
   }
 
@@ -3602,6 +3789,40 @@ import {
     syncCommentWidth();
   }
 
+  function fitHomeLayout() {
+    const ui = state.home.ui;
+    if (!ui?.dialog || !ui.content) return;
+
+    if (state.commentLayout === 'right') {
+      const rect = ui.content.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const targetPlayerWidth = Math.round(Math.max(1, (rect.height - getHomePlayerChromeHeight()) * 16 / 9));
+      const nextWidth = clampCommentWidth(
+        rect.width - MODAL_COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
+        rect.width,
+      );
+      state.commentWidth = nextWidth;
+      setStorageItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
+      syncCommentWidth();
+      return;
+    }
+
+    if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) {
+      syncHomeSize();
+      return;
+    }
+
+    const rect = ui.dialog.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    state.modalSize = fitHomeModalSizeToPlayerRatio({
+      width: rect.width,
+      height: rect.height,
+    }, 'width');
+    setStorageItem(STORAGE_MODAL_SIZE, JSON.stringify(state.modalSize));
+    syncHomeSize();
+    syncHomeModalSizeButton();
+  }
+
   function clampCommentWidth(width, containerWidth) {
     const numeric = Number(width);
     const fallback = Number.isFinite(numeric) ? numeric : COMMENT_WIDTH_DEFAULT;
@@ -4221,6 +4442,7 @@ import {
     }
     setHomePlayerFeatureBlocked(true);
     setExternalPlayerFeaturesBlocked(false);
+    restoreExternalPlaybackPagePlayer();
     document.documentElement.style.overflow = '';
     document.body.classList.remove(`${APP}--modal-open`);
     document.removeEventListener('keydown', onKeydown, true);
@@ -4275,12 +4497,12 @@ import {
       state.home.likeBurstTimer = 0;
     }
     state.home.likeBusy = false;
+    stopLivePlayerOnlyControlObserver();
     if (!state.home.player) return;
     unbindHomeScreenChange();
     unbindHomePlayerNavigate();
     unbindHomePlayerHandoff();
     unbindHomePlayerEnded();
-    state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`)?.remove();
     setHomePlayerFeatureBlocked(false);
     try {
       state.home.player.disconnect?.();
@@ -4297,6 +4519,7 @@ import {
       state.pip.likeBurstTimer = 0;
     }
     state.pip.likeBusy = false;
+    stopPipLivePlayerOnlyControlObserver();
     if (!state.pip.player) return;
     unbindPipScreenChange();
     unbindPipPlayerNavigate();

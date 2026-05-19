@@ -101,6 +101,40 @@ export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, 
         width: 100% !important;
         height: 100% !important;
       }
+      #stage .${APP}__live-player-controls-layer {
+        overflow: visible !important;
+      }
+      #stage .${APP}__live-player-only-control {
+        position: absolute !important;
+        right: 14px;
+        bottom: calc(100% + 10px);
+        z-index: 60;
+        width: 34px;
+        height: 34px;
+        box-sizing: border-box;
+        padding: 0;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 6px;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(0, 0, 0, 0.56);
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+      }
+      #stage .${APP}__live-player-only-control:hover,
+      #stage .${APP}__live-player-only-control:focus-visible {
+        color: #fff;
+        border-color: var(--${APP}-brand);
+        background: var(--${APP}-brand);
+        outline: none;
+      }
+      #stage .${APP}__live-player-only-control svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+        stroke: currentColor;
+      }
 ${getPlayerThemeVariableCss('#bilibili-player')}
       .${APP}__like-burst {
         position: absolute;
@@ -273,7 +307,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         box-sizing: border-box;
         min-height: 42px;
         margin: 0;
-        padding: 6px 0 0;
+        padding: 6px 18px 0;
         border-bottom: 1px solid var(--line_regular, #e3e5e7);
         background: var(--bg1, #fff);
         overflow: visible;
@@ -327,7 +361,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       #comments-mount {
         box-sizing: border-box;
         min-height: 360px;
-        padding: 8px 18px 0 0;
+        padding: 8px 18px 0;
         color: var(--text1, #18191c);
         background: var(--bg1, #fff);
       }
@@ -336,14 +370,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       .${APP}__video-intro {
         box-sizing: border-box;
-        margin: 0 18px 0 0;
+        margin: 0 18px;
         padding: 14px 0 16px;
         color: var(--text1, #18191c);
         border-bottom: 1px solid var(--line_regular, #e3e5e7);
         background: var(--bg1, #fff);
       }
       body.comments-right .${APP}__video-intro {
-        margin-right: 16px;
+        margin: 0 16px 0 0;
       }
       .${APP}__video-intro-up {
         display: grid;

@@ -10,7 +10,7 @@ await writeFile(
   `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bilibili Popup Player Nano</title>
+<title>Bilibili Popup Player</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -40,8 +40,20 @@ await writeFile(
   .note {
     color: color-mix(in srgb, currentColor 72%, transparent);
   }
+
+  .preview {
+    margin-top: 32px;
+  }
+
+  .preview img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    border-radius: 8px;
+  }
 </style>
-<h1>Bilibili Popup Player Nano</h1>
+<h1>Bilibili Popup Player</h1>
 <p><a href="./${fileName}">安装 userscript</a></p>
 <p>需要先安装对应浏览器的用户脚本管理器：</p>
 <h2>Chrome</h2>
@@ -62,5 +74,9 @@ await writeFile(
   <li><a href="https://microsoftedge.microsoft.com/addons/detail/violentmonkey/eeagobfjdenkkddmbclomhiblgggliao">Violentmonkey</a></li>
   <li><a href="https://microsoftedge.microsoft.com/addons/detail/scriptcat/liilgpjgabokdklappibcjfablkpcekh">ScriptCat</a></li>
 </ul>
+<section class="preview">
+  <h2>预览图</h2>
+  <img src="./assets/screenshots/popup-player-modal.webp" alt="Bilibili Popup Player 预览图">
+</section>
 `,
 );
