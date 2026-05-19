@@ -6,6 +6,7 @@ import {
   createCloseIcon,
   createExternalLinkIcon,
   createFitLayoutIcon,
+  createGamepadIcon,
   createHistoryBackIcon,
   createHistoryForwardIcon,
   createMaximizeIcon,
@@ -158,6 +159,26 @@ function HomePlayerPage(props) {
               role="status"
               aria-live="polite"
             />
+            <span
+              class={`${APP}__gamepad-indicator`}
+              ref={props.refs('gamepadIndicator')}
+              title="手柄未连接"
+              aria-label="手柄未连接"
+              tabIndex={0}
+            >
+              {createGamepadIcon()}
+              <span class={`${APP}__gamepad-popover`} role="tooltip">
+                <span class={`${APP}__gamepad-disconnected-hint`}>手柄未连接</span>
+                <span class={`${APP}__gamepad-disconnected-hint`}>连接后按任意键确认</span>
+                <span class={`${APP}__gamepad-connected-hint`}>A 下一个</span>
+                <span class={`${APP}__gamepad-connected-hint`}>B 上一个</span>
+                <span class={`${APP}__gamepad-connected-hint`}>Y 网页内全屏</span>
+                <span class={`${APP}__gamepad-connected-hint`}>LB / RB 切换标签</span>
+                <span class={`${APP}__gamepad-connected-hint`}>十字上 暂停/播放</span>
+                <span class={`${APP}__gamepad-connected-hint`}>十字左右 控制进度</span>
+                <span class={`${APP}__gamepad-connected-hint`}>摇杆上下 滚动列表</span>
+              </span>
+            </span>
             <button
               type="button"
               class={`${APP}__header-button`}

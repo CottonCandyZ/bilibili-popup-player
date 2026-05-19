@@ -8,6 +8,7 @@ import {
   SETTINGS_CLASS,
   STORAGE_COMMENT_LAYOUT,
   STORAGE_COMMENT_WIDTH,
+  STORAGE_AUTO_PLAY_COUNTDOWN,
   STORAGE_AUTO_PLAY_NEXT,
   STORAGE_DIRECT_CLICK,
   STORAGE_LAST_PLAYED,
@@ -110,6 +111,11 @@ import {
   const URL_PARAM_BVID = 'bpn_bvid';
   const URL_PARAM_PAGE = 'bpn_p';
   const PLAYLIST_CONTINUATION_PREFETCH_REMAINING = 4;
+  const AUTO_PLAY_COUNTDOWN_SECONDS = 5;
+  const GAMEPAD_REPEAT_DELAY_MS = 360;
+  const GAMEPAD_REPEAT_INTERVAL_MS = 180;
+  const GAMEPAD_STICK_DEADZONE = 0.28;
+  const GAMEPAD_SCROLL_SPEED = 14;
   const PLAYER_CHROME_HEIGHT = 48;
   const PLAYER_CHROME_HEIGHT_WIDE = 56;
   const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
@@ -150,12 +156,18 @@ import {
     bottomFixedFrame: 0,
     homeSizeFrame: 0,
     viewportFrame: 0,
+    gamepadFrame: 0,
+    gamepadButtons: new Map(),
+    gamepadRepeatAt: new Map(),
+    gamepadConnected: false,
+    gamepadIgnoreInput: false,
     autoPlayHintTimer: 0,
     lastFocus: null,
     lastButton: null,
     mode: getStorageItem(STORAGE_MODE) === 'pip' && supportsDocumentPip() ? 'pip' : 'home',
     directClick: getStorageItem(STORAGE_DIRECT_CLICK) === '1',
     autoPlayNext: getStorageItem(STORAGE_AUTO_PLAY_NEXT) === '1',
+    autoPlayCountdown: getStorageItem(STORAGE_AUTO_PLAY_COUNTDOWN) !== '0',
     commentLayout: initialCommentLayout,
     commentWidth: initialCommentWidth,
     modalSize: initialModalSize,
@@ -204,6 +216,10 @@ import {
       handoffHandler: null,
       endedHandler: null,
       navigateSyncTimer: 0,
+      autoPlayCountdownHandler: null,
+      autoPlayCountdownNotice: null,
+      autoPlayCountdownKey: '',
+      autoPlayCountdownCanceledKey: '',
       liveControlFrame: 0,
       liveControlObserver: null,
       followBusy: false,
@@ -238,6 +254,10 @@ import {
       handoffHandler: null,
       endedHandler: null,
       navigateSyncTimer: 0,
+      autoPlayCountdownHandler: null,
+      autoPlayCountdownNotice: null,
+      autoPlayCountdownKey: '',
+      autoPlayCountdownCanceledKey: '',
       liveControlFrame: 0,
       liveControlObserver: null,
       liveControlWindow: null,
@@ -272,6 +292,7 @@ import {
     syncCardButtons,
     syncCommentLayout,
     supportsPip: supportsDocumentPip,
+    onAutoPlayCountdownChange,
   });
   const commentsTabsUi = createCommentsTabsUi({
     state,
@@ -321,6 +342,8 @@ import {
   document.addEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
   window.addEventListener('scroll', scheduleViewportSync, true);
   window.addEventListener('resize', scheduleViewportSync, true);
+  window.addEventListener('gamepadconnected', onGamepadConnectionChanged);
+  window.addEventListener('gamepaddisconnected', onGamepadConnectionChanged);
   state.observer = new MutationObserver(onDomMutated);
   state.observer.observe(document.body, {
     childList: true,
@@ -1676,6 +1699,9 @@ import {
     syncHomeSize();
     syncHomeModalSizeButton();
     syncAutoPlayNextButton();
+    syncGamepadIndicator();
+    if (state.home.player) startAutoPlayCountdownMonitor('home');
+    startGamepadControls();
     schedulePlaylistAutoRefreshCheck('home');
   }
 
@@ -1823,7 +1849,11 @@ import {
     if (kind === 'pip') {
       const pipWindow = state.pip.win;
       if (!pipWindow || pipWindow.closed || isLiveBootstrap(state.pip.bootstrap)) return null;
-      return pipWindow.document?.getElementById('stage') || pipWindow.document?.getElementById('bilibili-player') || null;
+      const playerRoot = pipWindow.document?.getElementById('bilibili-player') || null;
+      return playerRoot?.querySelector?.('.bpx-player-video-wrap') ||
+        pipWindow.document?.getElementById('stage') ||
+        playerRoot ||
+        null;
     }
     return null;
   }
@@ -2052,6 +2082,7 @@ import {
     bindHomePlayerNavigate(state.home.player);
     bindHomePlayerHandoff(state.home.player);
     bindHomePlayerEnded(state.home.player);
+    startAutoPlayCountdownMonitor('home');
     syncPlayerHandoffAvailability('home');
     setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     state.home.ui.status.textContent = '播放器：已 reload';
@@ -2068,6 +2099,7 @@ import {
     bindHomePlayerNavigate(state.home.player);
     bindHomePlayerHandoff(state.home.player);
     bindHomePlayerEnded(state.home.player);
+    startAutoPlayCountdownMonitor('home');
     syncPlayerHandoffAvailability('home');
     setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     updateDebug(setting, bootstrap);
@@ -2641,6 +2673,8 @@ import {
     bindPipPlayerNavigate(targetWindow, state.pip.player);
     bindPipPlayerHandoff(targetWindow, state.pip.player);
     bindPipPlayerEnded(targetWindow, state.pip.player);
+    startAutoPlayCountdownMonitor('pip');
+    startGamepadControls();
     syncPlayerHandoffAvailability('pip');
     syncPipSize(targetWindow);
     mountPipComments(targetWindow, bootstrap, token);
@@ -2678,6 +2712,8 @@ import {
     bindPipPlayerNavigate(targetWindow, player);
     bindPipPlayerHandoff(targetWindow, player);
     bindPipPlayerEnded(targetWindow, player);
+    startAutoPlayCountdownMonitor('pip');
+    startGamepadControls();
     syncPlayerHandoffAvailability('pip');
     ensurePipPlayerControls(targetWindow, bootstrap.href);
     syncPipSize(targetWindow);
@@ -2709,6 +2745,7 @@ import {
       setPipPlaying(null);
       if (state.pip.win === targetWindow) state.pip.win = null;
       if (state.pip.player === player) state.pip.player = null;
+      if (!isHomeShellOpen()) stopGamepadControls();
     });
   }
 
@@ -3373,7 +3410,286 @@ import {
 
   function handlePlayerEnded(kind) {
     if (!state.autoPlayNext) return;
+    const key = getCurrentBootstrapPlaybackKey(kind);
+    if (key && state[kind]?.autoPlayCountdownCanceledKey === key) {
+      hideAutoPlayCountdown(kind);
+      return;
+    }
+    hideAutoPlayCountdown(kind);
     playAdjacentFromActiveTab(kind, 1, { auto: true });
+  }
+
+  function startAutoPlayCountdownMonitor(kind) {
+    stopAutoPlayCountdownMonitor(kind);
+    const slot = state[kind];
+    if (!slot?.player || !state.autoPlayNext || !state.autoPlayCountdown || isLiveBootstrap(slot.bootstrap)) return;
+    const eventTypes = getAutoPlayCountdownEventTypes(getPlayerApiForKind(kind));
+    if (!slot.player?.on || !eventTypes.length) return;
+    const handler = () => checkAutoPlayCountdown(kind);
+    const bindings = eventTypes.map((eventType) => {
+      slot.player.on(eventType, handler);
+      return { eventType, handler };
+    });
+    slot.autoPlayCountdownHandler = { player: slot.player, bindings };
+    checkAutoPlayCountdown(kind);
+  }
+
+  function stopAutoPlayCountdownMonitor(kind) {
+    const slot = state[kind];
+    if (!slot) return;
+    const binding = slot.autoPlayCountdownHandler;
+    if (binding) {
+      try {
+        binding.bindings?.forEach(({ eventType, handler }) => {
+          binding.player?.off?.(eventType, handler);
+        });
+      } catch {
+        // Ignore event cleanup failures.
+      }
+    }
+    slot.autoPlayCountdownHandler = null;
+    hideAutoPlayCountdown(kind);
+  }
+
+  function checkAutoPlayCountdown(kind) {
+    const slot = state[kind];
+    if (!slot?.player || isLiveBootstrap(slot.bootstrap) || !state.autoPlayNext || !state.autoPlayCountdown) {
+      hideAutoPlayCountdown(kind);
+      return;
+    }
+
+    if (isPlaybackPaused(kind)) {
+      hideAutoPlayCountdown(kind);
+      return;
+    }
+
+    const key = getCurrentBootstrapPlaybackKey(kind);
+    const nextCard = getNextAutoPlayCard(kind);
+    if (!key || slot.autoPlayCountdownCanceledKey === key || !nextCard) {
+      hideAutoPlayCountdown(kind);
+      return;
+    }
+
+    const timing = getPlaybackTiming(kind);
+    if (!timing) {
+      hideAutoPlayCountdown(kind);
+      return;
+    }
+
+    const remaining = timing.duration - timing.currentTime;
+    if (remaining > AUTO_PLAY_COUNTDOWN_SECONDS || remaining <= 0.25) {
+      hideAutoPlayCountdown(kind);
+      return;
+    }
+
+    showAutoPlayCountdown(kind, remaining, key, nextCard);
+  }
+
+  function getNextAutoPlayCard(kind) {
+    const tab = state[kind]?.activeCommentsTab;
+    if (tab === 'pages') {
+      return getAdjacentCard(state[kind].pageCards, 1, {
+        selectedKey: state[kind].selectedPageKey,
+        getKey: (card) => card.pageKey,
+        findCurrentIndex: (cards) => findCurrentPageCardIndex(kind, cards),
+      });
+    }
+    if (tab === 'playlist' || tab === 'comments') {
+      return getAdjacentCard(state[kind].playlistCards, 1, {
+        selectedKey: state[kind].selectedPlaylistBvid,
+        getKey: getPlayableKey,
+      });
+    }
+    if (tab === 'recommend') {
+      return getPlayableCard(state[kind]?.recommendationCards?.[0]);
+    }
+    return null;
+  }
+
+  function getPlaybackTiming(kind) {
+    const slot = state[kind];
+    const player = slot?.player;
+    const currentTime = readNumericPlayerValue(player, ['getCurrentTime', 'currentTime', 'time']);
+    const duration = readNumericPlayerValue(player, ['getDuration', 'duration']);
+    if (Number.isFinite(currentTime) && Number.isFinite(duration) && duration > 0) {
+      return { currentTime, duration };
+    }
+
+    const video = getPlaybackVideo(kind);
+    if (!video) return null;
+    const videoCurrent = Number(video.currentTime);
+    const videoDuration = Number(video.duration);
+    if (!Number.isFinite(videoCurrent) || !Number.isFinite(videoDuration) || videoDuration <= 0) return null;
+    return { currentTime: videoCurrent, duration: videoDuration };
+  }
+
+  function isPlaybackPaused(kind) {
+    const player = state[kind]?.player;
+    const values = [
+      readBooleanPlayerValue(player, ['isPaused', 'getPaused', 'paused']),
+      readBooleanPlayerValue(player, ['isEnded', 'ended']),
+      player?.rootStore?.mediaStore?.state?.paused,
+      player?.rootStore?.mediaStore?.state?.ended,
+      player?.mediaStore?.state?.paused,
+      player?.mediaStore?.state?.ended,
+    ];
+    for (const value of values) {
+      if (value === true) return true;
+    }
+    if (values.some((value) => value === false)) return false;
+
+    const video = getPlaybackVideo(kind);
+    return Boolean(video?.paused || video?.ended);
+  }
+
+  function readBooleanPlayerValue(player, names) {
+    for (const name of names) {
+      try {
+        const value = typeof player?.[name] === 'function' ? player[name]() : player?.[name];
+        if (typeof value === 'boolean') return value;
+      } catch {
+        // Try the next known surface.
+      }
+    }
+    return null;
+  }
+
+  function readNumericPlayerValue(player, names) {
+    for (const name of names) {
+      try {
+        const value = typeof player?.[name] === 'function' ? player[name]() : player?.[name];
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) return numeric;
+      } catch {
+        // Try the next known surface.
+      }
+    }
+    return NaN;
+  }
+
+  function getPlaybackVideo(kind) {
+    if (kind === 'home') return state.home.ui?.playerRoot?.querySelector?.('video') || null;
+    const pipWindow = state.pip.win;
+    if (!pipWindow || pipWindow.closed) return null;
+    return pipWindow.document?.getElementById('bilibili-player')?.querySelector?.('video') ||
+      pipWindow.document?.querySelector?.('video') ||
+      null;
+  }
+
+  function getCurrentBootstrapPlaybackKey(kind) {
+    const bootstrap = state[kind]?.bootstrap;
+    if (!bootstrap || isLiveBootstrap(bootstrap)) return '';
+    const info = bootstrap.playerInfo || {};
+    return [info.bvid || info.aid || '', info.cid || '', info.p || ''].filter(Boolean).join(':');
+  }
+
+  function showAutoPlayCountdown(kind, remaining, key, nextCard) {
+    const slot = state[kind];
+    const host = getAutoPlayCountdownHost(kind);
+    const targetDocument = kind === 'pip' && state.pip.win && !state.pip.win.closed
+      ? state.pip.win.document
+      : document;
+    if (!slot || !host || !targetDocument) return;
+    if (
+      slot.autoPlayCountdownNotice?.isConnected &&
+      slot.autoPlayCountdownKey === key &&
+      slot.autoPlayCountdownNotice.parentElement === host
+    ) return;
+
+    hideAutoPlayCountdown(kind);
+    host.style.position = 'relative';
+    const notice = targetDocument.createElement('div');
+    notice.className = `${APP}__auto-play-countdown`;
+    notice.setAttribute('role', 'status');
+    const circumference = 62.83;
+    const startOffset = circumference * (1 - Math.max(0, Math.min(remaining, AUTO_PLAY_COUNTDOWN_SECONDS)) / AUTO_PLAY_COUNTDOWN_SECONDS);
+    notice.style.setProperty(`--${APP}-countdown-duration`, `${Math.max(0.1, remaining)}s`);
+    notice.style.setProperty(`--${APP}-countdown-start-offset`, String(startOffset));
+
+    const ring = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    ring.setAttribute('viewBox', '0 0 24 24');
+    ring.setAttribute('aria-hidden', 'true');
+    ring.classList.add(`${APP}__auto-play-countdown-ring`);
+    const track = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    track.setAttribute('cx', '12');
+    track.setAttribute('cy', '12');
+    track.setAttribute('r', '10');
+    track.classList.add(`${APP}__auto-play-countdown-track`);
+    const progress = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    progress.setAttribute('cx', '12');
+    progress.setAttribute('cy', '12');
+    progress.setAttribute('r', '10');
+    progress.classList.add(`${APP}__auto-play-countdown-progress`);
+    ring.append(track, progress);
+
+    const text = targetDocument.createElement('div');
+    text.className = `${APP}__auto-play-countdown-text`;
+    const title = targetDocument.createElement('div');
+    title.className = `${APP}__auto-play-countdown-title`;
+    title.textContent = '即将播放下一个视频';
+    const next = targetDocument.createElement('div');
+    next.className = `${APP}__auto-play-countdown-next`;
+    next.textContent = getCardDisplayTitle(nextCard) || '下一个视频';
+    const hint = targetDocument.createElement('div');
+    hint.className = `${APP}__auto-play-countdown-hint`;
+    hint.textContent = '按 Esc 取消';
+    text.append(title, next, hint);
+    notice.append(ring, text);
+    host.appendChild(notice);
+    slot.autoPlayCountdownNotice = notice;
+    slot.autoPlayCountdownKey = key;
+  }
+
+  function getAutoPlayCountdownHost(kind) {
+    if (kind === 'home') {
+      const playerRoot = state.home.ui?.playerRoot || null;
+      const videoWrap = playerRoot?.querySelector?.('.bpx-player-video-wrap') || null;
+      return videoWrap || state.home.ui?.playerWrap || playerRoot;
+    }
+    if (kind === 'pip') {
+      const pipWindow = state.pip.win;
+      if (!pipWindow || pipWindow.closed || isLiveBootstrap(state.pip.bootstrap)) return null;
+      const playerRoot = pipWindow.document?.getElementById('bilibili-player') || null;
+      return playerRoot?.querySelector?.('.bpx-player-video-wrap') ||
+        pipWindow.document?.getElementById('stage') ||
+        playerRoot ||
+        null;
+    }
+    return null;
+  }
+
+  function getCardDisplayTitle(card) {
+    return String(card?.title || card?.name || card?.desc || '').trim();
+  }
+
+  function hideAutoPlayCountdown(kind) {
+    const slot = state[kind];
+    if (!slot) return;
+    slot.autoPlayCountdownNotice?.remove();
+    slot.autoPlayCountdownNotice = null;
+    slot.autoPlayCountdownKey = '';
+  }
+
+  function cancelAutoPlayCountdown(kind) {
+    const slot = state[kind];
+    if (!slot?.autoPlayCountdownNotice?.isConnected) return false;
+    slot.autoPlayCountdownCanceledKey = getCurrentBootstrapPlaybackKey(kind) || slot.autoPlayCountdownKey;
+    hideAutoPlayCountdown(kind);
+    showLikeBurst(kind, '已取消自动切换', 'neutral', { icon: false });
+    return true;
+  }
+
+  function getAutoPlayCountdownEventTypes(playerApi) {
+    const eventType = playerApi?.EventType || {};
+    return [
+      eventType.Player_TimeUpdate,
+      eventType.Player_DurationChange,
+      eventType.Player_Play,
+      eventType.Player_Seeked,
+      eventType.Player_Pause,
+      eventType.Player_Ended,
+      eventType.Player_LoadStart,
+    ].filter(Boolean);
   }
 
   function getPlayerNavigationEventTypes(playerApi) {
@@ -3614,7 +3930,7 @@ import {
       getKey: getPlayableKey,
       fromLiveList: true,
     });
-    if (tab === 'recommend') return playFirstRecommendation(kind);
+    if (tab === 'recommend') return playFirstRecommendation(kind, options);
     return false;
   }
 
@@ -3629,20 +3945,10 @@ import {
   }
 
   function playAdjacentCard(kind, cards, direction, options = {}) {
-    if (!Array.isArray(cards) || !cards.length) return false;
-    const offset = Number(direction);
-    if (!Number.isInteger(offset)) return false;
-
-    const currentIndex = typeof options.findCurrentIndex === 'function'
-      ? options.findCurrentIndex(cards)
-      : findSelectedCardIndex(cards, options.selectedKey, options.getKey);
-    const targetIndex = options.absolute
-      ? offset - 1
-      : currentIndex + offset;
-    if (targetIndex < 0 || targetIndex >= cards.length) return false;
-
-    const card = cards[targetIndex];
-    if (!getPlayableKey(card) || !card.href) return false;
+    const card = getAdjacentCard(cards, direction, options);
+    if (!card) return false;
+    if (options.dryRun) return true;
+    const targetIndex = cards.indexOf(card);
     maybePrefetchHomePlaylistForContinuation(kind, cards, targetIndex, options);
     const renderer = kind === 'pip' ? pipRenderer : homeRenderer;
     openWithRenderer(renderer, {
@@ -3652,6 +3958,25 @@ import {
       fromLiveList: Boolean(options.fromLiveList),
     });
     return true;
+  }
+
+  function getAdjacentCard(cards, direction, options = {}) {
+    if (!Array.isArray(cards) || !cards.length) return null;
+    const offset = Number(direction);
+    if (!Number.isInteger(offset)) return null;
+
+    const currentIndex = typeof options.findCurrentIndex === 'function'
+      ? options.findCurrentIndex(cards)
+      : findSelectedCardIndex(cards, options.selectedKey, options.getKey);
+    const targetIndex = options.absolute
+      ? offset - 1
+      : currentIndex + offset;
+    if (targetIndex < 0 || targetIndex >= cards.length) return null;
+    return getPlayableCard(cards[targetIndex]);
+  }
+
+  function getPlayableCard(card) {
+    return getPlayableKey(card) && card.href ? card : null;
   }
 
   function maybePrefetchHomePlaylistForContinuation(kind, cards, targetIndex, options = {}) {
@@ -3673,9 +3998,10 @@ import {
     return -1;
   }
 
-  function playFirstRecommendation(kind) {
+  function playFirstRecommendation(kind, options = {}) {
     const card = state[kind]?.recommendationCards?.[0];
     if (!getPlayableKey(card) || !card.href) return false;
+    if (options.dryRun) return true;
     const renderer = kind === 'pip' ? pipRenderer : homeRenderer;
     openWithRenderer(renderer, card);
     return true;
@@ -4256,6 +4582,24 @@ import {
     state.autoPlayNext = Boolean(value);
     setStorageItem(STORAGE_AUTO_PLAY_NEXT, state.autoPlayNext ? '1' : '0');
     syncAutoPlayNextButton();
+    if (state.autoPlayNext && state.autoPlayCountdown) {
+      if (state.home.player) startAutoPlayCountdownMonitor('home');
+      if (state.pip.player) startAutoPlayCountdownMonitor('pip');
+    } else {
+      stopAutoPlayCountdownMonitor('home');
+      stopAutoPlayCountdownMonitor('pip');
+    }
+  }
+
+  function onAutoPlayCountdownChange(value) {
+    state.autoPlayCountdown = Boolean(value);
+    if (state.autoPlayCountdown && state.autoPlayNext) {
+      if (state.home.player) startAutoPlayCountdownMonitor('home');
+      if (state.pip.player) startAutoPlayCountdownMonitor('pip');
+    } else {
+      stopAutoPlayCountdownMonitor('home');
+      stopAutoPlayCountdownMonitor('pip');
+    }
   }
 
   function syncAutoPlayNextButton() {
@@ -4443,15 +4787,23 @@ import {
     setHomePlayerFeatureBlocked(true);
     setExternalPlayerFeaturesBlocked(false);
     restoreExternalPlaybackPagePlayer();
+    stopAutoPlayCountdownMonitor('home');
     document.documentElement.style.overflow = '';
     document.body.classList.remove(`${APP}--modal-open`);
     document.removeEventListener('keydown', onKeydown, true);
+    if (!state.pip.player) stopGamepadControls();
     restoreOriginalPageMeta();
     if (state.lastFocus?.isConnected) state.lastFocus.focus({ preventScroll: true });
   }
 
   function onKeydown(event) {
     if (event.key === 'Escape') {
+      if (cancelAutoPlayCountdown('home')) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        return;
+      }
       event.preventDefault();
       closeHome();
       return;
@@ -4479,11 +4831,255 @@ import {
   function onPipKeydown(event) {
     if (isEditableKeyTarget(event.target) || event.altKey || event.ctrlKey || event.metaKey) return;
     const key = String(event.key || '').toLowerCase();
+    if (key === 'escape') {
+      if (cancelAutoPlayCountdown('pip')) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+      }
+      return;
+    }
     if (key !== 'k') return;
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
     void likeCurrentPlayback('pip');
+  }
+
+  function startGamepadControls() {
+    if (state.gamepadFrame || !navigator.getGamepads) return;
+    updateGamepadConnectionState([...navigator.getGamepads()].some(Boolean));
+    state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
+  }
+
+  function stopGamepadControls() {
+    if (state.gamepadFrame) {
+      window.cancelAnimationFrame(state.gamepadFrame);
+      state.gamepadFrame = 0;
+    }
+    state.gamepadButtons.clear();
+    state.gamepadRepeatAt.clear();
+  }
+
+  function onGamepadConnectionChanged() {
+    const connected = Boolean(navigator.getGamepads && [...navigator.getGamepads()].some(Boolean));
+    updateGamepadConnectionState(connected);
+    if (connected && getActiveGamepadKind()) startGamepadControls();
+  }
+
+  function updateGamepadConnectionState(connected) {
+    const next = Boolean(connected);
+    if (state.gamepadConnected === next) return false;
+    state.gamepadConnected = next;
+    state.gamepadIgnoreInput = next;
+    if (!next) {
+      state.gamepadButtons.clear();
+      state.gamepadRepeatAt.clear();
+    }
+    syncGamepadIndicator();
+    return true;
+  }
+
+  function syncGamepadIndicator() {
+    const indicator = state.home.ui?.gamepadIndicator;
+    if (!indicator) return;
+    indicator.classList.toggle(`${APP}--connected`, state.gamepadConnected);
+    indicator.title = state.gamepadConnected ? '手柄已连接' : '手柄未连接';
+    indicator.setAttribute('aria-label', indicator.title);
+  }
+
+  function pollGamepadControls(now) {
+    state.gamepadFrame = 0;
+    const kind = getActiveGamepadKind();
+    if (!kind) {
+      stopGamepadControls();
+      return;
+    }
+
+    const gamepads = navigator.getGamepads?.() || [];
+    const connected = gamepads.some(Boolean);
+    const connectionChanged = updateGamepadConnectionState(connected);
+    if (!connected) {
+      state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
+      return;
+    }
+    if (connectionChanged || state.gamepadIgnoreInput) {
+      primeGamepadButtons(gamepads);
+      state.gamepadIgnoreInput = false;
+      state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
+      return;
+    }
+
+    for (const gamepad of gamepads) {
+      if (!gamepad) continue;
+      handleGamepadButton(kind, gamepad, 0, 'next', now, false);
+      handleGamepadButton(kind, gamepad, 1, 'previous', now, false);
+      handleGamepadButton(kind, gamepad, 3, 'web-fullscreen', now, false);
+      handleGamepadButton(kind, gamepad, 4, 'previous-tab', now, false);
+      handleGamepadButton(kind, gamepad, 5, 'next-tab', now, false);
+      handleGamepadButton(kind, gamepad, 12, 'toggle-play', now, false);
+      handleGamepadButton(kind, gamepad, 14, 'arrow-left', now, true);
+      handleGamepadButton(kind, gamepad, 15, 'arrow-right', now, true);
+      handleGamepadAxes(kind, gamepad);
+    }
+    state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
+  }
+
+  function primeGamepadButtons(gamepads) {
+    state.gamepadButtons.clear();
+    state.gamepadRepeatAt.clear();
+    for (const gamepad of gamepads) {
+      if (!gamepad) continue;
+      [0, 1, 3, 4, 5, 12, 14, 15].forEach((buttonIndex) => {
+        state.gamepadButtons.set(`${gamepad.index}:${buttonIndex}`, Boolean(gamepad.buttons?.[buttonIndex]?.pressed));
+      });
+    }
+  }
+
+  function getActiveGamepadKind() {
+    if (isHomeShellOpen() && state.home.player) return 'home';
+    if (state.pip.player && state.pip.win && !state.pip.win.closed) return 'pip';
+    return '';
+  }
+
+  function handleGamepadButton(kind, gamepad, buttonIndex, action, now, repeat) {
+    const key = `${gamepad.index}:${buttonIndex}`;
+    const pressed = Boolean(gamepad.buttons?.[buttonIndex]?.pressed);
+    const wasPressed = state.gamepadButtons.get(key) === true;
+    state.gamepadButtons.set(key, pressed);
+    if (!pressed) {
+      if (wasPressed && isGamepadKeyboardAction(action)) dispatchGamepadKeyboard(kind, action, 'keyup', false);
+      state.gamepadRepeatAt.delete(key);
+      return;
+    }
+
+    if (!wasPressed) {
+      runGamepadAction(kind, action, false);
+      if (repeat) state.gamepadRepeatAt.set(key, now + GAMEPAD_REPEAT_DELAY_MS);
+      return;
+    }
+
+    if (!repeat) return;
+    const repeatAt = state.gamepadRepeatAt.get(key) || 0;
+    if (now < repeatAt) return;
+    runGamepadAction(kind, action, true);
+    state.gamepadRepeatAt.set(key, now + GAMEPAD_REPEAT_INTERVAL_MS);
+  }
+
+  function runGamepadAction(kind, action, repeat = false) {
+    if (action === 'next' || action === 'previous') {
+      const direction = action === 'next' ? 1 : -1;
+      if (playAdjacentFromActiveTab(kind, direction)) showSwitchBurst(kind, direction);
+      return;
+    }
+    if (action === 'next-tab' || action === 'previous-tab') {
+      switchCommentsTabByGamepad(kind, action === 'next-tab' ? 1 : -1);
+      return;
+    }
+    if (action === 'web-fullscreen') {
+      toggleGamepadWebFullscreen(kind);
+      return;
+    }
+    if (action === 'toggle-play') {
+      dispatchGamepadKeyboard(kind, action, 'keydown', false);
+      dispatchGamepadKeyboard(kind, action, 'keyup', false);
+      return;
+    }
+    if (isGamepadKeyboardAction(action)) {
+      dispatchGamepadKeyboard(kind, action, 'keydown', repeat);
+    }
+  }
+
+  function toggleGamepadWebFullscreen(kind) {
+    if (kind !== 'home' || !state.home.overlay) return;
+    setHomeFullscreen(!state.home.overlay.classList.contains(`${APP}--fullscreen`));
+  }
+
+  function handleGamepadAxes(kind, gamepad) {
+    const vertical = Math.abs(gamepad.axes?.[3] || 0) > Math.abs(gamepad.axes?.[1] || 0)
+      ? Number(gamepad.axes?.[3] || 0)
+      : Number(gamepad.axes?.[1] || 0);
+    if (!Number.isFinite(vertical) || Math.abs(vertical) < GAMEPAD_STICK_DEADZONE) return;
+    const container = getGamepadScrollContainer(kind);
+    if (!container) return;
+    container.scrollBy?.({ top: vertical * GAMEPAD_SCROLL_SPEED, behavior: 'auto' });
+  }
+
+  function switchCommentsTabByGamepad(kind, direction) {
+    const tabs = getVisibleCommentsTabButtons(kind);
+    if (!tabs.length) return;
+    const currentIndex = Math.max(0, tabs.findIndex((button) => button.dataset.tab === state[kind]?.activeCommentsTab));
+    const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+    tabs[nextIndex]?.click?.();
+  }
+
+  function getVisibleCommentsTabButtons(kind) {
+    const root = kind === 'pip'
+      ? state.pip.win?.document?.querySelector?.(`.${APP}__comments-tabs`)
+      : state.home.ui?.commentsTabs;
+    return [...(root?.querySelectorAll?.(`.${APP}__comments-tab`) || [])]
+      .filter((button) => !button.hidden && button.offsetParent !== null);
+  }
+
+  function getGamepadScrollContainer(kind) {
+    if (kind === 'pip') return getPipCommentsScrollContainer(state.pip.win);
+    return getHomeCommentsScrollContainer();
+  }
+
+  function isGamepadKeyboardAction(action) {
+    return action === 'arrow-left' || action === 'arrow-right' || action === 'toggle-play';
+  }
+
+  function dispatchGamepadKeyboard(kind, action, type, repeat) {
+    const key = action === 'arrow-left'
+      ? 'ArrowLeft'
+      : action === 'arrow-right'
+        ? 'ArrowRight'
+        : ' ';
+    const code = action === 'arrow-left'
+      ? 'ArrowLeft'
+      : action === 'arrow-right'
+        ? 'ArrowRight'
+        : 'Space';
+    const keyCode = action === 'arrow-left'
+      ? 37
+      : action === 'arrow-right'
+        ? 39
+        : 32;
+    const targetWindow = kind === 'pip' && state.pip.win && !state.pip.win.closed ? state.pip.win : window;
+    const targetDocument = targetWindow.document;
+    const target = getGamepadKeyboardTarget(kind, targetDocument);
+    if (!target) return;
+    const event = new targetWindow.KeyboardEvent(type, {
+      key,
+      code,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      repeat: type === 'keydown' ? Boolean(repeat) : false,
+    });
+    try {
+      Object.defineProperties(event, {
+        keyCode: { get: () => keyCode },
+        which: { get: () => keyCode },
+      });
+    } catch {
+      // Some browsers keep legacy key fields readonly.
+    }
+    target.dispatchEvent(event);
+  }
+
+  function getGamepadKeyboardTarget(kind, targetDocument) {
+    if (kind === 'home') {
+      return state.home.ui?.playerRoot?.querySelector?.('.bpx-player-container') ||
+        state.home.ui?.playerRoot ||
+        targetDocument.activeElement ||
+        targetDocument.body;
+    }
+    return targetDocument.getElementById('bilibili-player')?.querySelector?.('.bpx-player-container') ||
+      targetDocument.getElementById('bilibili-player') ||
+      targetDocument.activeElement ||
+      targetDocument.body;
   }
 
   function isEditableKeyTarget(target) {
@@ -4497,6 +5093,7 @@ import {
       state.home.likeBurstTimer = 0;
     }
     state.home.likeBusy = false;
+    stopAutoPlayCountdownMonitor('home');
     stopLivePlayerOnlyControlObserver();
     if (!state.home.player) return;
     unbindHomeScreenChange();
@@ -4511,6 +5108,7 @@ import {
     }
     state.home.player = null;
     state.home.featureBlocked = false;
+    if (!state.pip.player) stopGamepadControls();
   }
 
   function disposePipPlayer() {
@@ -4519,6 +5117,7 @@ import {
       state.pip.likeBurstTimer = 0;
     }
     state.pip.likeBusy = false;
+    stopAutoPlayCountdownMonitor('pip');
     stopPipLivePlayerOnlyControlObserver();
     if (!state.pip.player) return;
     unbindPipScreenChange();
@@ -4532,6 +5131,7 @@ import {
     }
     state.pip.player = null;
     setPipPlaying(null);
+    if (!isHomeShellOpen()) stopGamepadControls();
   }
 
   function disposeHomeComments() {
@@ -4553,6 +5153,7 @@ import {
     closeHome();
     disposeHomePlayer();
     disposePipPlayer();
+    stopGamepadControls();
     disposeHomeComments();
     disposePipComments();
     state.home.ui?.dispose?.();
@@ -4567,6 +5168,8 @@ import {
     document.removeEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
     window.removeEventListener('scroll', scheduleViewportSync, true);
     window.removeEventListener('resize', scheduleViewportSync, true);
+    window.removeEventListener('gamepadconnected', onGamepadConnectionChanged);
+    window.removeEventListener('gamepaddisconnected', onGamepadConnectionChanged);
     state.shadowHost?.remove();
     state.overlay?.remove();
     document.getElementById(DOCUMENT_STYLE_ID)?.remove();

@@ -188,6 +188,10 @@ export function installDocumentStyle(targetDocument = document) {
         box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
       }
 
+      #${APP}-dialog:focus {
+        outline: none;
+      }
+
       #${APP}-overlay.${APP}--fullscreen {
         padding: 0;
         background: #000;
@@ -205,6 +209,8 @@ export function installDocumentStyle(targetDocument = document) {
       }
 
       #${APP}-header {
+        position: relative;
+        z-index: 40;
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto;
         align-items: center;
@@ -214,6 +220,7 @@ export function installDocumentStyle(targetDocument = document) {
         color: var(--${APP}-text);
         background: var(--${APP}-surface-elevated);
         border-bottom: 1px solid var(--${APP}-border);
+        overflow: visible;
       }
 
       .${APP}__header-history {
@@ -224,31 +231,120 @@ export function installDocumentStyle(targetDocument = document) {
       }
 
       .${APP}__header-actions {
-        display: inline-grid;
-        grid-auto-flow: column;
-        grid-auto-columns: 32px;
+        position: relative;
+        z-index: 1;
+        display: inline-flex;
         gap: 4px;
         align-items: center;
         justify-content: end;
         min-width: 0;
+        overflow: visible;
       }
 
       .${APP}__auto-play-hint {
         justify-self: end;
-        grid-column: auto / span 1;
         max-width: 0;
         overflow: hidden;
         white-space: nowrap;
+        flex: 0 1 auto;
         color: var(--${APP}-text-subtle);
         opacity: 0;
         font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        transition: max-width 0.18s ease, opacity 0.18s ease, margin-right 0.18s ease;
+        transition: max-width 0.18s ease, opacity 0.18s ease, margin-inline 0.18s ease;
       }
 
       .${APP}__auto-play-hint.${APP}--visible {
         max-width: 180px;
-        margin-right: 4px;
+        margin-right: 2px;
         opacity: 1;
+      }
+
+      .${APP}__gamepad-indicator {
+        position: relative;
+        z-index: 2;
+        width: 32px;
+        height: 32px;
+        display: inline-grid;
+        place-items: center;
+        color: var(--${APP}-text-subtle);
+        outline: none;
+        opacity: 0.88;
+        overflow: visible;
+      }
+
+      .${APP}__gamepad-indicator[hidden] {
+        display: none;
+      }
+
+      .${APP}__gamepad-indicator.${APP}--connected {
+        opacity: 1;
+      }
+
+      .${APP}__gamepad-indicator svg {
+        width: 19px;
+        height: 19px;
+        display: block;
+      }
+
+      .${APP}__gamepad-indicator::after {
+        content: "";
+        position: absolute;
+        right: 7px;
+        bottom: 7px;
+        width: 5px;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--${APP}-brand);
+        box-shadow: 0 0 0 2px var(--${APP}-surface-elevated);
+        opacity: 0;
+        transform: scale(0.7);
+        transition: opacity 0.16s ease, transform 0.16s ease;
+      }
+
+      .${APP}__gamepad-indicator.${APP}--connected::after {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      .${APP}__gamepad-indicator.${APP}--connected .${APP}__gamepad-disconnected-hint,
+      .${APP}__gamepad-indicator:not(.${APP}--connected) .${APP}__gamepad-connected-hint {
+        display: none;
+      }
+
+      .${APP}__gamepad-disconnected-hint + .${APP}__gamepad-disconnected-hint {
+        color: var(--${APP}-text);
+        opacity: 0.9;
+      }
+
+      .${APP}__gamepad-popover {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        z-index: 100;
+        width: max-content;
+        min-width: 154px;
+        max-width: 220px;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        display: grid;
+        gap: 5px;
+        border: 1px solid rgba(148, 153, 160, 0.44);
+        border-radius: 8px;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.38);
+        font: 600 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: left;
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 0.14s ease, transform 0.14s ease;
+      }
+
+      .${APP}__gamepad-indicator:hover .${APP}__gamepad-popover,
+      .${APP}__gamepad-indicator:focus-visible .${APP}__gamepad-popover {
+        opacity: 1;
+        transform: translateY(0);
       }
 
       #${APP}-title {
@@ -471,6 +567,14 @@ export function installDocumentStyle(targetDocument = document) {
         height: 100% !important;
       }
 
+      #${APP}-player {
+        position: relative;
+      }
+
+      #${APP}-player .bpx-player-video-wrap {
+        position: relative !important;
+      }
+
 ${getPlayerThemeVariableCss(`#${APP}-player`)}
 
       .${APP}__like-burst {
@@ -532,6 +636,96 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         100% {
           opacity: 0;
           transform: translate(-50%, calc(-50% - 24px)) scale(0.98);
+        }
+      }
+
+      .${APP}__auto-play-countdown {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        z-index: 10040;
+        box-sizing: border-box;
+        min-width: 240px;
+        max-width: min(360px, calc(100% - 28px));
+        padding: 10px 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 12px;
+        color: rgba(255, 255, 255, 0.94);
+        background: rgba(23, 25, 31, 0.92);
+        box-shadow: 0 14px 42px rgba(0, 0, 0, 0.34);
+        pointer-events: none;
+        animation: ${APP}-auto-play-countdown-in 0.18s ease-out both;
+      }
+
+      .${APP}__auto-play-countdown-ring {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 auto;
+        display: block;
+        transform: rotate(-90deg);
+      }
+
+      .${APP}__auto-play-countdown-track,
+      .${APP}__auto-play-countdown-progress {
+        fill: none;
+        stroke-width: 2.4;
+      }
+
+      .${APP}__auto-play-countdown-track {
+        stroke: rgba(255, 255, 255, 0.22);
+      }
+
+      .${APP}__auto-play-countdown-progress {
+        stroke: var(--${APP}-brand);
+        stroke-linecap: round;
+        stroke-dasharray: 62.83;
+        stroke-dashoffset: var(--${APP}-countdown-start-offset, 0);
+        animation: ${APP}-auto-play-countdown-ring var(--${APP}-countdown-duration, 5s) linear forwards;
+      }
+
+      .${APP}__auto-play-countdown-text {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+      }
+
+      .${APP}__auto-play-countdown-title {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font: 700 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__auto-play-countdown-next {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        color: rgba(255, 255, 255, 0.84);
+        font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__auto-play-countdown-hint {
+        color: rgba(255, 255, 255, 0.62);
+        font: 500 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      @keyframes ${APP}-auto-play-countdown-in {
+        from {
+          opacity: 0;
+          transform: translateY(-6px) scale(0.98);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      @keyframes ${APP}-auto-play-countdown-ring {
+        to {
+          stroke-dashoffset: 62.83;
         }
       }
 

@@ -98,6 +98,16 @@ export function createFitLayoutIcon() {
   ]));
 }
 
+export function createGamepadIcon() {
+  return createIconFromMarkup(lucideIconMarkup([
+    'M6 11h4',
+    'M8 9v4',
+    'M15 12h.01',
+    'M18 10h.01',
+    'M17.32 5H6.68a4 4 0 0 0-3.98 3.59c-.01.05-.01.1-.02.15C2.6 9.42 2 14.46 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.41-1.41A2 2 0 0 1 9.83 16h4.34a2 2 0 0 1 1.42.59L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.54-.6-6.58-.68-7.26l-.02-.15A4 4 0 0 0 17.32 5Z',
+  ]));
+}
+
 export function createCloseIcon() {
   return createIconFromMarkup(lucideIconMarkup([
     'M18 6 6 18',

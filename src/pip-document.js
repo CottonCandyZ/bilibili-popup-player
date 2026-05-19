@@ -101,6 +101,9 @@ export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, 
         width: 100% !important;
         height: 100% !important;
       }
+      #bilibili-player .bpx-player-video-wrap {
+        position: relative !important;
+      }
       #stage .${APP}__live-player-controls-layer {
         overflow: visible !important;
       }
@@ -190,6 +193,85 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         100% {
           opacity: 0;
           transform: translate(-50%, calc(-50% - 24px)) scale(0.98);
+        }
+      }
+      .${APP}__auto-play-countdown {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        z-index: 10040;
+        box-sizing: border-box;
+        min-width: 240px;
+        max-width: min(360px, calc(100% - 28px));
+        padding: 10px 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 12px;
+        color: rgba(255, 255, 255, 0.94);
+        background: rgba(23, 25, 31, 0.92);
+        box-shadow: 0 14px 42px rgba(0, 0, 0, 0.34);
+        pointer-events: none;
+        animation: ${APP}-auto-play-countdown-in 0.18s ease-out both;
+      }
+      .${APP}__auto-play-countdown-ring {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 auto;
+        display: block;
+        transform: rotate(-90deg);
+      }
+      .${APP}__auto-play-countdown-track,
+      .${APP}__auto-play-countdown-progress {
+        fill: none;
+        stroke-width: 2.4;
+      }
+      .${APP}__auto-play-countdown-track {
+        stroke: rgba(255, 255, 255, 0.22);
+      }
+      .${APP}__auto-play-countdown-progress {
+        stroke: var(--${APP}-brand);
+        stroke-linecap: round;
+        stroke-dasharray: 62.83;
+        stroke-dashoffset: var(--${APP}-countdown-start-offset, 0);
+        animation: ${APP}-auto-play-countdown-ring var(--${APP}-countdown-duration, 5s) linear forwards;
+      }
+      .${APP}__auto-play-countdown-text {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+      }
+      .${APP}__auto-play-countdown-title {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font: 700 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__auto-play-countdown-next {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        color: rgba(255, 255, 255, 0.84);
+        font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__auto-play-countdown-hint {
+        color: rgba(255, 255, 255, 0.62);
+        font: 500 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      @keyframes ${APP}-auto-play-countdown-in {
+        from {
+          opacity: 0;
+          transform: translateY(-6px) scale(0.98);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+      @keyframes ${APP}-auto-play-countdown-ring {
+        to {
+          stroke-dashoffset: 62.83;
         }
       }
       #comments {

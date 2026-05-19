@@ -1,12 +1,19 @@
 import { createEffect, createSignal, onCleanup } from 'solid-js';
 import { render } from 'solid-js/web';
-import { APP, SETTINGS_CLASS, STORAGE_DIRECT_CLICK, STORAGE_MODE } from './constants.js';
+import {
+  APP,
+  SETTINGS_CLASS,
+  STORAGE_AUTO_PLAY_COUNTDOWN,
+  STORAGE_DIRECT_CLICK,
+  STORAGE_MODE,
+} from './constants.js';
 import { createSettingsIcon } from './icons.js';
 import { setStorageItem } from './storage.js';
 
-export function createSettingsUi({ state, getShadowRoot, syncCardButtons, supportsPip }) {
+export function createSettingsUi({ state, getShadowRoot, syncCardButtons, supportsPip, onAutoPlayCountdownChange }) {
   const [modeSignal, setModeSignal] = createSignal(state.mode);
   const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
+  const [autoPlayCountdownSignal, setAutoPlayCountdownSignal] = createSignal(state.autoPlayCountdown);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   function ensure() {
@@ -51,6 +58,9 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
       createSettingsLabel('封面点击'),
       createSettingsOption('direct', 'off', '按钮起播'),
       createSettingsOption('direct', 'on', '封面起播'),
+      createSettingsLabel('自动联播提示'),
+      createSettingsOption('countdown', 'on', '显示倒计时'),
+      createSettingsOption('countdown', 'off', '隐藏倒计时'),
     );
     menu.append(...items);
 
@@ -74,7 +84,8 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
     createEffect(() => {
       const mode = modeSignal();
       const directClick = directClickSignal();
-      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'}`;
+      const autoPlayCountdown = autoPlayCountdownSignal();
+      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'} / ${autoPlayCountdown ? '显示倒计时' : '隐藏倒计时'}`;
     });
 
     root.append(button, menu);
@@ -103,13 +114,16 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
       event.stopPropagation();
       if (type === 'mode') setPlaybackMode(value);
       else if (type === 'direct') setDirectCoverClick(value === 'on');
+      else if (type === 'countdown') setAutoPlayCountdown(value === 'on');
     });
     createEffect(() => {
       const active = type === 'mode'
         ? modeSignal() === value
         : type === 'direct'
           ? directClickSignal() === (value === 'on')
-          : false;
+          : type === 'countdown'
+            ? autoPlayCountdownSignal() === (value === 'on')
+            : false;
       option.classList.toggle(`${APP}--active`, active);
       option.textContent = active ? `✓ ${text}` : text;
     });
@@ -130,6 +144,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
   function sync() {
     setModeSignal(state.mode);
     setDirectClickSignal(state.directClick);
+    setAutoPlayCountdownSignal(state.autoPlayCountdown);
     syncCardButtons();
   }
 
@@ -146,6 +161,13 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
     setStorageItem(STORAGE_DIRECT_CLICK, value ? '1' : '0');
     setDirectClickSignal(value);
     syncCardButtons();
+  }
+
+  function setAutoPlayCountdown(value) {
+    state.autoPlayCountdown = value;
+    setStorageItem(STORAGE_AUTO_PLAY_COUNTDOWN, value ? '1' : '0');
+    setAutoPlayCountdownSignal(value);
+    onAutoPlayCountdownChange?.(value);
   }
 
   function destroy() {
