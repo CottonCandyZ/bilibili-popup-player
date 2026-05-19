@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.15
+// @version      4.0.16
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
@@ -3545,7 +3545,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section tabindex=-1><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><span title=手柄未连接 aria-label=手柄未连接 tabindex=0><span role=tooltip><span>手柄未连接</span><span>连接后按任意键确认</span><span>A 下一个</span><span>B 上一个</span><span>Y 网页内全屏</span><span>LB / RB 切换标签</span><span>十字上 暂停/播放</span><span>十字左右 控制进度</span><span>摇杆上下 滚动列表</span></span></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=自动适配视频和评论区 aria-label=自动适配视频和评论区></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section tabindex=-1><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><span title=手柄未连接 aria-label=手柄未连接 tabindex=0><span role=tooltip><span>手柄未连接</span><span>连接后按任意键确认</span><span>A 下一个</span><span>B 上一个</span><span>Y 网页内全屏</span><span>LB / RB 循环切换标签</span><span>X 暂停/播放</span><span>LT / RT 控制进度</span><span>摇杆上下 滚动列表</span></span></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=自动适配视频和评论区 aria-label=自动适配视频和评论区></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
     _tmpl$2 = /*#__PURE__*/template(`<button type=button title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。">`),
     _tmpl$3 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=video-intro></div><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=live-panel><div id=live-list></div><div id=live-empty>直播列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>相关推荐加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
@@ -10123,12 +10123,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         if (!gamepad) continue;
         handleGamepadButton(kind, gamepad, 0, 'next', now, false);
         handleGamepadButton(kind, gamepad, 1, 'previous', now, false);
+        handleGamepadButton(kind, gamepad, 2, 'toggle-play', now, false);
         handleGamepadButton(kind, gamepad, 3, 'web-fullscreen', now, false);
         handleGamepadButton(kind, gamepad, 4, 'previous-tab', now, false);
         handleGamepadButton(kind, gamepad, 5, 'next-tab', now, false);
-        handleGamepadButton(kind, gamepad, 12, 'toggle-play', now, false);
-        handleGamepadButton(kind, gamepad, 14, 'arrow-left', now, true);
-        handleGamepadButton(kind, gamepad, 15, 'arrow-right', now, true);
+        handleGamepadButton(kind, gamepad, 6, 'arrow-left', now, true);
+        handleGamepadButton(kind, gamepad, 7, 'arrow-right', now, true);
         handleGamepadAxes(kind, gamepad);
       }
       state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
@@ -10138,7 +10138,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       state.gamepadRepeatAt.clear();
       for (const gamepad of gamepads) {
         if (!gamepad) continue;
-        [0, 1, 3, 4, 5, 12, 14, 15].forEach(buttonIndex => {
+        [0, 1, 2, 3, 4, 5, 6, 7].forEach(buttonIndex => {
           state.gamepadButtons.set(`${gamepad.index}:${buttonIndex}`, Boolean(gamepad.buttons?.[buttonIndex]?.pressed));
         });
       }

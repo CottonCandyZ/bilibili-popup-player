@@ -4914,12 +4914,12 @@ import {
       if (!gamepad) continue;
       handleGamepadButton(kind, gamepad, 0, 'next', now, false);
       handleGamepadButton(kind, gamepad, 1, 'previous', now, false);
+      handleGamepadButton(kind, gamepad, 2, 'toggle-play', now, false);
       handleGamepadButton(kind, gamepad, 3, 'web-fullscreen', now, false);
       handleGamepadButton(kind, gamepad, 4, 'previous-tab', now, false);
       handleGamepadButton(kind, gamepad, 5, 'next-tab', now, false);
-      handleGamepadButton(kind, gamepad, 12, 'toggle-play', now, false);
-      handleGamepadButton(kind, gamepad, 14, 'arrow-left', now, true);
-      handleGamepadButton(kind, gamepad, 15, 'arrow-right', now, true);
+      handleGamepadButton(kind, gamepad, 6, 'arrow-left', now, true);
+      handleGamepadButton(kind, gamepad, 7, 'arrow-right', now, true);
       handleGamepadAxes(kind, gamepad);
     }
     state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
@@ -4930,7 +4930,7 @@ import {
     state.gamepadRepeatAt.clear();
     for (const gamepad of gamepads) {
       if (!gamepad) continue;
-      [0, 1, 3, 4, 5, 12, 14, 15].forEach((buttonIndex) => {
+      [0, 1, 2, 3, 4, 5, 6, 7].forEach((buttonIndex) => {
         state.gamepadButtons.set(`${gamepad.index}:${buttonIndex}`, Boolean(gamepad.buttons?.[buttonIndex]?.pressed));
       });
     }
