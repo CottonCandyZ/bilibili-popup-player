@@ -5,15 +5,17 @@ import {
   SETTINGS_CLASS,
   STORAGE_AUTO_PLAY_COUNTDOWN,
   STORAGE_DIRECT_CLICK,
+  STORAGE_GAMEPAD_CONTROLS,
   STORAGE_MODE,
 } from './constants.js';
 import { createSettingsIcon } from './icons.js';
 import { setStorageItem } from './storage.js';
 
-export function createSettingsUi({ state, getShadowRoot, syncCardButtons, supportsPip, onAutoPlayCountdownChange }) {
+export function createSettingsUi({ state, getShadowRoot, syncCardButtons, supportsPip, onAutoPlayCountdownChange, onGamepadControlsChange }) {
   const [modeSignal, setModeSignal] = createSignal(state.mode);
   const [directClickSignal, setDirectClickSignal] = createSignal(state.directClick);
   const [autoPlayCountdownSignal, setAutoPlayCountdownSignal] = createSignal(state.autoPlayCountdown);
+  const [gamepadControlsSignal, setGamepadControlsSignal] = createSignal(state.gamepadControlsEnabled);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   function ensure() {
@@ -61,6 +63,9 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
       createSettingsLabel('自动联播提示'),
       createSettingsOption('countdown', 'on', '显示倒计时'),
       createSettingsOption('countdown', 'off', '隐藏倒计时'),
+      createSettingsLabel('手柄控制'),
+      createSettingsOption('gamepad', 'on', '启用手柄'),
+      createSettingsOption('gamepad', 'off', '禁用手柄'),
     );
     menu.append(...items);
 
@@ -85,7 +90,8 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
       const mode = modeSignal();
       const directClick = directClickSignal();
       const autoPlayCountdown = autoPlayCountdownSignal();
-      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'} / ${autoPlayCountdown ? '显示倒计时' : '隐藏倒计时'}`;
+      const gamepadControls = gamepadControlsSignal();
+      button.title = `小窗播放设置：${mode === 'pip' ? 'Document PiP' : '网页内弹窗'} / ${directClick ? '封面起播' : '按钮起播'} / ${autoPlayCountdown ? '显示倒计时' : '隐藏倒计时'} / ${gamepadControls ? '启用手柄' : '禁用手柄'}`;
     });
 
     root.append(button, menu);
@@ -115,6 +121,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
       if (type === 'mode') setPlaybackMode(value);
       else if (type === 'direct') setDirectCoverClick(value === 'on');
       else if (type === 'countdown') setAutoPlayCountdown(value === 'on');
+      else if (type === 'gamepad') setGamepadControls(value === 'on');
     });
     createEffect(() => {
       const active = type === 'mode'
@@ -123,7 +130,9 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
           ? directClickSignal() === (value === 'on')
           : type === 'countdown'
             ? autoPlayCountdownSignal() === (value === 'on')
-            : false;
+            : type === 'gamepad'
+              ? gamepadControlsSignal() === (value === 'on')
+              : false;
       option.classList.toggle(`${APP}--active`, active);
       option.textContent = active ? `✓ ${text}` : text;
     });
@@ -145,6 +154,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
     setModeSignal(state.mode);
     setDirectClickSignal(state.directClick);
     setAutoPlayCountdownSignal(state.autoPlayCountdown);
+    setGamepadControlsSignal(state.gamepadControlsEnabled);
     syncCardButtons();
   }
 
@@ -168,6 +178,13 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
     setStorageItem(STORAGE_AUTO_PLAY_COUNTDOWN, value ? '1' : '0');
     setAutoPlayCountdownSignal(value);
     onAutoPlayCountdownChange?.(value);
+  }
+
+  function setGamepadControls(value) {
+    state.gamepadControlsEnabled = value;
+    setStorageItem(STORAGE_GAMEPAD_CONTROLS, value ? '1' : '0');
+    setGamepadControlsSignal(value);
+    onGamepadControlsChange?.(value);
   }
 
   function destroy() {

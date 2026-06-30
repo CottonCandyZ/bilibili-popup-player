@@ -605,9 +605,85 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         color: var(--brand_blue, #00aeec);
         background: transparent;
       }
+      .${APP}__playlist-card.${APP}--contains-selected {
+        color: var(--brand_blue, #00aeec);
+      }
+      .${APP}__playlist-section-title {
+        grid-column: 1 / -1;
+        box-sizing: border-box;
+        padding: 14px 14px 6px;
+        color: var(--text3, #9499a0);
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__playlist-card--part {
+        grid-template-columns: clamp(96px, 26%, 132px) minmax(0, 1fr);
+      }
+      body.comments-right .${APP}__playlist-card--part {
+        padding-left: 26px;
+      }
+      .${APP}__playlist-card--collapsible {
+        grid-template-columns: clamp(112px, 30%, 156px) minmax(0, 1fr) 28px;
+      }
+      .${APP}__playlist-card--child {
+        grid-column: 1 / -1;
+        grid-template-columns: minmax(0, 1fr) auto;
+        column-gap: 12px;
+        align-items: center;
+        padding: 10px 14px 10px 40px;
+      }
+      body.comments-right .${APP}__playlist-card--child {
+        padding-left: 40px;
+      }
+      .${APP}__playlist-card--child .${APP}__playlist-info {
+        padding: 0;
+      }
+      .${APP}__playlist-card--child .${APP}__playlist-title {
+        font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__playlist-card--child .${APP}__playlist-title-text {
+        display: block;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .${APP}__playlist-inline-duration {
+        color: var(--text3, #9499a0);
+        font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__playlist-toggle {
+        appearance: none;
+        width: 28px;
+        height: 28px;
+        display: inline-grid;
+        place-items: center;
+        align-self: center;
+        border: 0;
+        border-radius: 6px;
+        color: var(--text3, #9499a0);
+        background: transparent;
+        cursor: pointer;
+      }
+      .${APP}__playlist-toggle:hover,
+      .${APP}__playlist-toggle:focus-visible {
+        color: var(--brand_blue, #00aeec);
+        background: var(--graph_bg_thin, #f6f7f8);
+        outline: none;
+      }
+      .${APP}__playlist-toggle-icon {
+        width: 9px;
+        height: 9px;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(45deg) translateY(-2px);
+        transition: transform 0.16s ease;
+      }
+      .${APP}__playlist-card--collapsible.${APP}--expanded .${APP}__playlist-toggle-icon {
+        transform: rotate(-135deg) translate(-1px, -1px);
+      }
       .${APP}__playlist-card:hover .${APP}__playlist-title,
       .${APP}__playlist-card:focus-visible .${APP}__playlist-title,
-      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title {
+      .${APP}__playlist-card.${APP}--selected .${APP}__playlist-title,
+      .${APP}__playlist-card.${APP}--contains-selected .${APP}__playlist-title {
         color: var(--brand_blue, #00aeec);
       }
       .${APP}__playlist-card.${APP}--selected .${APP}__playlist-subtitle,

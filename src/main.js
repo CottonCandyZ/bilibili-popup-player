@@ -8,9 +8,14 @@ import {
   SETTINGS_CLASS,
   STORAGE_COMMENT_LAYOUT,
   STORAGE_COMMENT_WIDTH,
+  STORAGE_HOME_COMMENT_LAYOUT,
+  STORAGE_HOME_COMMENT_WIDTH,
+  STORAGE_PIP_COMMENT_LAYOUT,
+  STORAGE_PIP_COMMENT_WIDTH,
   STORAGE_AUTO_PLAY_COUNTDOWN,
   STORAGE_AUTO_PLAY_NEXT,
   STORAGE_DIRECT_CLICK,
+  STORAGE_GAMEPAD_CONTROLS,
   STORAGE_LAST_PLAYED,
   STORAGE_MODAL_SIZE,
   STORAGE_MODE,
@@ -85,6 +90,7 @@ import {
   isCoverLink,
   isPlaybackPage,
   isSpacePage,
+  normalizeVideoHref,
 } from './video-meta.js';
 
   if (ENABLED_URL_RE.test(location.href)) {
@@ -132,12 +138,10 @@ import {
     }
   })();
 
-  const initialCommentWidth = (() => {
-    const value = Number(getStorageItem(STORAGE_COMMENT_WIDTH));
-    return clampCommentWidth(Number.isFinite(value) ? value : COMMENT_WIDTH_DEFAULT);
-  })();
-
-  const initialCommentLayout = getStorageItem(STORAGE_COMMENT_LAYOUT) === 'bottom' ? 'bottom' : 'right';
+  const initialHomeCommentWidth = readCommentWidth(STORAGE_HOME_COMMENT_WIDTH);
+  const initialPipCommentWidth = readCommentWidth(STORAGE_PIP_COMMENT_WIDTH);
+  const initialHomeCommentLayout = readCommentLayout(STORAGE_HOME_COMMENT_LAYOUT);
+  const initialPipCommentLayout = readCommentLayout(STORAGE_PIP_COMMENT_LAYOUT);
   const initialModalSize = (() => {
     try {
       const value = JSON.parse(getStorageItem(STORAGE_MODAL_SIZE, 'null') || 'null');
@@ -160,6 +164,7 @@ import {
     gamepadButtons: new Map(),
     gamepadRepeatAt: new Map(),
     gamepadConnected: false,
+    gamepadControlsEnabled: getStorageItem(STORAGE_GAMEPAD_CONTROLS) !== '0',
     gamepadIgnoreInput: false,
     autoPlayHintTimer: 0,
     lastFocus: null,
@@ -168,8 +173,10 @@ import {
     directClick: getStorageItem(STORAGE_DIRECT_CLICK) === '1',
     autoPlayNext: getStorageItem(STORAGE_AUTO_PLAY_NEXT) === '1',
     autoPlayCountdown: getStorageItem(STORAGE_AUTO_PLAY_COUNTDOWN) !== '0',
-    commentLayout: initialCommentLayout,
-    commentWidth: initialCommentWidth,
+    homeCommentLayout: initialHomeCommentLayout,
+    pipCommentLayout: initialPipCommentLayout,
+    homeCommentWidth: initialHomeCommentWidth,
+    pipCommentWidth: initialPipCommentWidth,
     modalSize: initialModalSize,
     lastPlayed: initialLastPlayed,
     playlistLastPlayed: initialLastPlayed,
@@ -293,12 +300,13 @@ import {
     syncCommentLayout,
     supportsPip: supportsDocumentPip,
     onAutoPlayCountdownChange,
+    onGamepadControlsChange,
   });
   const commentsTabsUi = createCommentsTabsUi({
     state,
     getHomeRenderer: () => homeRenderer,
     getPipRenderer: () => pipRenderer,
-    getCommentLayout: () => state.commentLayout,
+    getCommentLayout,
     onTabChange: onCommentsTabChange,
     onListChange: syncPlayerHandoffAvailability,
     openWithRenderer,
@@ -598,13 +606,14 @@ import {
   function withPlaybackTime(href, seconds) {
     if (!href) return '';
     const time = Math.floor(Number(seconds));
-    if (!Number.isFinite(time) || time <= 0) return href;
+    const normalizedHref = normalizeVideoHref(href) || href;
+    if (!Number.isFinite(time) || time <= 0) return normalizedHref;
     try {
-      const url = new URL(href, location.href);
+      const url = new URL(normalizedHref, location.href);
       url.searchParams.set('t', String(time));
       return url.href;
     } catch {
-      return href;
+      return normalizedHref;
     }
   }
 
@@ -1456,7 +1465,7 @@ import {
     if (!/^BV[a-zA-Z0-9]+$/.test(String(bvid || ''))) return null;
 
     const page = Number(url.searchParams.get(URL_PARAM_PAGE) || 0);
-    const href = new URL(`/video/${bvid}/`, location.origin);
+    const href = new URL(`/video/${bvid}/`, 'https://www.bilibili.com');
     if (Number.isInteger(page) && page > 1) href.searchParams.set('p', String(page));
 
     return {
@@ -2058,7 +2067,7 @@ import {
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
-      screenKind: getScreenKind(runtime),
+      screenKind: getScreenKind(runtime, 'home'),
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
     };
@@ -2266,7 +2275,7 @@ import {
     disposePipPlayer();
     disposePipComments();
 
-    const commentLayoutClass = state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom';
+    const commentLayoutClass = getCommentLayout('pip') === 'right' ? 'comments-right' : 'comments-bottom';
 
     writePipDocument(pipWindow, renderPipPlayerDocument({
       title: bootstrap.title,
@@ -2294,7 +2303,7 @@ import {
     if (!pipWindow.nano) throw new Error('nano not available after core load');
     attachPipCommentResizer(pipWindow);
     attachPipWindowResizeSync(pipWindow);
-    syncCommentWidth();
+    syncCommentWidth('pip');
     connectPipPlayer(pipWindow, bootstrap, token);
     mountPipComments(pipWindow, bootstrap, token);
   }
@@ -2340,7 +2349,7 @@ import {
       button.type = 'button';
       button.className = `${APP}__live-player-only-control`;
     }
-    installLivePlayerOnlyControlHandlers(button);
+    installLivePlayerOnlyControlHandlers(button, 'home');
     layer.classList.add(`${APP}__live-player-controls-layer`);
     if (button.parentElement !== layer) layer.appendChild(button);
     syncHomePlayerOnlyControl();
@@ -2394,18 +2403,18 @@ import {
     return candidates[0]?.element || null;
   }
 
-  function toggleHomePlayerOnly() {
-    setCommentLayout(state.commentLayout === 'right' ? 'bottom' : 'right');
+  function togglePlayerOnly(kind) {
+    setCommentLayout(kind, getCommentLayout(kind) === 'right' ? 'bottom' : 'right');
   }
 
-  function installLivePlayerOnlyControlHandlers(button) {
+  function installLivePlayerOnlyControlHandlers(button, kind) {
     if (!button || button.__biliPopupPlayerNanoLiveOnlyBound) return;
     button.__biliPopupPlayerNanoLiveOnlyBound = true;
     button.addEventListener('pointerdown', (event) => {
       if (event.button != null && event.button !== 0) return;
       stopLivePlayerOnlyControlEvent(event);
       button.__biliPopupPlayerNanoLiveOnlyPointer = true;
-      toggleHomePlayerOnly();
+      togglePlayerOnly(kind);
     });
     button.addEventListener('click', (event) => {
       stopLivePlayerOnlyControlEvent(event);
@@ -2413,7 +2422,7 @@ import {
         button.__biliPopupPlayerNanoLiveOnlyPointer = false;
         return;
       }
-      toggleHomePlayerOnly();
+      togglePlayerOnly(kind);
     });
   }
 
@@ -2426,7 +2435,7 @@ import {
   function syncHomePlayerOnlyControl() {
     const button = state.home.ui?.playerRoot?.querySelector?.(`.${APP}__live-player-only-control`);
     if (!button) return;
-    const active = state.commentLayout !== 'right';
+    const active = getCommentLayout('home') !== 'right';
     button.title = active ? '退出宽屏' : '宽屏';
     button.setAttribute('aria-label', button.title);
     button.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
@@ -2443,7 +2452,7 @@ import {
         title: bootstrap.title,
         stylesheets: getBiliThemeStylesheets(),
         themeClassMarkup: getPipThemeClassMarkup(),
-        commentLayoutClass: state.commentLayout === 'right' ? 'comments-right' : 'comments-bottom',
+        commentLayoutClass: getCommentLayout('pip') === 'right' ? 'comments-right' : 'comments-bottom',
       }));
       mountPipPlayerPage({
         targetDocument: pipWindow.document,
@@ -2523,7 +2532,7 @@ import {
       button.type = 'button';
       button.className = `${APP}__live-player-only-control`;
     }
-    installLivePlayerOnlyControlHandlers(button);
+    installLivePlayerOnlyControlHandlers(button, 'pip');
     layer.classList.add(`${APP}__live-player-controls-layer`);
     if (button.parentElement !== layer) layer.appendChild(button);
     syncPipLivePlayerOnlyControl(targetWindow);
@@ -2567,7 +2576,7 @@ import {
     if (!targetWindow || targetWindow.closed) return;
     const button = targetWindow.document?.getElementById('live-player')?.querySelector?.(`.${APP}__live-player-only-control`);
     if (!button) return;
-    const active = state.commentLayout !== 'right';
+    const active = getCommentLayout('pip') !== 'right';
     button.title = active ? '退出宽屏' : '宽屏';
     button.setAttribute('aria-label', button.title);
     button.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
@@ -2657,7 +2666,7 @@ import {
     attachPipPlaylistAutoRefresh(targetWindow);
     attachPipCommentResizer(targetWindow);
     attachPipWindowResizeSync(targetWindow);
-    syncCommentWidth();
+    syncCommentWidth('pip');
     syncPipSize(targetWindow);
     setPipStatus('换源中');
 
@@ -2768,7 +2777,7 @@ import {
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
-      screenKind: getScreenKind(targetWindow.nano),
+      screenKind: getScreenKind(targetWindow.nano, 'pip'),
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
     };
@@ -2793,20 +2802,56 @@ import {
     return result;
   }
 
-  function setCommentLayout(value) {
-    const next = value === 'right' ? 'right' : 'bottom';
-    if (state.commentLayout === next) return;
-    state.commentLayout = next;
-    setStorageItem(STORAGE_COMMENT_LAYOUT, next);
-    syncCommentLayout();
-    syncHomePlayerOnlyControl();
-    syncPipLivePlayerOnlyControl(state.pip.win);
-    remountCommentsForLayout();
+  function readCommentLayout(storageKey) {
+    const value = getStorageItem(storageKey, getStorageItem(STORAGE_COMMENT_LAYOUT, 'right'));
+    return value === 'bottom' ? 'bottom' : 'right';
   }
 
-  function syncCommentLayout() {
-    syncHomeCommentLayout();
-    if (state.pip.win && !state.pip.win.closed) syncPipCommentLayout(state.pip.win);
+  function readCommentWidth(storageKey) {
+    const value = Number(getStorageItem(storageKey, getStorageItem(STORAGE_COMMENT_WIDTH)));
+    return clampCommentWidth(Number.isFinite(value) ? value : COMMENT_WIDTH_DEFAULT);
+  }
+
+  function getCommentLayout(kind) {
+    return kind === 'pip' ? state.pipCommentLayout : state.homeCommentLayout;
+  }
+
+  function getCommentWidth(kind) {
+    return kind === 'pip' ? state.pipCommentWidth : state.homeCommentWidth;
+  }
+
+  function setCommentWidthValue(kind, width) {
+    if (kind === 'pip') state.pipCommentWidth = width;
+    else state.homeCommentWidth = width;
+  }
+
+  function getCommentLayoutStorageKey(kind) {
+    return kind === 'pip' ? STORAGE_PIP_COMMENT_LAYOUT : STORAGE_HOME_COMMENT_LAYOUT;
+  }
+
+  function getCommentWidthStorageKey(kind) {
+    return kind === 'pip' ? STORAGE_PIP_COMMENT_WIDTH : STORAGE_HOME_COMMENT_WIDTH;
+  }
+
+  function setCommentLayout(kind, value) {
+    const next = value === 'right' ? 'right' : 'bottom';
+    if (kind === 'pip') {
+      if (state.pipCommentLayout === next) return;
+      state.pipCommentLayout = next;
+    } else {
+      if (state.homeCommentLayout === next) return;
+      state.homeCommentLayout = next;
+    }
+    setStorageItem(getCommentLayoutStorageKey(kind), next);
+    syncCommentLayout(kind);
+    if (kind === 'pip') syncPipLivePlayerOnlyControl(state.pip.win);
+    else syncHomePlayerOnlyControl();
+    remountCommentsForLayout(kind);
+  }
+
+  function syncCommentLayout(kind) {
+    if (!kind || kind === 'home') syncHomeCommentLayout();
+    if ((!kind || kind === 'pip') && state.pip.win && !state.pip.win.closed) syncPipCommentLayout(state.pip.win);
     scheduleSelectedPlaylistScrollForLayout();
     scheduleHomeBottomFixedWrapperSync();
     if (state.pip.win && !state.pip.win.closed) schedulePipBottomFixedWrapperSync(state.pip.win);
@@ -2836,36 +2881,45 @@ import {
 
   function scheduleSelectedPlaylistScrollForLayout() {
     window.requestAnimationFrame(() => {
-      if (state.commentLayout !== 'right') return;
-      if (state.home.activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView('home');
-      if (state.home.activeCommentsTab === 'live') scrollSelectedLiveIntoView('home');
-      if (state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'playlist') {
+      if (getCommentLayout('home') === 'right' && state.home.activeCommentsTab === 'playlist') scrollSelectedPlaylistIntoView('home');
+      if (getCommentLayout('home') === 'right' && state.home.activeCommentsTab === 'live') scrollSelectedLiveIntoView('home');
+      if (getCommentLayout('pip') === 'right' && state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'playlist') {
         scrollSelectedPlaylistIntoView('pip');
       }
-      if (state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'live') {
+      if (getCommentLayout('pip') === 'right' && state.pip.win && !state.pip.win.closed && state.pip.activeCommentsTab === 'live') {
         scrollSelectedLiveIntoView('pip');
       }
     });
   }
 
-  function syncCommentWidth() {
-    state.commentWidth = clampCommentWidth(state.commentWidth);
-    const value = `${state.commentWidth}px`;
+  function syncCommentWidth(kind) {
+    if (!kind || kind === 'home') syncHomeCommentWidth();
+    if (!kind || kind === 'pip') syncPipCommentWidth();
+  }
+
+  function syncHomeCommentWidth() {
+    state.homeCommentWidth = clampCommentWidth(state.homeCommentWidth);
+    const value = `${state.homeCommentWidth}px`;
     state.home.ui?.overlay?.style.setProperty(`--${APP}-comments-width`, value);
     if (state.home.ui?.commentsResizer) {
-      state.home.ui.commentsResizer.setAttribute('aria-valuenow', String(state.commentWidth));
+      state.home.ui.commentsResizer.setAttribute('aria-valuenow', String(state.homeCommentWidth));
       state.home.ui.commentsResizer.setAttribute('aria-valuemin', String(COMMENT_WIDTH_MIN));
       state.home.ui.commentsResizer.setAttribute('aria-valuemax', String(COMMENT_WIDTH_MAX));
     }
+    syncHomeSize();
+  }
+
+  function syncPipCommentWidth() {
+    state.pipCommentWidth = clampCommentWidth(state.pipCommentWidth);
+    const value = `${state.pipCommentWidth}px`;
     const pipDocument = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
     pipDocument?.documentElement?.style.setProperty(`--${APP}-comments-width`, value);
     const pipResizer = pipDocument?.getElementById('comments-resizer');
     if (pipResizer) {
-      pipResizer.setAttribute('aria-valuenow', String(state.commentWidth));
+      pipResizer.setAttribute('aria-valuenow', String(state.pipCommentWidth));
       pipResizer.setAttribute('aria-valuemin', String(COMMENT_WIDTH_MIN));
       pipResizer.setAttribute('aria-valuemax', String(COMMENT_WIDTH_MAX));
     }
-    syncHomeSize();
     if (state.pip.win && !state.pip.win.closed) syncPipSize(state.pip.win);
   }
 
@@ -2989,11 +3043,11 @@ import {
     if (kind === 'home') {
       const ui = state.home.ui;
       if (!ui) return null;
-      return state.commentLayout === 'right' ? ui.playlistPanel : ui.content;
+      return getCommentLayout('home') === 'right' ? ui.playlistPanel : ui.content;
     }
     const doc = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
     if (!doc) return null;
-    return state.commentLayout === 'right' ? doc.getElementById('playlist-panel') : doc.getElementById('layout');
+    return getCommentLayout('pip') === 'right' ? doc.getElementById('playlist-panel') : doc.getElementById('layout');
   }
 
   function isPlaylistAutoRefreshActive(kind) {
@@ -3127,19 +3181,19 @@ import {
   function syncHomeCommentLayout() {
     const ui = state.home.ui;
     if (!ui?.overlay) return;
-    ui.overlay.classList.toggle(`${APP}--comments-right`, state.commentLayout === 'right');
-    syncCommentWidth();
+    ui.overlay.classList.toggle(`${APP}--comments-right`, getCommentLayout('home') === 'right');
+    syncCommentWidth('home');
     syncHomeBackToTopButton();
     scheduleHomeBottomFixedWrapperSync();
   }
 
   function getHomeCommentsScrollContainer() {
-    if (state.commentLayout !== 'right') return state.home.ui?.content;
+    if (getCommentLayout('home') !== 'right') return state.home.ui?.content;
     return getHomeActiveCommentsPanel();
   }
 
   function getHomeCommentInstanceScrollContainer() {
-    if (state.commentLayout !== 'right') return state.home.ui?.content;
+    if (getCommentLayout('home') !== 'right') return state.home.ui?.content;
     return state.home.ui?.commentsPanel;
   }
 
@@ -3157,9 +3211,9 @@ import {
     const body = targetWindow.document?.body;
     if (!body) return;
     const { resize = true } = options;
-    body.classList.toggle('comments-right', state.commentLayout === 'right');
-    body.classList.toggle('comments-bottom', state.commentLayout !== 'right');
-    syncCommentWidth();
+    body.classList.toggle('comments-right', getCommentLayout('pip') === 'right');
+    body.classList.toggle('comments-bottom', getCommentLayout('pip') !== 'right');
+    syncCommentWidth('pip');
     attachPipCommentScrollSync(targetWindow);
     attachPipBackToTopSync(targetWindow);
     syncPipBackToTopButton(targetWindow);
@@ -3167,14 +3221,14 @@ import {
     if (resize) syncPipSize(targetWindow);
   }
 
-  function remountCommentsForLayout() {
+  function remountCommentsForLayout(kind) {
     const token = state.switchToken;
-    if (state.home.bootstrap && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) {
+    if ((!kind || kind === 'home') && state.home.bootstrap && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) {
       disposeHomeComments();
       if (state.home.ui.commentsMount) state.home.ui.commentsMount.textContent = '评论加载中...';
       mountHomeComments(state.home.bootstrap, token);
     }
-    if (state.pip.bootstrap && state.pip.win && !state.pip.win.closed) {
+    if ((!kind || kind === 'pip') && state.pip.bootstrap && state.pip.win && !state.pip.win.closed) {
       disposePipComments();
       const mount = state.pip.win.document?.getElementById('comments-mount');
       if (mount) mount.textContent = '评论加载中...';
@@ -3185,14 +3239,14 @@ import {
   function getPipCommentsScrollContainer(targetWindow) {
     if (!targetWindow || targetWindow.closed) return null;
     const doc = targetWindow.document;
-    if (state.commentLayout !== 'right') return doc.getElementById('layout');
+    if (getCommentLayout('pip') !== 'right') return doc.getElementById('layout');
     return getPipActiveCommentsPanel(doc);
   }
 
   function getPipCommentInstanceScrollContainer(targetWindow) {
     if (!targetWindow || targetWindow.closed) return null;
     const doc = targetWindow.document;
-    if (state.commentLayout !== 'right') return doc.getElementById('layout');
+    if (getCommentLayout('pip') !== 'right') return doc.getElementById('layout');
     return doc.getElementById('comments-panel');
   }
 
@@ -3204,8 +3258,8 @@ import {
     return doc.getElementById('comments-panel');
   }
 
-  function getScreenKind(runtime) {
-    const key = state.commentLayout === 'bottom' ? 'Wide' : 'Normal';
+  function getScreenKind(runtime, kind) {
+    const key = getCommentLayout(kind) === 'bottom' ? 'Wide' : 'Normal';
     return runtime?.ScreenKind?.[key] ?? (key === 'Wide' ? 1 : 0);
   }
 
@@ -3213,10 +3267,10 @@ import {
     return value === runtime?.ScreenKind?.[key] || value === (key === 'Wide' ? 1 : 0);
   }
 
-  function handleScreenChanged(runtime, detail) {
+  function handleScreenChanged(kind, runtime, detail) {
     if (!detail?.mainTrigger) return;
-    if (isScreenKind(runtime, detail.mainScreen, 'Wide')) setCommentLayout('bottom');
-    else if (isScreenKind(runtime, detail.mainScreen, 'Normal')) setCommentLayout('right');
+    if (isScreenKind(runtime, detail.mainScreen, 'Wide')) setCommentLayout(kind, 'bottom');
+    else if (isScreenKind(runtime, detail.mainScreen, 'Normal')) setCommentLayout(kind, 'right');
   }
 
   function bindHomeScreenChange(player) {
@@ -3224,7 +3278,7 @@ import {
     const runtime = getPlayerApiForKind('home');
     const eventType = runtime?.EventType?.Player_Statue_Changed;
     if (!player?.on || !eventType) return;
-    const handler = (event) => handleScreenChanged(runtime, event?.detail);
+    const handler = (event) => handleScreenChanged('home', runtime, event?.detail);
     player.on(eventType, handler);
     state.home.screenHandler = { player, eventType, handler };
   }
@@ -3313,7 +3367,7 @@ import {
     unbindPipScreenChange();
     const eventType = targetWindow.nano?.EventType?.Player_Statue_Changed;
     if (!player?.on || !eventType) return;
-    const handler = (event) => handleScreenChanged(targetWindow.nano, event?.detail);
+    const handler = (event) => handleScreenChanged('pip', targetWindow.nano, event?.detail);
     player.on(eventType, handler);
     state.pip.screenHandler = { player, eventType, handler };
   }
@@ -3804,7 +3858,7 @@ import {
   }
 
   function buildPlaybackHref(bvid, page) {
-    const url = new URL(`/video/${bvid}/`, location.origin);
+    const url = new URL(`/video/${bvid}/`, 'https://www.bilibili.com');
     const pageNo = Number(page);
     if (Number.isInteger(pageNo) && pageNo > 1) url.searchParams.set('p', String(pageNo));
     return url.href;
@@ -4069,7 +4123,8 @@ import {
   }
 
   function startCommentWidthDrag(event, targetWindow) {
-    if (state.commentLayout !== 'right') return;
+    const kind = targetWindow === window ? 'home' : 'pip';
+    if (getCommentLayout(kind) !== 'right') return;
     event.preventDefault();
     event.stopPropagation();
 
@@ -4082,7 +4137,7 @@ import {
 
     const onMove = (moveEvent) => {
       moveEvent.preventDefault();
-      setCommentWidth(calculateCommentWidthFromPointer(moveEvent.clientX, targetWindow));
+      setCommentWidth(kind, calculateCommentWidthFromPointer(kind, moveEvent.clientX, targetWindow));
     };
     const onEnd = () => {
       overlay?.classList.remove(`${APP}--resizing`);
@@ -4090,7 +4145,7 @@ import {
       doc.removeEventListener('pointermove', onMove, true);
       doc.removeEventListener('pointerup', onEnd, true);
       doc.removeEventListener('pointercancel', onEnd, true);
-      setStorageItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
+      setStorageItem(getCommentWidthStorageKey(kind), String(getCommentWidth(kind)));
     };
 
     doc.addEventListener('pointermove', onMove, true);
@@ -4099,27 +4154,27 @@ import {
     onMove(event);
   }
 
-  function calculateCommentWidthFromPointer(clientX, targetWindow) {
+  function calculateCommentWidthFromPointer(kind, clientX, targetWindow) {
     const container = targetWindow === window
       ? state.home.ui?.content
       : targetWindow.document?.getElementById('layout');
     const rect = container?.getBoundingClientRect();
-    if (!rect) return state.commentWidth;
+    if (!rect) return getCommentWidth(kind);
     return clampCommentWidth(rect.right - clientX, rect.width);
   }
 
-  function setCommentWidth(width) {
+  function setCommentWidth(kind, width) {
     const next = clampCommentWidth(width);
-    if (next === state.commentWidth) return;
-    state.commentWidth = next;
-    syncCommentWidth();
+    if (next === getCommentWidth(kind)) return;
+    setCommentWidthValue(kind, next);
+    syncCommentWidth(kind);
   }
 
   function fitHomeLayout() {
     const ui = state.home.ui;
     if (!ui?.dialog || !ui.content) return;
 
-    if (state.commentLayout === 'right') {
+    if (getCommentLayout('home') === 'right') {
       const rect = ui.content.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const targetPlayerWidth = Math.round(Math.max(1, (rect.height - getHomePlayerChromeHeight()) * 16 / 9));
@@ -4127,9 +4182,9 @@ import {
         rect.width - MODAL_COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
         rect.width,
       );
-      state.commentWidth = nextWidth;
-      setStorageItem(STORAGE_COMMENT_WIDTH, String(state.commentWidth));
-      syncCommentWidth();
+      state.homeCommentWidth = nextWidth;
+      setStorageItem(STORAGE_HOME_COMMENT_WIDTH, String(state.homeCommentWidth));
+      syncCommentWidth('home');
       return;
     }
 
@@ -4272,7 +4327,10 @@ import {
     const next = {
       id: playbackId,
       kind: bootstrap.kind || meta.kind || 'video',
+      aid: bootstrap.playerInfo?.aid || meta.aid,
       bvid: bootstrap.playerInfo?.bvid || meta.bvid,
+      cid: bootstrap.playerInfo?.cid || meta.cid,
+      p: bootstrap.playerInfo?.p || meta.p || meta.page,
       roomId: bootstrap.playerInfo?.roomId || meta.roomId,
       href: meta.href,
       title: bootstrap.title || meta.title,
@@ -4292,8 +4350,8 @@ import {
   }
 
   function isDifferentPlayback(previous, next) {
-    const previousKey = getPlayableKey(previous);
-    const nextKey = getPlayableKey(next);
+    const previousKey = previous?.id || getPlayableKey(previous);
+    const nextKey = next?.id || getPlayableKey(next);
     if (!previousKey || !nextKey) return false;
     return previousKey !== nextKey;
   }
@@ -4314,14 +4372,17 @@ import {
     const next = {
       id: playbackId,
       kind: bootstrap.kind || meta.kind || 'video',
+      aid: bootstrap.playerInfo?.aid || meta.aid,
       bvid,
+      cid: bootstrap.playerInfo?.cid || meta.cid,
+      p: bootstrap.playerInfo?.p || meta.p || meta.page,
       roomId,
       href,
       title: bootstrap.title || meta.title || bvid || `直播 ${roomId}`,
     };
     const history = state.playbackHistory;
     const current = history.entries[history.index];
-    if (current?.id === next.id || (next.bvid && current?.bvid === next.bvid) || (next.roomId && current?.roomId === next.roomId)) {
+    if (current?.id === next.id || (next.roomId && current?.roomId === next.roomId)) {
       history.entries[history.index] = { ...current, ...next };
       syncPlaybackHistoryButtons();
       return;
@@ -4378,7 +4439,13 @@ import {
       const info = bootstrap?.playerInfo || {};
       return Boolean(roomId && (roomId === String(info.roomId || '') || roomId === String(info.shortId || '')));
     }
-    return Boolean(meta?.bvid && bootstrap?.playerInfo?.bvid && meta.bvid === bootstrap.playerInfo.bvid);
+    const info = bootstrap?.playerInfo || {};
+    if (!meta?.bvid || !info.bvid || meta.bvid !== info.bvid) return false;
+    const metaCid = Number(meta.cid || 0);
+    if (metaCid) return Number(info.cid || 0) === metaCid;
+    const metaPage = Number(meta.p || meta.page || 0);
+    if (metaPage) return Number(info.p || 1) === metaPage;
+    return true;
   }
 
   function getPlaybackIdentity(meta, bootstrap) {
@@ -4386,8 +4453,13 @@ import {
       const roomId = bootstrap?.playerInfo?.roomId || meta?.roomId;
       return roomId ? `live:${roomId}` : '';
     }
-    const bvid = bootstrap?.playerInfo?.bvid || meta?.bvid;
-    return bvid ? `video:${bvid}` : '';
+    const info = bootstrap?.playerInfo || {};
+    const bvid = info.bvid || meta?.bvid;
+    if (!bvid) return '';
+    const cid = info.cid || meta?.cid;
+    if (cid) return `video:${bvid}:${cid}`;
+    const page = Number(info.p || meta?.p || meta?.page || 0);
+    return page > 1 ? `video:${bvid}:p${page}` : `video:${bvid}`;
   }
 
   function updateDebug(primarySetting, bootstrap) {
@@ -4533,8 +4605,8 @@ import {
   }
 
   function getHomeModalExtraWidth() {
-    return state.commentLayout === 'right' && window.innerWidth > 900
-      ? state.commentWidth + MODAL_COMMENTS_RESIZER_WIDTH
+    return getCommentLayout('home') === 'right' && window.innerWidth > 900
+      ? state.homeCommentWidth + MODAL_COMMENTS_RESIZER_WIDTH
       : 0;
   }
 
@@ -4643,7 +4715,7 @@ import {
     if (!ui?.dialog || !ui.content || !ui.playerWrap) return;
     const modalSize = applyHomeModalSize();
     const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
-    if (state.commentLayout === 'right') {
+    if (getCommentLayout('home') === 'right') {
       ui.playerWrap.style.height = '';
       syncHomeModalSizeButton();
       return;
@@ -4847,7 +4919,10 @@ import {
   }
 
   function startGamepadControls() {
-    if (state.gamepadFrame || !navigator.getGamepads) return;
+    if (!state.gamepadControlsEnabled || state.gamepadFrame || !navigator.getGamepads) {
+      syncGamepadIndicator();
+      return;
+    }
     updateGamepadConnectionState([...navigator.getGamepads()].some(Boolean));
     state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
   }
@@ -4864,7 +4939,7 @@ import {
   function onGamepadConnectionChanged() {
     const connected = Boolean(navigator.getGamepads && [...navigator.getGamepads()].some(Boolean));
     updateGamepadConnectionState(connected);
-    if (connected && getActiveGamepadKind()) startGamepadControls();
+    if (state.gamepadControlsEnabled && connected && getActiveGamepadKind()) startGamepadControls();
   }
 
   function updateGamepadConnectionState(connected) {
@@ -4883,13 +4958,23 @@ import {
   function syncGamepadIndicator() {
     const indicator = state.home.ui?.gamepadIndicator;
     if (!indicator) return;
+    indicator.classList.toggle(`${APP}--disabled`, !state.gamepadControlsEnabled);
     indicator.classList.toggle(`${APP}--connected`, state.gamepadConnected);
-    indicator.title = state.gamepadConnected ? '手柄已连接' : '手柄未连接';
+    indicator.title = !state.gamepadControlsEnabled
+      ? '手柄控制已禁用'
+      : state.gamepadConnected
+        ? '手柄已连接'
+        : '手柄未连接';
     indicator.setAttribute('aria-label', indicator.title);
   }
 
   function pollGamepadControls(now) {
     state.gamepadFrame = 0;
+    if (!state.gamepadControlsEnabled) {
+      stopGamepadControls();
+      syncGamepadIndicator();
+      return;
+    }
     const kind = getActiveGamepadKind();
     if (!kind) {
       stopGamepadControls();
@@ -4912,14 +4997,15 @@ import {
 
     for (const gamepad of gamepads) {
       if (!gamepad) continue;
-      handleGamepadButton(kind, gamepad, 0, 'next', now, false);
-      handleGamepadButton(kind, gamepad, 1, 'previous', now, false);
-      handleGamepadButton(kind, gamepad, 2, 'toggle-play', now, false);
-      handleGamepadButton(kind, gamepad, 3, 'web-fullscreen', now, false);
+      handleGamepadButton(kind, gamepad, 0, 'toggle-play', now, false);
+      handleGamepadButton(kind, gamepad, 1, 'arrow-right', now, true);
+      handleGamepadButton(kind, gamepad, 2, 'arrow-left', now, true);
+      handleGamepadButton(kind, gamepad, 3, 'video-fullscreen', now, false);
       handleGamepadButton(kind, gamepad, 4, 'previous-tab', now, false);
       handleGamepadButton(kind, gamepad, 5, 'next-tab', now, false);
-      handleGamepadButton(kind, gamepad, 6, 'arrow-left', now, true);
-      handleGamepadButton(kind, gamepad, 7, 'arrow-right', now, true);
+      handleGamepadButton(kind, gamepad, 6, 'previous', now, false);
+      handleGamepadButton(kind, gamepad, 7, 'next', now, false);
+      handleGamepadButton(kind, gamepad, 9, 'web-fullscreen', now, false);
       handleGamepadAxes(kind, gamepad);
     }
     state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
@@ -4930,7 +5016,7 @@ import {
     state.gamepadRepeatAt.clear();
     for (const gamepad of gamepads) {
       if (!gamepad) continue;
-      [0, 1, 2, 3, 4, 5, 6, 7].forEach((buttonIndex) => {
+      [0, 1, 2, 3, 4, 5, 6, 7, 9].forEach((buttonIndex) => {
         state.gamepadButtons.set(`${gamepad.index}:${buttonIndex}`, Boolean(gamepad.buttons?.[buttonIndex]?.pressed));
       });
     }
@@ -4980,6 +5066,10 @@ import {
       toggleGamepadWebFullscreen(kind);
       return;
     }
+    if (action === 'video-fullscreen') {
+      dispatchGamepadVideoFullscreenKey(kind);
+      return;
+    }
     if (action === 'toggle-play') {
       dispatchGamepadKeyboard(kind, action, 'keydown', false);
       dispatchGamepadKeyboard(kind, action, 'keyup', false);
@@ -5026,22 +5116,45 @@ import {
     return getHomeCommentsScrollContainer();
   }
 
+  function onGamepadControlsChange(value) {
+    state.gamepadControlsEnabled = Boolean(value);
+    if (!state.gamepadControlsEnabled) {
+      stopGamepadControls();
+      state.gamepadIgnoreInput = false;
+      syncGamepadIndicator();
+      return;
+    }
+    syncGamepadIndicator();
+    if (getActiveGamepadKind()) startGamepadControls();
+  }
+
   function isGamepadKeyboardAction(action) {
     return action === 'arrow-left' || action === 'arrow-right' || action === 'toggle-play';
   }
 
+  function dispatchGamepadVideoFullscreenKey(kind) {
+    dispatchGamepadKeyboard(kind, 'video-fullscreen-key', 'keydown', false);
+    dispatchGamepadKeyboard(kind, 'video-fullscreen-key', 'keyup', false);
+  }
+
   function dispatchGamepadKeyboard(kind, action, type, repeat) {
-    const key = action === 'arrow-left'
+    const key = action === 'video-fullscreen-key'
+      ? 'f'
+      : action === 'arrow-left'
       ? 'ArrowLeft'
       : action === 'arrow-right'
         ? 'ArrowRight'
         : ' ';
-    const code = action === 'arrow-left'
+    const code = action === 'video-fullscreen-key'
+      ? 'KeyF'
+      : action === 'arrow-left'
       ? 'ArrowLeft'
       : action === 'arrow-right'
         ? 'ArrowRight'
         : 'Space';
-    const keyCode = action === 'arrow-left'
+    const keyCode = action === 'video-fullscreen-key'
+      ? 70
+      : action === 'arrow-left'
       ? 37
       : action === 'arrow-right'
         ? 39

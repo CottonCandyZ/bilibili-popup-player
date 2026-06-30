@@ -18,11 +18,13 @@ export function createCommentsTabsUi({
   schedulePipLayoutSync,
 }) {
   const activeSignals = new Map();
+  const expandedPageCards = new Map();
   const selectedPageSignals = new Map();
   const selectedLiveSignals = new Map();
   const selectedSignals = new Map();
   const listViews = new Map();
   const [lastPlayedKey, setLastPlayedKey] = createSignal(getLastPlayedKey());
+  const [pageTreeRevision, setPageTreeRevision] = createSignal(0);
 
   function createTabs(targetDocument, kind) {
     const tabs = targetDocument.createElement('div');
@@ -182,15 +184,16 @@ export function createCommentsTabsUi({
   function renderPageParts(kind, bootstrap, statusText = '合集加载中...') {
     const cards = bootstrap ? getPagePartCards(bootstrap) : [];
     state[kind].pageCards = cards;
-    setSelectedPageKey(kind, bootstrap ? getSelectedPageKey(bootstrap) : '');
+    setSelectedPageKey(kind, bootstrap ? getSelectedPageKey(bootstrap, cards) : '');
     syncPageTabVisibility(kind, Boolean(cards.length));
+    syncPageTabLabel(kind, getPageTabLabel(cards));
     const ui = getUi(kind);
     if (!ui?.pagesList || !ui.pagesEmpty) return;
     renderCardList({
       list: ui.pagesList,
       empty: ui.pagesEmpty,
       cards,
-      emptyText: bootstrap ? '当前视频没有合集' : statusText,
+      emptyText: bootstrap ? '当前视频没有合集或分P' : statusText,
       kind,
       source: 'pages',
       loading: !bootstrap,
@@ -203,6 +206,12 @@ export function createCommentsTabsUi({
     if (!ui?.pagesTab) return;
     ui.pagesTab.hidden = !visible;
     if (!visible && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
+  }
+
+  function syncPageTabLabel(kind, label) {
+    const ui = getUi(kind);
+    if (!ui?.pagesTab) return;
+    ui.pagesTab.textContent = label || '合集/分P';
   }
 
   function syncLiveTabVisibility(kind, visible) {
@@ -362,6 +371,7 @@ export function createCommentsTabsUi({
         const currentCards = cards();
         const currentLoading = loading();
         const currentAppendLoading = appendLoading();
+        if (source === 'pages') pageTreeRevision();
         const selected = source === 'playlist'
           ? getSelectedSignal(kind)[0]()
           : source === 'live'
@@ -379,8 +389,32 @@ export function createCommentsTabsUi({
           appendSkeletonCards(list.ownerDocument, list, 6);
           return;
         }
+        let currentSection = '';
         currentCards.forEach((card) => {
-          list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected, lastPlayed));
+          if (source === 'pages' && card.sectionTitle && card.sectionTitle !== currentSection) {
+            currentSection = card.sectionTitle;
+            list.appendChild(createPageSectionHeader(list.ownerDocument, currentSection));
+          }
+          if (source !== 'pages') {
+            list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected, lastPlayed));
+            return;
+          }
+
+          const children = getPageCardChildren(card);
+          const containsSelected = children.some((child) => child.pageKey === selected);
+          const expanded = children.length ? isPageCardExpanded(kind, card, selected) : false;
+          list.appendChild(createCardButton(list.ownerDocument, kind, card, source, selected, lastPlayed, {
+            containsSelected: containsSelected && !expanded,
+            expanded,
+            hasChildren: Boolean(children.length),
+            onToggle: () => togglePageCardExpanded(kind, card, selected),
+          }));
+          if (!expanded) return;
+          children.forEach((child) => {
+            list.appendChild(createCardButton(list.ownerDocument, kind, child, source, selected, lastPlayed, {
+              depth: 1,
+            }));
+          });
         });
         if (currentAppendLoading) appendSkeletonCards(list.ownerDocument, list, 3);
         if (source === 'playlist' && autoScrollSelected()) scrollSelectedPlaylistIntoView(kind);
@@ -431,15 +465,53 @@ export function createCommentsTabsUi({
     return card;
   }
 
-  function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '', lastPlayedBvid = '') {
+  function createPageSectionHeader(targetDocument, label) {
+    const header = targetDocument.createElement('div');
+    header.className = `${APP}__playlist-section-title`;
+    header.textContent = label;
+    return header;
+  }
+
+  function getPageCardChildren(card) {
+    return Array.isArray(card?.children) ? card.children.filter(Boolean) : [];
+  }
+
+  function getExpandedPageCardKey(kind, card) {
+    return `${kind}:${card.pageKey || card.bvid || card.cid || card.title}`;
+  }
+
+  function isPageCardExpanded(kind, card, selectedKey) {
+    const children = getPageCardChildren(card);
+    if (!children.length) return false;
+    const key = getExpandedPageCardKey(kind, card);
+    if (expandedPageCards.has(key)) return expandedPageCards.get(key);
+    return children.some((child) => child.pageKey === selectedKey);
+  }
+
+  function togglePageCardExpanded(kind, card, selectedKey) {
+    const key = getExpandedPageCardKey(kind, card);
+    expandedPageCards.set(key, !isPageCardExpanded(kind, card, selectedKey));
+    setPageTreeRevision((value) => value + 1);
+  }
+
+  function createCardButton(targetDocument, kind, card, source = 'playlist', selectedBvid = '', lastPlayedBvid = '', options = {}) {
     const cardKey = source === 'pages' ? card.pageKey : getPlayableKey(card);
+    const containsSelected = Boolean(options.containsSelected);
     const selected = source === 'playlist' || source === 'live' || source === 'recommend'
       ? selectedBvid === cardKey
       : source === 'pages' && selectedBvid === card.pageKey;
     const isLastPlayed = source === 'playlist' && !selected && lastPlayedBvid && lastPlayedBvid === cardKey;
     const button = targetDocument.createElement('div');
     button.className = `${APP}__playlist-card`;
+    if (source === 'pages' && card.pageType) button.classList.add(`${APP}__playlist-card--${card.pageType}`);
+    if (source === 'pages' && options.depth) button.classList.add(`${APP}__playlist-card--child`);
+    if (source === 'pages' && options.hasChildren) button.classList.add(`${APP}__playlist-card--collapsible`);
+    if (source === 'pages' && containsSelected) button.classList.add(`${APP}--contains-selected`);
+    if (source === 'pages' && options.expanded) button.classList.add(`${APP}--expanded`);
     button.dataset.bvid = card.bvid || '';
+    button.dataset.aid = card.aid || '';
+    button.dataset.cid = card.cid || '';
+    button.dataset.page = card.page || '';
     button.dataset.roomId = card.roomId || '';
     button.dataset.key = cardKey || '';
     button.dataset.pageKey = card.pageKey || '';
@@ -495,7 +567,7 @@ export function createCommentsTabsUi({
     title.className = `${APP}__playlist-title`;
     const titleText = targetDocument.createElement('span');
     titleText.className = `${APP}__playlist-title-text`;
-    if (selected) {
+    if (selected || containsSelected) {
       const playing = targetDocument.createElement('img');
       playing.className = `${APP}__playlist-playing`;
       playing.src = PLAYING_ICON_URL;
@@ -527,7 +599,35 @@ export function createCommentsTabsUi({
       info.appendChild(stats);
     }
 
+    if (source === 'pages' && options.depth) {
+      button.appendChild(info);
+      if (card.duration) {
+        const inlineDuration = targetDocument.createElement('span');
+        inlineDuration.className = `${APP}__playlist-inline-duration`;
+        inlineDuration.textContent = card.duration;
+        button.appendChild(inlineDuration);
+      }
+      return button;
+    }
+
     button.append(cover, info);
+    if (source === 'pages' && options.hasChildren) {
+      const toggle = targetDocument.createElement('button');
+      toggle.type = 'button';
+      toggle.className = `${APP}__playlist-toggle`;
+      toggle.title = options.expanded ? '收起分P' : '展开分P';
+      toggle.setAttribute('aria-label', toggle.title);
+      toggle.setAttribute('aria-expanded', options.expanded ? 'true' : 'false');
+      toggle.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        options.onToggle?.();
+      });
+      const toggleIcon = targetDocument.createElement('span');
+      toggleIcon.className = `${APP}__playlist-toggle-icon`;
+      toggle.appendChild(toggleIcon);
+      button.appendChild(toggle);
+    }
     return button;
   }
 
@@ -589,7 +689,7 @@ export function createCommentsTabsUi({
   }
 
   function scrollSelectedPlaylistIntoView(kind, { force = false } = {}) {
-    if (!force && getCommentLayout?.() !== 'right') return;
+    if (!force && getCommentLayout?.(kind) !== 'right') return;
     const bvid = state[kind].selectedPlaylistBvid;
     if (!bvid) return;
     const ui = getUi(kind);
@@ -601,7 +701,7 @@ export function createCommentsTabsUi({
   }
 
   function scrollSelectedLiveIntoView(kind, { force = false } = {}) {
-    if (!force && getCommentLayout?.() !== 'right') return;
+    if (!force && getCommentLayout?.(kind) !== 'right') return;
     const key = state[kind].selectedLiveKey;
     if (!key) return;
     const ui = getUi(kind);
@@ -613,7 +713,7 @@ export function createCommentsTabsUi({
   }
 
   function scrollSelectedPageIntoView(kind, { force = false } = {}) {
-    if (!force && getCommentLayout?.() !== 'right') return;
+    if (!force && getCommentLayout?.(kind) !== 'right') return;
     const pageKey = state[kind].selectedPageKey;
     if (!pageKey) return;
     const ui = getUi(kind);
@@ -659,58 +759,82 @@ export function createCommentsTabsUi({
 
 function getPagePartCards(bootstrap) {
   const vd = bootstrap?.initialState?.videoData || {};
+  const aid = vd.aid || bootstrap?.playerInfo?.aid;
   const bvid = bootstrap?.playerInfo?.bvid || vd.bvid;
   const href = bootstrap?.href || (bvid ? `https://www.bilibili.com/video/${bvid}` : '');
   const pageCards = (Array.isArray(vd.pages) ? vd.pages : [])
-    .map((page, index) => buildPagePartCard({ bvid, href, index, page, title: vd.title, cover: vd.pic }))
+    .map((page, index) => buildPagePartCard({ aid, bvid, href, index, page, title: vd.title, cover: vd.pic }))
     .filter(Boolean);
-  if (pageCards.length > 1) return pageCards;
 
-  const episodes = getSeasonEpisodes(bootstrap);
-  if (episodes.length <= 1) return [];
-  return episodes
-    .map((episode, index) => buildSeasonEpisodeCard({ episode, fallbackBvid: bvid, fallbackHref: href, index }))
-    .filter(Boolean);
+  const season = getSeasonData(bootstrap);
+  const seasonCards = season.episodes.length > 1 ? season.episodes
+    .map((episode, index) => buildSeasonEpisodeCard({
+      episode,
+      fallbackBvid: bvid,
+      fallbackHref: href,
+      index,
+      sectionTitle: season.title,
+    }))
+    .filter(Boolean) : [];
+
+  if (isSameCidList(seasonCards, pageCards)) return pageCards;
+  if (seasonCards.length && pageCards.length > 1) {
+    return seasonCards.map((card) => isSameArchiveCard(card, { aid, bvid })
+      ? { ...card, children: pageCards }
+      : card);
+  }
+  if (seasonCards.length) return seasonCards;
+  return pageCards.length > 1 ? pageCards : [];
 }
 
-function buildPagePartCard({ bvid, href, index, page, title, cover }) {
+function buildPagePartCard({ aid, bvid, href, index, page, title, cover }) {
   if (!bvid || !page?.cid) return null;
   const pageNo = Number(page.page || index + 1);
   const pageHref = setVideoPageParam(href || `/video/${bvid}`, pageNo);
   return {
+    aid,
     bvid,
     cid: page.cid,
     cover: normalizeResourceUrl(page.first_frame || cover),
     duration: formatDuration(page.duration),
     href: pageHref,
     page: pageNo,
-    pageKey: `${bvid}:${pageNo}`,
+    p: pageNo,
+    pageKey: buildPageKey('part', { bvid, cid: page.cid, page: pageNo }),
+    pageType: 'part',
+    sectionTitle: '分P',
     subtitle: title || '',
     title: `${pageNo}. ${cleanText(page.part) || '未命名片段'}`,
   };
 }
 
-function buildSeasonEpisodeCard({ episode, fallbackBvid, fallbackHref, index }) {
+function buildSeasonEpisodeCard({ episode, fallbackBvid, fallbackHref, index, sectionTitle }) {
   const bvid = episode?.bvid || fallbackBvid;
-  const pageNo = Number(episode?.p || index + 1);
+  const aid = episode?.aid || episode?.arc?.aid;
+  const cid = episode?.cid || episode?.page?.cid;
+  const pageNo = Number(episode?.page?.page || 1);
   const href = normalizeVideoHref(episode?.link || episode?.uri || `/video/${bvid}`, fallbackHref) ||
     setVideoPageParam(`/video/${bvid}`, pageNo);
   if (!bvid || !href) return null;
   return {
+    aid,
     bvid,
-    cid: episode.cid || episode.page?.cid,
-    cover: normalizeResourceUrl(episode.arc?.pic || episode.cover),
-    duration: formatDuration(episode.duration || episode.page?.duration || episode.arc?.duration),
+    cid,
+    cover: normalizeResourceUrl(episode?.arc?.pic || episode?.cover),
+    duration: formatDuration(episode?.duration || episode?.page?.duration || episode?.arc?.duration),
     href,
     page: pageNo,
-    pageKey: `${bvid}:${pageNo}`,
-    subtitle: episode.arc?.title || '',
-    stats: episode.arc?.stat,
-    title: `${pageNo}. ${cleanText(episode.title || episode.part || episode.page?.part) || '未命名片段'}`,
+    p: pageNo,
+    pageKey: buildPageKey('season', { aid, bvid, cid, page: pageNo }),
+    pageType: 'season',
+    sectionTitle: sectionTitle || '合集',
+    subtitle: episode?.arc?.title || '',
+    stats: episode?.arc?.stat,
+    title: `${index + 1}. ${cleanText(episode?.title || episode?.part || episode?.page?.part) || '未命名片段'}`,
   };
 }
 
-function getSeasonEpisodes(bootstrap) {
+function getSeasonData(bootstrap) {
   const vd = bootstrap?.initialState?.videoData || {};
   const candidates = [
     vd.ugc_season,
@@ -719,9 +843,14 @@ function getSeasonEpisodes(bootstrap) {
   ];
   for (const season of candidates) {
     const episodes = extractSeasonEpisodes(season);
-    if (episodes.length > 1) return episodes;
+    if (episodes.length > 1) {
+      return {
+        episodes,
+        title: cleanText(season?.title || season?.season_title || season?.name) || '合集',
+      };
+    }
   }
-  return [];
+  return { episodes: [], title: '合集' };
 }
 
 function extractSeasonEpisodes(season) {
@@ -731,10 +860,63 @@ function extractSeasonEpisodes(season) {
     .flatMap((section) => Array.isArray(section?.episodes) ? section.episodes : []);
 }
 
-function getSelectedPageKey(bootstrap) {
+function getPageTabLabel(cards) {
+  const hasSeason = cards.some((card) => card.pageType === 'season');
+  const hasPart = cards.some((card) => card.pageType === 'part');
+  if (hasSeason && hasPart) return '合集/分P';
+  if (hasSeason) return '合集';
+  if (hasPart) return '分P';
+  return '合集/分P';
+}
+
+function isSameCidList(leftCards, rightCards) {
+  if (!leftCards.length || leftCards.length !== rightCards.length) return false;
+  const left = leftCards.map((card) => Number(card.cid || 0)).filter(Boolean).sort((a, b) => a - b);
+  const right = rightCards.map((card) => Number(card.cid || 0)).filter(Boolean).sort((a, b) => a - b);
+  return left.length === leftCards.length &&
+    right.length === rightCards.length &&
+    left.every((cid, index) => cid === right[index]);
+}
+
+function buildPageKey(type, { aid, bvid, cid, page }) {
+  const identity = aid || bvid || '';
+  const unit = cid || page || 1;
+  return [type, identity, unit].filter(Boolean).join(':');
+}
+
+function isSameArchiveCard(card, current) {
+  const aid = Number(current?.aid || 0);
+  if (aid && Number(card?.aid || 0) === aid) return true;
+  return Boolean(current?.bvid && card?.bvid && card.bvid === current.bvid);
+}
+
+function getSelectedPageKey(bootstrap, cards = []) {
   const info = bootstrap?.playerInfo;
   if (!info?.bvid) return '';
-  return `${info.bvid}:${Number(info.p || 1)}`;
+  const aid = Number(info.aid || 0);
+  const cid = Number(info.cid || 0);
+  const page = Number(info.p || 1);
+  const bvid = info.bvid;
+  const searchableCards = flattenPageCards(cards);
+  const matchers = [
+    (card) => card.pageType === 'part' && cid && Number(card.cid) === cid,
+    (card) => card.pageType === 'part' && card.bvid === bvid && Number(card.page || 1) === page,
+    (card) => card.pageType === 'season' && aid && Number(card.aid) === aid,
+    (card) => card.pageType === 'season' && cid && Number(card.cid) === cid,
+    (card) => card.bvid === bvid && Number(card.page || 1) === page,
+  ];
+  for (const matcher of matchers) {
+    const card = searchableCards.find(matcher);
+    if (card?.pageKey) return card.pageKey;
+  }
+  return buildPageKey('part', { bvid, cid, page });
+}
+
+function flattenPageCards(cards) {
+  return (Array.isArray(cards) ? cards : []).flatMap((card) => [
+    card,
+    ...(Array.isArray(card?.children) ? card.children : []),
+  ]).filter(Boolean);
 }
 
 function setVideoPageParam(rawHref, page) {

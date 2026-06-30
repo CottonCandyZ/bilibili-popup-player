@@ -87,6 +87,13 @@ export function normalizeVideoHref(rawHref, baseUrl = location.href) {
   try {
     const url = new URL(rawHref, baseUrl);
     if (!url.hostname.endsWith('bilibili.com')) return '';
+    const match = url.href.match(BV_RE);
+    if (match) {
+      const canonical = new URL(`/video/${match[1]}/`, 'https://www.bilibili.com');
+      canonical.search = url.search;
+      canonical.hash = url.hash;
+      return canonical.href;
+    }
     return url.href;
   } catch {
     return '';

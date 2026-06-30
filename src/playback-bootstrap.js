@@ -31,9 +31,9 @@ async function resolvePlaybackBootstrapFromApis(meta) {
     if (!vd?.aid || !vd?.bvid) return null;
     applyDetailCard(vd, detail.Card);
 
-    const pageP = resolveCurrentPage(meta.href, { p: 1, videoData: vd });
-    const sequence = resolvePlaybackSequence(vd, pageP);
+    const pageP = resolveCurrentPage(meta, { p: 1, videoData: vd });
     const page = getVideoPage(vd, pageP);
+    const sequence = resolvePlaybackSequence(vd, pageP, page);
     const relatedItems = Array.isArray(detail.Related)
       ? detail.Related
       : [];
@@ -164,11 +164,19 @@ function buildInitialStateFromApis({ meta, p, relatedItems, videoData }) {
   };
 }
 
-function resolveCurrentPage(href, initialState) {
+function resolveCurrentPage(meta, initialState) {
+  const href = typeof meta === 'string' ? meta : meta?.href;
+  const metaPage = Number(typeof meta === 'object' ? meta?.p || meta?.page || 0 : 0);
+  const metaCid = Number(typeof meta === 'object' ? meta?.cid || 0 : 0);
+  const cidPage = metaCid && Array.isArray(initialState?.videoData?.pages)
+    ? initialState.videoData.pages.find((page) => Number(page?.cid) === metaCid)
+    : null;
+  if (cidPage?.page) return Number(cidPage.page);
+
   const parsed = new URL(href, location.href);
   const urlPage = Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 0);
   const statePage = Number(initialState?.p || 0);
-  const page = urlPage || statePage || 1;
+  const page = metaPage || urlPage || statePage || 1;
   const pageCount = initialState?.videoData?.pages?.length || 0;
   if (!Number.isFinite(page) || page < 1) return 1;
   return pageCount ? Math.min(page, pageCount) : page;
@@ -181,23 +189,30 @@ function getVideoPage(videoData, p) {
     {};
 }
 
-function resolvePlaybackSequence(videoData, pageP) {
+function resolvePlaybackSequence(videoData, pageP, currentPage = null) {
   const episodes = getUgcSeasonEpisodes(videoData);
-  const currentEpisodeIndex = episodes.findIndex((episode) => (
-    episode?.bvid && videoData?.bvid && episode.bvid === videoData.bvid
-  ) || (
-    Number(episode?.cid) && Number(videoData?.cid) && Number(episode.cid) === Number(videoData.cid)
-  ));
+  const currentAid = Number(videoData?.aid || 0);
+  const currentCid = Number(currentPage?.cid || videoData?.cid || 0);
+  const bvidEpisodeCount = videoData?.bvid
+    ? episodes.filter((episode) => episode?.bvid === videoData.bvid).length
+    : 0;
+  const currentEpisodeIndex = episodes.findIndex((episode) => {
+    const episodeAid = Number(episode?.aid || episode?.arc?.aid || 0);
+    if (currentAid && episodeAid && episodeAid === currentAid) return true;
+    const episodeCid = Number(episode?.cid || episode?.page?.cid || 0);
+    if (currentCid && episodeCid && episodeCid === currentCid) return true;
+    return Boolean(episode?.bvid && videoData?.bvid && episode.bvid === videoData.bvid && bvidEpisodeCount <= 1);
+  });
+  const pageCount = videoData?.pages?.length || 0;
   if (currentEpisodeIndex >= 0 && episodes.length > 1) {
     return {
-      p: currentEpisodeIndex + 1,
-      hasPrev: currentEpisodeIndex > 0,
-      hasNext: currentEpisodeIndex < episodes.length - 1,
+      p: pageP,
+      hasPrev: pageP > 1 || currentEpisodeIndex > 0,
+      hasNext: (pageCount > 0 && pageP < pageCount) || currentEpisodeIndex < episodes.length - 1,
       seasonId: videoData?.ugc_season?.id || episodes[currentEpisodeIndex]?.season_id,
     };
   }
 
-  const pageCount = videoData?.pages?.length || 0;
   return {
     p: pageP,
     hasPrev: pageP > 1,

@@ -168,14 +168,15 @@ function HomePlayerPage(props) {
             >
               {createGamepadIcon()}
               <span class={`${APP}__gamepad-popover`} role="tooltip">
+                <span class={`${APP}__gamepad-disabled-hint`}>手柄控制已禁用</span>
                 <span class={`${APP}__gamepad-disconnected-hint`}>手柄未连接</span>
                 <span class={`${APP}__gamepad-disconnected-hint`}>连接后按任意键确认</span>
-                <span class={`${APP}__gamepad-connected-hint`}>A 下一个</span>
-                <span class={`${APP}__gamepad-connected-hint`}>B 上一个</span>
-                <span class={`${APP}__gamepad-connected-hint`}>Y 网页内全屏</span>
+                <span class={`${APP}__gamepad-connected-hint`}>A 暂停/播放</span>
+                <span class={`${APP}__gamepad-connected-hint`}>X / B 控制进度</span>
+                <span class={`${APP}__gamepad-connected-hint`}>Y 视频全屏</span>
+                <span class={`${APP}__gamepad-connected-hint`}>Menu 网页内全屏</span>
                 <span class={`${APP}__gamepad-connected-hint`}>LB / RB 循环切换标签</span>
-                <span class={`${APP}__gamepad-connected-hint`}>X 暂停/播放</span>
-                <span class={`${APP}__gamepad-connected-hint`}>LT / RT 控制进度</span>
+                <span class={`${APP}__gamepad-connected-hint`}>LT / RT 上一个/下一个</span>
                 <span class={`${APP}__gamepad-connected-hint`}>摇杆上下 滚动列表</span>
               </span>
             </span>
