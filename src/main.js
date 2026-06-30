@@ -82,12 +82,17 @@ import {
 import {
   COVER_HOST_SELECTOR,
   DYNAMIC_VIDEO_LINK_SELECTOR,
+  OGV_VIDEO_LINK_SELECTOR,
   PLAYBACK_VIDEO_LINK_SELECTOR,
   getCardRoot,
   getCurrentPageBvid,
+  getCurrentPageOgvKey,
+  getCurrentPageOgvMeta,
+  getOgvMetaFromLink,
   getVideoMetaFromLink,
   isDynamicPage,
   isCoverLink,
+  isOgvPage,
   isPlaybackPage,
   isSpacePage,
   normalizeVideoHref,
@@ -131,7 +136,8 @@ import {
   const initialLastPlayed = (() => {
     try {
       const value = JSON.parse(getStorageItem(STORAGE_LAST_PLAYED, 'null') || 'null');
-      if (!value?.href || value?.kind === 'live' || value?.roomId || !value?.bvid) return null;
+      if (!value?.href || value?.kind === 'live' || value?.roomId) return null;
+      if (!value?.bvid && !value?.seasonId && !value?.epId) return null;
       return value;
     } catch {
       return null;
@@ -235,6 +241,7 @@ import {
       featureBlocked: false,
       activeCommentsTab: 'comments',
       liveListMode: false,
+      ogvListMode: false,
       feed: {
         error: '',
         exhausted: false,
@@ -275,6 +282,7 @@ import {
       switchingWindow: false,
       activeCommentsTab: 'comments',
       liveListMode: false,
+      ogvListMode: false,
       feed: {
         error: '',
         exhausted: false,
@@ -746,6 +754,9 @@ import {
       kind: bootstrap.kind || 'video',
       bvid: bootstrap.playerInfo?.bvid,
       aid: bootstrap.playerInfo?.aid,
+      cid: bootstrap.playerInfo?.cid,
+      seasonId: bootstrap.playerInfo?.seasonId,
+      epId: bootstrap.playerInfo?.epId,
       roomId: bootstrap.playerInfo?.roomId,
     } : null;
     syncVideoBadges();
@@ -763,6 +774,11 @@ import {
   function bindLiveLink(link, meta = getLiveMetaFromLink(link)) {
     if (!meta) return;
     bindPlayableLink(link, getLiveCardRoot(link), meta);
+  }
+
+  function bindOgvLink(link, meta = getOgvMetaFromLink(link)) {
+    if (!meta) return;
+    bindPlayableLink(link, getCardRoot(link), meta);
   }
 
   function bindLiveCardElement(element, meta) {
@@ -870,10 +886,14 @@ import {
   function setCardDataset(element, meta) {
     element.dataset.kind = meta.kind || 'video';
     element.dataset.bvid = meta.bvid || '';
+    element.dataset.aid = meta.aid || '';
+    element.dataset.cid = meta.cid || '';
+    element.dataset.seasonId = meta.seasonId || '';
+    element.dataset.epId = meta.epId || '';
     element.dataset.roomId = meta.roomId || '';
     element.dataset.key = getPlayableKey(meta);
     element.dataset.href = meta.href || '';
-    element.dataset.title = meta.title || (isLiveMeta(meta) ? `Bilibili 直播 ${meta.roomId}` : 'Bilibili 视频');
+    element.dataset.title = meta.title || (isLiveMeta(meta) ? `Bilibili 直播 ${meta.roomId}` : isOgvMeta(meta) ? 'Bilibili 番剧' : 'Bilibili 视频');
   }
 
   function getMetaFromCardDataset(element) {
@@ -885,8 +905,22 @@ import {
         title: element.dataset.title,
       };
     }
+    if (element.dataset.kind === 'ogv' || element.dataset.epId || element.dataset.seasonId) {
+      return {
+        kind: 'ogv',
+        aid: element.dataset.aid,
+        bvid: element.dataset.bvid,
+        cid: element.dataset.cid,
+        seasonId: element.dataset.seasonId,
+        epId: element.dataset.epId,
+        href: element.dataset.href,
+        title: element.dataset.title,
+      };
+    }
     return {
+      aid: element.dataset.aid,
       bvid: element.dataset.bvid,
+      cid: element.dataset.cid,
       href: element.dataset.href,
       title: element.dataset.title,
     };
@@ -926,7 +960,7 @@ import {
 
   function shouldUseCardOverlayFor(link, card, meta = null) {
     if (isLiveMeta(meta)) return true;
-    if (isPlaybackPage() || isSpacePage() || isDynamicPage()) return true;
+    if (isPlaybackPage() || isOgvPage() || isSpacePage() || isDynamicPage()) return true;
     if (card?.tagName === 'A') return false;
     const host = getCardControlHost(link, card);
     return host?.tagName === 'A' && !(host.parentElement && card?.contains?.(host.parentElement));
@@ -1062,7 +1096,7 @@ import {
   }
 
   function syncPlaybackPagePipButton() {
-    if (!supportsDocumentPip() || !isPlaybackPage()) {
+    if (!supportsDocumentPip() || (!isPlaybackPage() && !isOgvPage())) {
       removePlaybackPagePipButton();
       return;
     }
@@ -1094,7 +1128,10 @@ import {
       overlay.appendChild(button);
     }
 
-    button.dataset.bvid = meta.bvid;
+    button.dataset.kind = meta.kind || 'video';
+    button.dataset.bvid = meta.bvid || '';
+    button.dataset.seasonId = meta.seasonId || '';
+    button.dataset.epId = meta.epId || '';
     button.dataset.href = meta.href;
     button.dataset.title = meta.title;
     button.title = `Document PiP：${meta.title}`;
@@ -1113,6 +1150,8 @@ import {
   }
 
   function getCurrentPlaybackPageMeta() {
+    if (isOgvPage()) return getCurrentPageOgvMeta();
+
     const bvid = getCurrentPageBvid();
     if (!bvid) return null;
     const href = location.href;
@@ -1201,12 +1240,21 @@ import {
 
   function scan() {
     ensureControlOverlay();
+    const currentOgvKey = getCurrentPageOgvKey();
     [...document.querySelectorAll(getVideoLinkSelector())]
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
         const meta = getVideoMetaFromLink(link);
         if (!meta || meta.bvid === getCurrentPageBvid()) return;
         bindLink(link, meta);
+      });
+    [...document.querySelectorAll(OGV_VIDEO_LINK_SELECTOR)]
+      .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
+      .forEach((link) => {
+        const meta = getOgvMetaFromLink(link);
+        const key = meta?.epId ? `ep${meta.epId}` : meta?.seasonId ? `ss${meta.seasonId}` : '';
+        if (!meta || (currentOgvKey && key === currentOgvKey)) return;
+        bindOgvLink(link, meta);
       });
     [...document.querySelectorAll(LIVE_CARD_LINK_SELECTOR)]
       .forEach((link) => {
@@ -1283,7 +1331,7 @@ import {
   }
 
   function shouldSyncSettingsVisibilityMutation(mutation) {
-    if (!isPlaybackPage() && !isLivePage()) return false;
+    if (!isPlaybackPage() && !isOgvPage() && !isLivePage()) return false;
     if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
@@ -1297,12 +1345,12 @@ import {
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
     if (!(target instanceof Element)) return false;
-    return target.matches?.('a[href*="/video/"], a[href*="live.bilibili.com/"], a[href], [title], [aria-label]') ||
-      target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bili-dyn"]');
+    return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], [title], [aria-label]') ||
+      target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, .bangumi-card, .season-item, .episode-item, .ep-list-item, .media-card, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bangumi"], [class*="season"], [class*="episode"], [class*="bili-dyn"]');
   }
 
   function isPlaybackPageWebFullscreen() {
-    if (!isPlaybackPage()) return false;
+    if (!isPlaybackPage() && !isOgvPage()) return false;
     if (document.body.classList.contains(`${APP}--modal-open`)) return false;
     const player = document.querySelector(getPlaybackPlayerSelector());
     if (!player) return false;
@@ -1403,17 +1451,32 @@ import {
     }
 
     const link = event.target.closest?.('a[href*="/video/BV"]');
-    if (!link || !isCoverLink(link)) return;
+    if (link && isCoverLink(link)) {
+      const meta = getVideoMetaFromLink(link);
+      if (!meta || meta.bvid === getCurrentPageBvid()) return;
 
-    const meta = getVideoMetaFromLink(link);
-    if (!meta || meta.bvid === getCurrentPageBvid()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      state.lastFocus = link;
+      state.lastButton = null;
+      openByMode(meta);
+      return;
+    }
+
+    const ogvLink = event.target.closest?.(OGV_VIDEO_LINK_SELECTOR);
+    if (!ogvLink || !isCoverLink(ogvLink)) return;
+
+    const ogvMeta = getOgvMetaFromLink(ogvLink);
+    const ogvKey = ogvMeta?.epId ? `ep${ogvMeta.epId}` : ogvMeta?.seasonId ? `ss${ogvMeta.seasonId}` : '';
+    if (!ogvMeta || (getCurrentPageOgvKey() && ogvKey === getCurrentPageOgvKey())) return;
 
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
-    state.lastFocus = link;
+    state.lastFocus = ogvLink;
     state.lastButton = null;
-    openByMode(meta);
+    openByMode(ogvMeta);
   }
 
   function getDirectLiveCardEntry(target) {
@@ -1478,6 +1541,12 @@ import {
 
   function syncPlaybackPageMeta(kind, bootstrap) {
     if (!bootstrap || isLiveBootstrap(bootstrap)) return;
+    if (isOgvBootstrap(bootstrap)) {
+      captureOriginalPageMeta();
+      const title = String(bootstrap.title || bootstrap.playerInfo?.epId || '').trim();
+      if (title) document.title = title;
+      return;
+    }
     const bvid = bootstrap.playerInfo?.bvid;
     if (!bvid) return;
     captureOriginalPageMeta();
@@ -1543,13 +1612,19 @@ import {
     const ui = ensureHomeShell();
     const bootstrap = context.bootstrap;
     const preserveRightList = Boolean(meta.fromHistory);
+    const ogv = isOgvBootstrap(bootstrap);
     showHomeShell(bootstrap.title || meta.title || meta.bvid);
     ui.openOriginal.dataset.href = meta.href || bootstrap.href;
     ui.status.textContent = '播放器：继续播放';
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory(meta, bootstrap);
     syncPlaybackPageMeta('home', bootstrap);
-    if (!preserveRightList) {
+    setOgvListMode('home', ogv);
+    if (ogv) {
+      state.home.playlistCards = [];
+      setSelectedPageKey('home', meta.pageKey || getSelectedOgvPageKey(bootstrap));
+      renderPageParts('home', bootstrap);
+    } else if (!preserveRightList) {
       setSelectedPlaylistBvid('home', meta.bvid || bootstrap.playerInfo?.bvid);
       renderPlaylist('home');
       renderPageParts('home', bootstrap);
@@ -1567,12 +1642,19 @@ import {
 
     const ui = ensureHomeShell();
     setLiveListMode('home', false);
+    const ogv = isOgvMeta(meta);
+    setOgvListMode('home', ogv);
     const preserveRightList = Boolean(meta.fromHistory);
-    const preservePageParts = preserveRightList && isBvidInCurrentPageCards('home', meta.bvid);
+    const preservePageParts = preserveRightList && isMetaInCurrentPageCards('home', meta);
     showHomeShell(meta.title || meta.bvid, { preserveScroll: Boolean(meta.fromPagePart || preserveRightList) });
     ui.openOriginal.dataset.href = meta.href;
     ui.status.textContent = state.home.player ? '播放页参数：解析中，准备 reload' : '播放页参数：解析中';
-    if (preserveRightList) {
+    if (ogv) {
+      state.home.playlistCards = [];
+      state.home.liveCards = [];
+      state.home.selectedPlaylistBvid = '';
+      state.home.selectedLiveKey = '';
+    } else if (preserveRightList) {
       if (isBvidInCurrentPlaylist('home', meta.bvid)) setSelectedPlaylistBvid('home', meta.bvid);
     } else if (meta.fromPlaylist && state.home.playlistCards.length) {
       setSelectedPlaylistBvid('home', meta.bvid);
@@ -1583,11 +1665,11 @@ import {
     }
     if (!preservePageParts) {
       if (meta.fromPagePart && state.home.pageCards.length) setSelectedPageKey('home', meta.pageKey);
-      else renderPageParts('home', null);
+      else renderPageParts('home', null, ogv ? '选集加载中...' : '合集加载中...');
     }
-    renderRecommendations('home', null);
+    renderRecommendations('home', null, ogv ? '推荐加载中...' : '相关推荐加载中...');
     ensureBiliThemeStylesheets(document);
-    return { ui, preservePageParts, preserveRightList };
+    return { ui, ogv, preservePageParts, preserveRightList };
   }
 
   async function playHome(context, bootstrap, token) {
@@ -1597,16 +1679,24 @@ import {
     }
 
     const { ui } = context;
+    const previousBootstrap = state.home.bootstrap;
     state.home.bootstrap = bootstrap;
+    const ogv = isOgvBootstrap(bootstrap);
+    setOgvListMode('home', ogv);
     syncPlaybackPageMeta('home', bootstrap);
     ui.title.textContent = bootstrap.title || ui.title.textContent;
     ui.openOriginal.dataset.href = bootstrap.href;
-    ui.status.textContent = `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
-    if (!context.preserveRightList) {
+    ui.status.textContent = ogv
+      ? `OGV 参数：ep=${bootstrap.playerInfo.epId || '-'} aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`
+      : `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
+    if (ogv) {
+      state.home.playlistCards = [];
+      renderPageParts('home', bootstrap);
+    } else if (!context.preserveRightList) {
       setSelectedPlaylistBvid('home', bootstrap.playerInfo?.bvid);
       renderPlaylist('home');
     }
-    if (!context.preservePageParts) {
+    if (!ogv && !context.preservePageParts) {
       renderPageParts('home', bootstrap);
     }
     renderRecommendations('home', bootstrap);
@@ -1615,7 +1705,7 @@ import {
     await loadScriptOnce(document, bootstrap.coreScript, () => pageWindow.nano);
     if (token !== state.switchToken || !pageWindow.nano || homeRenderer.isClosed()) return;
 
-    if (canReloadHome()) await reloadHomePlayer(bootstrap, token);
+    if (canReloadHome(bootstrap, previousBootstrap)) await reloadHomePlayer(bootstrap, token);
     else {
       disposeHomePlayer();
       createHomePlayer(bootstrap, token);
@@ -1628,6 +1718,7 @@ import {
     showHomeShell(meta.title || `Bilibili 直播 ${meta.roomId}`);
     ui.openOriginal.dataset.href = meta.href;
     ui.status.textContent = state.home.player ? '直播参数：解析中，准备换源' : '直播参数：解析中';
+    setOgvListMode('home', false);
     setLiveListMode('home', true);
     state.home.pageCards = [];
     state.home.recommendationCards = [];
@@ -1737,6 +1828,20 @@ import {
         href,
         title: bootstrap.title || ui?.title?.textContent || `Bilibili 直播 ${roomId}`,
         fromLivePageButton: !state.home.liveListMode,
+      });
+      return;
+    }
+
+    if (isOgvBootstrap(bootstrap)) {
+      openWithRenderer(pipRenderer, {
+        kind: 'ogv',
+        aid: info?.aid,
+        bvid: info?.bvid,
+        cid: info?.cid,
+        seasonId: info?.seasonId,
+        epId: info?.epId,
+        href,
+        title: bootstrap.title || ui?.title?.textContent || `Bilibili 番剧 ${info?.epId || ''}`,
       });
       return;
     }
@@ -2051,6 +2156,7 @@ import {
     const runtime = getPlayerApiForKind('home');
     const info = bootstrap.playerInfo;
     const handoff = getPlayerHandoffAvailability('home');
+    const ogv = isOgvBootstrap(bootstrap);
     const setting = {
       element: state.home.ui.playerRoot,
       aid: info.aid,
@@ -2061,9 +2167,11 @@ import {
       hasPrev: handoff?.hasPrev ?? Boolean(info.hasPrev),
       hasNext: handoff?.hasNext ?? Boolean(info.hasNext),
       seasonId: info.seasonId,
-      kind: runtime.GroupKind.Ugc,
-      featureList: new Set(['blackGap']),
-      stats: { spmId: '333.788.0.0', spmIdFrom: '333.788.0.0', trackId: '' },
+      kind: ogv ? (runtime.GroupKind.Pgc || 1) : runtime.GroupKind.Ugc,
+      featureList: new Set(ogv ? ['blackGap', 'outSideReload', 'hasAdvPermission'] : ['blackGap']),
+      stats: ogv
+        ? { spmId: '666.25.0.0', spmIdFrom: '666.25.0.0', trackId: '' }
+        : { spmId: '333.788.0.0', spmIdFrom: '333.788.0.0', trackId: '' },
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
@@ -2071,12 +2179,53 @@ import {
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
     };
+    if (ogv) applyOgvPrimarySetting(setting, bootstrap);
     if (bootstrap.playInfo) setting.prefetch = { playUrl: bootstrap.playInfo };
     return setting;
   }
 
-  function canReloadHome() {
-    return Boolean(state.home.player && typeof state.home.player.reload === 'function' && state.home.ui?.playerRoot?.isConnected);
+  function applyOgvPrimarySetting(setting, bootstrap) {
+    const info = bootstrap?.playerInfo || {};
+    delete setting.aid;
+    delete setting.cid;
+    delete setting.bvid;
+    delete setting.p;
+    setting.episodeId = info.epId;
+    setting.seasonId = info.seasonId;
+    setting.seasonType = info.seasonType;
+    setting.stats = {
+      ...(setting.stats || {}),
+      spmId: '666.25',
+      spmIdFrom: setting.stats?.spmIdFrom || '',
+    };
+    const quality = getInitialOgvQuality();
+    if (quality) setting.quality = quality;
+    setting.httpQuery = {
+      ...(setting.httpQuery || {}),
+      playUrl: {
+        ...(setting.httpQuery?.playUrl || {}),
+        exp_info: {
+          ...(setting.httpQuery?.playUrl?.exp_info || {}),
+          ogv_half_pay: true,
+        },
+      },
+    };
+    if (typeof bootstrap?.requestPlayUrlInfo === 'function') {
+      setting.requestConfig = {
+        ...(setting.requestConfig || {}),
+        reqHttpPlayUrlInfo: (input = {}, headers = {}) => bootstrap.requestPlayUrlInfo(input, headers),
+      };
+    }
+  }
+
+  function canReloadHome(bootstrap, previousBootstrap = state.home.bootstrap) {
+    return Boolean(
+      state.home.player &&
+      !isOgvBootstrap(bootstrap) &&
+      typeof state.home.player.reload === 'function' &&
+      state.home.ui?.playerRoot?.isConnected &&
+      getBootstrapPlaybackKind(previousBootstrap) === getBootstrapPlaybackKind(bootstrap)
+    );
   }
 
   async function reloadHomePlayer(bootstrap, token) {
@@ -2164,13 +2313,20 @@ import {
 
   function reusePip(context, meta) {
     const bootstrap = context.bootstrap;
+    const ogv = isOgvBootstrap(bootstrap);
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory(meta, bootstrap);
     syncPlaybackPageMeta('pip', bootstrap);
     ensurePipPlayerControls(context.pipWindow, meta.href || bootstrap.href);
     attachPipCommentsTabs(context.pipWindow);
-    setSelectedPlaylistBvid('pip', meta.bvid || bootstrap.playerInfo?.bvid);
-    renderPlaylist('pip');
+    setOgvListMode('pip', ogv);
+    if (ogv) {
+      state.pip.playlistCards = [];
+      setSelectedPageKey('pip', meta.pageKey || getSelectedOgvPageKey(bootstrap));
+    } else {
+      setSelectedPlaylistBvid('pip', meta.bvid || bootstrap.playerInfo?.bvid);
+      renderPlaylist('pip');
+    }
     renderPageParts('pip', bootstrap);
     renderRecommendations('pip', bootstrap);
     syncVideoIntro('pip');
@@ -2211,7 +2367,9 @@ import {
     }
     attachPipWindowCloseSync(pipWindow);
 
+    const ogv = isOgvMeta(meta);
     if (isLiveMeta(meta)) {
+      setOgvListMode('pip', false);
       setLiveListMode('pip', true);
       state.pip.pageCards = [];
       state.pip.recommendationCards = [];
@@ -2226,20 +2384,29 @@ import {
         capturePageLiveList('pip', getPlayableKey(meta));
         renderLiveList('pip', '当前页面没有扫到直播卡片');
       }
+    } else if (ogv) {
+      setLiveListMode('pip', false);
+      setOgvListMode('pip', true);
+      state.pip.playlistCards = [];
+      state.pip.liveCards = [];
+      state.pip.selectedPlaylistBvid = '';
+      state.pip.selectedLiveKey = '';
     } else if (meta.fromPlaylist && state.pip.playlistCards.length) {
       setLiveListMode('pip', false);
+      setOgvListMode('pip', false);
       setSelectedPlaylistBvid('pip', meta.bvid);
       renderPlaylist('pip');
     } else {
       setLiveListMode('pip', false);
+      setOgvListMode('pip', false);
       resetPlaylistFeed('pip');
       capturePagePlaylist('pip', meta.bvid);
     }
     if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) {
       if (meta.fromPagePart && state.pip.pageCards.length) setSelectedPageKey('pip', meta.pageKey);
-      else renderPageParts('pip', null);
+      else renderPageParts('pip', null, ogv ? '选集加载中...' : '合集加载中...');
     }
-    if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) renderRecommendations('pip', null);
+    if (state.pip.win && !state.pip.win.closed && !isLiveMeta(meta)) renderRecommendations('pip', null, ogv ? '推荐加载中...' : '相关推荐加载中...');
 
     if (!isLiveMeta(meta) && canReloadPip(pipWindow)) setPipStatus('换源中');
     else {
@@ -2262,12 +2429,13 @@ import {
   }
 
   async function bootPipWindow(pipWindow, bootstrap, token) {
+    const previousBootstrap = state.pip.bootstrap;
     state.pip.bootstrap = bootstrap;
     if (isLiveBootstrap(bootstrap)) {
       await bootLivePipWindow(pipWindow, bootstrap, token);
       return;
     }
-    if (canReloadPip(pipWindow)) {
+    if (canReloadPip(pipWindow, bootstrap, previousBootstrap)) {
       await reloadPipPlayer(pipWindow, bootstrap, token);
       return;
     }
@@ -2290,8 +2458,15 @@ import {
     });
     attachPipKeyboardShortcuts(pipWindow);
     attachPipCommentsTabs(pipWindow);
-    setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
-    renderPlaylist('pip');
+    const ogv = isOgvBootstrap(bootstrap);
+    setOgvListMode('pip', ogv);
+    if (ogv) {
+      state.pip.playlistCards = [];
+      setSelectedPageKey('pip', getSelectedOgvPageKey(bootstrap));
+    } else {
+      setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
+      renderPlaylist('pip');
+    }
     renderPageParts('pip', bootstrap);
     renderRecommendations('pip', bootstrap);
     syncVideoIntro('pip');
@@ -2462,6 +2637,7 @@ import {
       if (stage) stage.innerHTML = getLivePlayerShellMarkup();
       attachPipKeyboardShortcuts(pipWindow);
       attachPipCommentsTabs(pipWindow);
+      setOgvListMode('pip', false);
       setLiveListMode('pip', true);
       setSelectedLiveKey('pip', getPlayableKey(bootstrap.playerInfo));
       renderLiveList('pip', '当前页面没有扫到直播卡片');
@@ -2634,13 +2810,15 @@ import {
     state.pip.keydownHandler = handler;
   }
 
-  function canReloadPip(pipWindow) {
+  function canReloadPip(pipWindow, bootstrap = state.pip.bootstrap, previousBootstrap = state.pip.bootstrap) {
     return Boolean(
       pipWindow &&
       !pipWindow.closed &&
       !pipWindow.__biliPopupPlayerNanoClosed &&
       state.pip.win === pipWindow &&
       !isLiveBootstrap(state.pip.bootstrap) &&
+      !isOgvBootstrap(bootstrap) &&
+      getBootstrapPlaybackKind(previousBootstrap) === getBootstrapPlaybackKind(bootstrap) &&
       state.pip.player &&
       typeof state.pip.player.reload === 'function' &&
       pipWindow.document?.getElementById('bilibili-player') &&
@@ -2658,8 +2836,15 @@ import {
     ensurePipPlayerControls(targetWindow, bootstrap.href);
     attachPipKeyboardShortcuts(targetWindow);
     attachPipCommentsTabs(targetWindow);
-    setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
-    renderPlaylist('pip');
+    const ogv = isOgvBootstrap(bootstrap);
+    setOgvListMode('pip', ogv);
+    if (ogv) {
+      state.pip.playlistCards = [];
+      setSelectedPageKey('pip', getSelectedOgvPageKey(bootstrap));
+    } else {
+      setSelectedPlaylistBvid('pip', bootstrap.playerInfo?.bvid);
+      renderPlaylist('pip');
+    }
     renderPageParts('pip', bootstrap);
     renderRecommendations('pip', bootstrap);
     syncVideoIntro('pip');
@@ -2761,6 +2946,7 @@ import {
   function buildPipPrimarySetting(targetWindow, bootstrap) {
     const info = bootstrap.playerInfo;
     const handoff = getPlayerHandoffAvailability('pip');
+    const ogv = isOgvBootstrap(bootstrap);
     const setting = {
       element: targetWindow.document.getElementById('bilibili-player'),
       aid: info.aid,
@@ -2771,9 +2957,11 @@ import {
       hasPrev: handoff?.hasPrev ?? Boolean(info.hasPrev),
       hasNext: handoff?.hasNext ?? Boolean(info.hasNext),
       seasonId: info.seasonId,
-      kind: targetWindow.nano.GroupKind.Ugc,
-      featureList: new targetWindow.Set(['blackGap']),
-      stats: { spmId: '333.788.0.0', spmIdFrom: '333.788.0.0', trackId: '' },
+      kind: ogv ? (targetWindow.nano.GroupKind.Pgc || 1) : targetWindow.nano.GroupKind.Ugc,
+      featureList: new targetWindow.Set(ogv ? ['blackGap', 'outSideReload', 'hasAdvPermission'] : ['blackGap']),
+      stats: ogv
+        ? { spmId: '666.25.0.0', spmIdFrom: '666.25.0.0', trackId: '' }
+        : { spmId: '333.788.0.0', spmIdFrom: '333.788.0.0', trackId: '' },
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
@@ -2781,6 +2969,7 @@ import {
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
     };
+    if (ogv) applyOgvPrimarySetting(setting, bootstrap);
     if (bootstrap.playInfo) setting.prefetch = { playUrl: bootstrap.playInfo };
     return setting;
   }
@@ -2861,6 +3050,7 @@ import {
     const scope = state[kind];
     if (!scope) return;
     scope.liveListMode = Boolean(active);
+    if (active) scope.ogvListMode = false;
     if (active) scope.activeCommentsTab = 'live';
     else if (scope.activeCommentsTab === 'live') scope.activeCommentsTab = 'comments';
     const doc = kind === 'pip' ? state.pip.win?.document : document;
@@ -2871,6 +3061,22 @@ import {
         : (button.dataset.tab === 'pages' && !scope.pageCards?.length) ||
           button.dataset.tab === 'live';
     });
+    if (kind === 'home') syncAutoPlayNextButton();
+    syncCommentsTabs(kind);
+  }
+
+  function setOgvListMode(kind, active) {
+    const scope = state[kind];
+    if (!scope) return;
+    scope.ogvListMode = Boolean(active);
+    if (active) {
+      scope.liveListMode = false;
+      if (scope.activeCommentsTab === 'playlist' || scope.activeCommentsTab === 'live') {
+        scope.activeCommentsTab = 'pages';
+      }
+    } else if (scope.activeCommentsTab === 'pages' && !scope.pageCards?.length) {
+      scope.activeCommentsTab = 'comments';
+    }
     if (kind === 'home') syncAutoPlayNextButton();
     syncCommentsTabs(kind);
   }
@@ -3263,6 +3469,27 @@ import {
     return runtime?.ScreenKind?.[key] ?? (key === 'Wide' ? 1 : 0);
   }
 
+  function getInitialOgvQuality() {
+    const memoryQuality = getOgvMemoryQuality();
+    if (memoryQuality) return memoryQuality;
+    return getNumericCookieValue('CURRENT_QUALITY') || undefined;
+  }
+
+  function getOgvMemoryQuality() {
+    const raw = getStorageItem('OGV_MEMORY_QUALITY', '');
+    const quality = String(raw || '').split(';')
+      .map((item) => item.split('='))
+      .find(([key]) => key === 'quality')?.[1];
+    const number = Number(quality);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  }
+
+  function getNumericCookieValue(name) {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    const number = Number(match ? decodeURIComponent(match[1]) : 0);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  }
+
   function isScreenKind(runtime, value, key) {
     return value === runtime?.ScreenKind?.[key] || value === (key === 'Wide' ? 1 : 0);
   }
@@ -3542,7 +3769,8 @@ import {
   function getNextAutoPlayCard(kind) {
     const tab = state[kind]?.activeCommentsTab;
     if (tab === 'pages') {
-      return getAdjacentCard(state[kind].pageCards, 1, {
+      const pageCards = getPageTraversalCards(state[kind].pageCards);
+      return getAdjacentCard(pageCards, 1, {
         selectedKey: state[kind].selectedPageKey,
         getKey: (card) => card.pageKey,
         findCurrentIndex: (cards) => findCurrentPageCardIndex(kind, cards),
@@ -3773,8 +4001,8 @@ import {
     if (!slot?.player || !slot.bootstrap || isLiveBootstrap(slot.bootstrap)) return;
 
     const currentMeta = getPlayerNavigationMeta(kind);
-    const meta = fallbackMeta?.bvid ? fallbackMeta : currentMeta;
-    if (!meta?.bvid || isCurrentBootstrapPlayback(slot.bootstrap, meta)) {
+    const meta = getPlayableKey(fallbackMeta) ? fallbackMeta : currentMeta;
+    if (!getPlayableKey(meta) || isCurrentBootstrapPlayback(slot.bootstrap, meta)) {
       schedulePlayerHandoffAvailabilitySync(kind);
       return;
     }
@@ -3784,7 +4012,7 @@ import {
     try {
       const bootstrap = await resolvePlaybackBootstrap(meta);
       if (token !== state.switchToken || slot.player !== player) return;
-      if (!fallbackMeta?.bvid && !isCurrentPlayerMeta(kind, meta)) return;
+      if (!getPlayableKey(fallbackMeta) && !isCurrentPlayerMeta(kind, meta)) return;
       applyInternalPlayerNavigation(kind, meta, bootstrap, token);
     } catch (error) {
       if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = `播放器内部换源同步失败：${error?.message || 'unknown'}`;
@@ -3794,11 +4022,18 @@ import {
 
   function applyInternalPlayerNavigation(kind, meta, bootstrap, token) {
     state[kind].bootstrap = bootstrap;
+    const ogv = isOgvBootstrap(bootstrap);
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory({ ...meta, fromInternalPlayer: true }, bootstrap);
     syncPlaybackPageMeta(kind, bootstrap);
-    setSelectedPlaylistBvid(kind, bootstrap.playerInfo?.bvid || meta.bvid);
-    renderPlaylist(kind);
+    setOgvListMode(kind, ogv);
+    if (ogv) {
+      setSelectedPageKey(kind, meta.pageKey || getSelectedOgvPageKey(bootstrap));
+      state[kind].playlistCards = [];
+    } else {
+      setSelectedPlaylistBvid(kind, bootstrap.playerInfo?.bvid || meta.bvid);
+      renderPlaylist(kind);
+    }
     renderPageParts(kind, bootstrap);
     renderRecommendations(kind, bootstrap);
     syncVideoIntro(kind);
@@ -3829,6 +4064,25 @@ import {
   function getPlayerNavigationMeta(kind) {
     const slot = state[kind];
     const info = readPlayerNavigationInfo(slot?.player);
+    if (info.epId || (isOgvBootstrap(slot?.bootstrap) && info.seasonId)) {
+      const epId = info.epId || slot?.bootstrap?.playerInfo?.epId || '';
+      const seasonId = info.seasonId || slot?.bootstrap?.playerInfo?.seasonId || '';
+      const href = epId
+        ? `https://www.bilibili.com/bangumi/play/ep${epId}`
+        : seasonId
+          ? `https://www.bilibili.com/bangumi/play/ss${seasonId}`
+          : slot?.bootstrap?.href;
+      return {
+        kind: 'ogv',
+        aid: info.aid,
+        bvid: info.bvid,
+        cid: info.cid,
+        seasonId,
+        epId,
+        href,
+        title: info.title || slot?.bootstrap?.title || `Bilibili 番剧 ${epId || seasonId}`,
+      };
+    }
     if (!info.bvid) return null;
     const href = buildPlaybackHref(info.bvid, info.p);
     return {
@@ -3848,6 +4102,12 @@ import {
       aid: readStoreValue(store, 'aid') || story.aid || input.aid || primary.aid,
       bvid: String(readStoreValue(store, 'bvid') || story.bvid || input.bvid || primary.bvid || '').trim(),
       cid: readStoreValue(store, 'cid') || story.cid || input.cid || primary.cid,
+      seasonId: readFirstStoreValue(store, ['seasonId', 'season_id']) ||
+        story.seasonId || story.season_id || input.seasonId || input.season_id || primary.seasonId || primary.season_id,
+      epId: readFirstStoreValue(store, ['epId', 'ep_id', 'episodeId', 'episode_id']) ||
+        story.epId || story.ep_id || story.episodeId || story.episode_id ||
+        input.epId || input.ep_id || input.episodeId || input.episode_id ||
+        primary.epId || primary.ep_id || primary.episodeId || primary.episode_id,
       p: Number(readStoreValue(store, 'p') || story.p || input.p || primary.p || 1),
       title: String(story.title || primary.title || '').trim(),
     };
@@ -3855,6 +4115,14 @@ import {
 
   function readStoreValue(store, key) {
     return store?.[key] ?? store?.state?.[key] ?? store?.input?.[key] ?? store?.primary?.[key];
+  }
+
+  function readFirstStoreValue(store, keys) {
+    for (const key of keys) {
+      const value = readStoreValue(store, key);
+      if (value != null && value !== '') return value;
+    }
+    return undefined;
   }
 
   function buildPlaybackHref(bvid, page) {
@@ -3866,10 +4134,22 @@ import {
 
   function isCurrentPlayerMeta(kind, meta) {
     const current = getPlayerNavigationMeta(kind);
-    return Boolean(current?.bvid && meta?.bvid && current.bvid === meta.bvid);
+    const currentKey = getPlayableKey(current);
+    const metaKey = getPlayableKey(meta);
+    return Boolean(currentKey && metaKey && currentKey === metaKey);
   }
 
   function isCurrentBootstrapPlayback(bootstrap, meta) {
+    if (isOgvMeta(meta) || isOgvBootstrap(bootstrap)) {
+      const info = bootstrap?.playerInfo || {};
+      const metaEpId = Number(meta?.epId || 0);
+      const infoEpId = Number(info.epId || 0);
+      if (metaEpId && infoEpId) return metaEpId === infoEpId;
+      const metaCid = Number(meta?.cid || 0);
+      if (metaCid) return Number(info.cid || 0) === metaCid;
+      const metaSeasonId = Number(meta?.seasonId || 0);
+      return Boolean(metaSeasonId && Number(info.seasonId || 0) === metaSeasonId && !infoEpId);
+    }
     if (!meta?.bvid || !bootstrap?.playerInfo?.bvid || meta.bvid !== bootstrap.playerInfo.bvid) return false;
     const metaPage = Number(meta.p || 1);
     const bootstrapPage = Number(bootstrap.playerInfo?.p || 1);
@@ -3885,7 +4165,8 @@ import {
   function getPlayerHandoffAvailability(kind) {
     const tab = state[kind]?.activeCommentsTab;
     if (tab === 'pages') {
-      return getCardHandoffAvailability(state[kind].pageCards, findCurrentPageCardIndex(kind, state[kind].pageCards));
+      const pageCards = getPageTraversalCards(state[kind].pageCards);
+      return getCardHandoffAvailability(pageCards, findCurrentPageCardIndex(kind, pageCards));
     }
     if (tab === 'playlist' || tab === 'comments') {
       return getCardHandoffAvailability(
@@ -3965,7 +4246,7 @@ import {
 
   function playAdjacentFromActiveTab(kind, direction, options = {}) {
     const tab = state[kind]?.activeCommentsTab;
-    if (tab === 'pages') return playAdjacentCard(kind, state[kind].pageCards, direction, {
+    if (tab === 'pages') return playAdjacentCard(kind, getPageTraversalCards(state[kind].pageCards), direction, {
       ...options,
       selectedKey: state[kind].selectedPageKey,
       getKey: (card) => card.pageKey,
@@ -3990,7 +4271,16 @@ import {
 
   function isBvidInCurrentPageCards(kind, bvid) {
     if (!bvid) return false;
-    return state[kind]?.pageCards?.some((card) => card?.bvid === bvid) || false;
+    return flattenPageCards(state[kind]?.pageCards).some((card) => card?.bvid === bvid) || false;
+  }
+
+  function isMetaInCurrentPageCards(kind, meta) {
+    const key = getPlayableKey(meta);
+    if (!key && !meta?.pageKey) return false;
+    return flattenPageCards(state[kind]?.pageCards).some((card) => (
+      (meta.pageKey && card?.pageKey === meta.pageKey) ||
+      (key && getPlayableKey(card) === key)
+    ));
   }
 
   function isBvidInCurrentPlaylist(kind, bvid) {
@@ -4033,6 +4323,17 @@ import {
     return getPlayableKey(card) && card.href ? card : null;
   }
 
+  function getPageTraversalCards(cards) {
+    return flattenPageCards(cards).filter(getPlayableCard);
+  }
+
+  function flattenPageCards(cards) {
+    return (Array.isArray(cards) ? cards : []).flatMap((card) => [
+      card,
+      ...(Array.isArray(card?.children) ? card.children : []),
+    ]).filter(Boolean);
+  }
+
   function maybePrefetchHomePlaylistForContinuation(kind, cards, targetIndex, options = {}) {
     if (kind !== 'home' || !options.fromPlaylist) return;
     if (!isHomeFeedPage()) return;
@@ -4069,6 +4370,16 @@ import {
     if (selectedIndex >= 0) return selectedIndex;
 
     const info = state[kind]?.bootstrap?.playerInfo || {};
+    const epId = Number(info.epId || 0);
+    if (epId) {
+      const epIndex = cards.findIndex((card) => Number(card.epId || 0) === epId);
+      if (epIndex >= 0) return epIndex;
+    }
+    const cid = Number(info.cid || 0);
+    if (cid) {
+      const cidIndex = cards.findIndex((card) => Number(card.cid || 0) === cid);
+      if (cidIndex >= 0) return cidIndex;
+    }
     const bvid = info.bvid;
     const page = Number(info.p || 1);
     const exactIndex = cards.findIndex((card) => (
@@ -4305,6 +4616,28 @@ import {
     );
   }
 
+  function isOgvMeta(meta) {
+    return meta?.kind === 'ogv' || Boolean(meta?.epId || meta?.seasonId || /\/bangumi\/play\/(?:ss|ep)\d+/.test(String(meta?.href || '')));
+  }
+
+  function isOgvBootstrap(bootstrap) {
+    return bootstrap?.kind === 'ogv' || bootstrap?.playerInfo?.kind === 'ogv';
+  }
+
+  function getBootstrapPlaybackKind(bootstrap) {
+    if (!bootstrap) return '';
+    if (isLiveBootstrap(bootstrap)) return 'live';
+    if (isOgvBootstrap(bootstrap)) return 'ogv';
+    return 'video';
+  }
+
+  function getSelectedOgvPageKey(bootstrap) {
+    const info = bootstrap?.playerInfo || {};
+    const seasonId = info.seasonId || '';
+    const epId = info.epId || info.cid || '';
+    return ['ogv', seasonId, epId].filter(Boolean).join(':');
+  }
+
   function findPipOriginalButtonSlot(doc) {
     const container = doc.querySelector([
       '.bpx-player-control-bottom-right',
@@ -4323,7 +4656,8 @@ import {
 
   function saveLastPlayed(meta, bootstrap) {
     const playbackId = getPlaybackIdentity(meta, bootstrap);
-    if (!playbackId || !meta.href) return;
+    const href = bootstrap.href || meta.href;
+    if (!playbackId || !href) return;
     const next = {
       id: playbackId,
       kind: bootstrap.kind || meta.kind || 'video',
@@ -4331,8 +4665,10 @@ import {
       bvid: bootstrap.playerInfo?.bvid || meta.bvid,
       cid: bootstrap.playerInfo?.cid || meta.cid,
       p: bootstrap.playerInfo?.p || meta.p || meta.page,
+      seasonId: bootstrap.playerInfo?.seasonId || meta.seasonId,
+      epId: bootstrap.playerInfo?.epId || meta.epId,
       roomId: bootstrap.playerInfo?.roomId || meta.roomId,
-      href: meta.href,
+      href,
       title: bootstrap.title || meta.title,
       savedAt: Date.now(),
     };
@@ -4360,6 +4696,8 @@ import {
     const playbackId = getPlaybackIdentity(meta, bootstrap);
     const bvid = bootstrap.playerInfo?.bvid || meta.bvid;
     const roomId = bootstrap.playerInfo?.roomId || meta.roomId;
+    const seasonId = bootstrap.playerInfo?.seasonId || meta.seasonId;
+    const epId = bootstrap.playerInfo?.epId || meta.epId;
     const href = bootstrap.href || meta.href;
     if (!playbackId || !href) return;
 
@@ -4376,9 +4714,11 @@ import {
       bvid,
       cid: bootstrap.playerInfo?.cid || meta.cid,
       p: bootstrap.playerInfo?.p || meta.p || meta.page,
+      seasonId,
+      epId,
       roomId,
       href,
-      title: bootstrap.title || meta.title || bvid || `直播 ${roomId}`,
+      title: bootstrap.title || meta.title || bvid || (epId ? `番剧 ${epId}` : seasonId ? `番剧 ${seasonId}` : `直播 ${roomId}`),
     };
     const history = state.playbackHistory;
     const current = history.entries[history.index];
@@ -4439,6 +4779,15 @@ import {
       const info = bootstrap?.playerInfo || {};
       return Boolean(roomId && (roomId === String(info.roomId || '') || roomId === String(info.shortId || '')));
     }
+    if (isOgvMeta(meta) || isOgvBootstrap(bootstrap)) {
+      const info = bootstrap?.playerInfo || {};
+      const metaEpId = Number(meta?.epId || 0);
+      if (metaEpId) return Number(info.epId || 0) === metaEpId;
+      const metaCid = Number(meta?.cid || 0);
+      if (metaCid) return Number(info.cid || 0) === metaCid;
+      const metaSeasonId = Number(meta?.seasonId || 0);
+      return Boolean(metaSeasonId && Number(info.seasonId || 0) === metaSeasonId && !info.epId);
+    }
     const info = bootstrap?.playerInfo || {};
     if (!meta?.bvid || !info.bvid || meta.bvid !== info.bvid) return false;
     const metaCid = Number(meta.cid || 0);
@@ -4452,6 +4801,15 @@ import {
     if (isLiveMeta(meta) || isLiveBootstrap(bootstrap)) {
       const roomId = bootstrap?.playerInfo?.roomId || meta?.roomId;
       return roomId ? `live:${roomId}` : '';
+    }
+    if (isOgvMeta(meta) || isOgvBootstrap(bootstrap)) {
+      const info = bootstrap?.playerInfo || {};
+      const epId = info.epId || meta?.epId;
+      if (epId) return `ogv:ep:${epId}`;
+      const seasonId = info.seasonId || meta?.seasonId;
+      if (seasonId) return `ogv:ss:${seasonId}`;
+      const cid = info.cid || meta?.cid;
+      return cid ? `ogv:cid:${cid}` : '';
     }
     const info = bootstrap?.playerInfo || {};
     const bvid = info.bvid || meta?.bvid;

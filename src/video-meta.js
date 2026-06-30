@@ -1,4 +1,4 @@
-import { BV_RE } from './constants.js';
+import { BV_RE, OGV_RE } from './constants.js';
 
 export const COVER_HOST_SELECTOR = [
   '.bili-dyn-card-video',
@@ -49,6 +49,11 @@ const CARD_ROOT_SELECTORS = [
   '.search-item',
   '.list-item',
   '.section-item',
+  '.bangumi-card',
+  '.season-item',
+  '.episode-item',
+  '.ep-list-item',
+  '.media-card',
   '.video-card',
   '.video-page-card-small',
   '.video-page-operator-card-small',
@@ -59,6 +64,9 @@ const CARD_ROOT_SELECTORS = [
   '[class*="history"]',
   '[class*="search"]',
   '[class*="list-item"]',
+  '[class*="bangumi"]',
+  '[class*="season"]',
+  '[class*="episode"]',
   '[class*="small-item"]',
   '[class*="feed-card"]',
   '[class*="dyn-card-video"]',
@@ -73,6 +81,11 @@ export const PLAYBACK_VIDEO_LINK_SELECTOR = [
   '.rec-list .video-page-operator-card-small a[href*="/video/BV"]',
   '.recommend-list .video-page-card-small a[href*="/video/BV"]',
   '.recommend-list .video-page-operator-card-small a[href*="/video/BV"]',
+].join(',');
+
+export const OGV_VIDEO_LINK_SELECTOR = [
+  'a[href*="/bangumi/play/ss"]',
+  'a[href*="/bangumi/play/ep"]',
 ].join(',');
 
 export const DYNAMIC_VIDEO_LINK_SELECTOR = [
@@ -100,6 +113,15 @@ export function normalizeVideoHref(rawHref, baseUrl = location.href) {
   }
 }
 
+export function normalizeOgvHref(rawHref, baseUrl = location.href) {
+  const parsed = parseOgvHref(rawHref, baseUrl);
+  if (!parsed) return '';
+  const canonical = new URL(`/bangumi/play/${parsed.prefix}${parsed.id}`, 'https://www.bilibili.com');
+  canonical.search = parsed.url.search;
+  canonical.hash = parsed.url.hash;
+  return canonical.href;
+}
+
 export function normalizeResourceUrl(rawUrl, baseUrl = location.href) {
   if (!rawUrl) return '';
   try {
@@ -122,12 +144,61 @@ export function getVideoMetaFromLink(link, baseUrl = location.href) {
   return { bvid: match[1], href, title: cleanVideoTitle(title) };
 }
 
+export function getOgvMetaFromLink(link, baseUrl = location.href) {
+  const href = normalizeOgvHref(link.getAttribute('href') || link.href, baseUrl);
+  const parsed = parseOgvHref(href, baseUrl);
+  if (!parsed) return null;
+  const title = getDynamicCardTitle(link) ||
+    link.getAttribute('title') ||
+    link.getAttribute('aria-label') ||
+    link.querySelector('img')?.getAttribute('alt') ||
+    link.textContent ||
+    'Bilibili 番剧';
+  return {
+    kind: 'ogv',
+    seasonId: parsed.prefix === 'ss' ? parsed.id : '',
+    epId: parsed.prefix === 'ep' ? parsed.id : '',
+    href,
+    title: cleanVideoTitle(title),
+  };
+}
+
 export function getCurrentPageBvid() {
   return location.href.match(BV_RE)?.[1] || '';
 }
 
+export function getCurrentPageOgvMeta() {
+  const href = normalizeOgvHref(location.href);
+  const parsed = parseOgvHref(href || location.href);
+  if (!parsed) return null;
+  const title = cleanVideoTitle(
+    document.querySelector('meta[property="og:title"]')?.getAttribute('content') ||
+    document.querySelector('h1[title]')?.getAttribute('title') ||
+    document.querySelector('h1')?.textContent ||
+    document.title ||
+    'Bilibili 番剧',
+  );
+  return {
+    kind: 'ogv',
+    seasonId: parsed.prefix === 'ss' ? parsed.id : '',
+    epId: parsed.prefix === 'ep' ? parsed.id : '',
+    href,
+    title,
+  };
+}
+
+export function getCurrentPageOgvKey() {
+  const meta = getCurrentPageOgvMeta();
+  if (!meta) return '';
+  return meta.epId ? `ep${meta.epId}` : meta.seasonId ? `ss${meta.seasonId}` : '';
+}
+
 export function isPlaybackPage() {
   return /^https?:\/\/www\.bilibili\.com\/video\/BV/.test(location.href);
+}
+
+export function isOgvPage() {
+  return /^https?:\/\/www\.bilibili\.com\/bangumi\/play\/(?:ss|ep)\d+/.test(location.href);
 }
 
 export function isSpacePage() {
@@ -167,6 +238,23 @@ function countDistinctBvids(root) {
       .map((link) => normalizeVideoHref(link.getAttribute('href') || link.href).match(BV_RE)?.[1])
       .filter(Boolean),
   ).size;
+}
+
+function parseOgvHref(rawHref, baseUrl = location.href) {
+  if (!rawHref) return null;
+  try {
+    const url = new URL(rawHref, baseUrl);
+    if (!url.hostname.endsWith('bilibili.com')) return null;
+    const match = url.href.match(OGV_RE);
+    if (!match) return null;
+    return {
+      url,
+      prefix: match[1],
+      id: match[2],
+    };
+  } catch {
+    return null;
+  }
 }
 
 function cleanVideoTitle(value) {

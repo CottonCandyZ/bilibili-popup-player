@@ -1,6 +1,12 @@
 import { APP } from './constants.js';
 import { getPlayableKey } from './live-cards.js';
-import { getVideoMetaFromLink, isCoverLink, normalizeResourceUrl, normalizeVideoHref } from './video-meta.js';
+import {
+  getVideoMetaFromLink,
+  isCoverLink,
+  normalizeOgvHref,
+  normalizeResourceUrl,
+  normalizeVideoHref,
+} from './video-meta.js';
 import { createEffect, createRoot, createSignal } from 'solid-js';
 
 const TAB_KEYS = ['comments', 'pages', 'playlist', 'live', 'recommend'];
@@ -61,8 +67,9 @@ export function createCommentsTabsUi({
     button.setAttribute('role', 'tab');
     button.textContent = label;
     button.addEventListener('click', () => setTab(kind, tab, { forceLocate: true }));
-    if (tab === 'pages') button.hidden = !state[kind].pageCards?.length;
-    if (tab === 'live') button.hidden = !state[kind].liveListMode;
+    if (tab === 'pages') button.hidden = !state[kind].ogvListMode && !state[kind].pageCards?.length;
+    if (tab === 'playlist') button.hidden = Boolean(state[kind].ogvListMode || state[kind].liveListMode);
+    if (tab === 'live') button.hidden = !state[kind].liveListMode || Boolean(state[kind].ogvListMode);
     return button;
   }
 
@@ -88,7 +95,12 @@ export function createCommentsTabsUi({
   function syncTabs(kind) {
     const ui = getUi(kind);
     if (!ui) return;
-    const activeTab = TAB_KEYS.includes(state[kind].activeCommentsTab) ? state[kind].activeCommentsTab : 'comments';
+    syncModeTabVisibility(kind, ui);
+    let activeTab = TAB_KEYS.includes(state[kind].activeCommentsTab) ? state[kind].activeCommentsTab : 'comments';
+    if (isTabHidden(ui, activeTab)) {
+      activeTab = getFallbackActiveTab(kind, ui);
+      state[kind].activeCommentsTab = activeTab;
+    }
     getActiveSignal(kind)[1](activeTab);
     syncTabButtonSet([ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.liveTab, ui.recommendTab], activeTab);
 
@@ -97,6 +109,48 @@ export function createCommentsTabsUi({
     ui.playlistPanel.hidden = activeTab !== 'playlist';
     ui.livePanel.hidden = activeTab !== 'live';
     ui.recommendPanel.hidden = activeTab !== 'recommend';
+  }
+
+  function syncModeTabVisibility(kind, ui) {
+    const scope = state[kind] || {};
+    if (scope.liveListMode) {
+      [ui.commentsTab, ui.pagesTab, ui.playlistTab, ui.recommendTab].forEach((button) => {
+        if (button) button.hidden = true;
+      });
+      if (ui.liveTab) ui.liveTab.hidden = false;
+      return;
+    }
+
+    if (ui.commentsTab) ui.commentsTab.hidden = false;
+    if (ui.pagesTab) {
+      ui.pagesTab.hidden = !scope.ogvListMode && !scope.pageCards?.length;
+      if (scope.ogvListMode) ui.pagesTab.textContent = '选集';
+    }
+    if (ui.playlistTab) ui.playlistTab.hidden = Boolean(scope.ogvListMode);
+    if (ui.liveTab) ui.liveTab.hidden = true;
+    if (ui.recommendTab) ui.recommendTab.textContent = scope.ogvListMode ? '推荐' : '相关推荐';
+  }
+
+  function isTabHidden(ui, tab) {
+    return Boolean(getTabButton(ui, tab)?.hidden);
+  }
+
+  function getTabButton(ui, tab) {
+    if (tab === 'comments') return ui.commentsTab;
+    if (tab === 'pages') return ui.pagesTab;
+    if (tab === 'playlist') return ui.playlistTab;
+    if (tab === 'live') return ui.liveTab;
+    if (tab === 'recommend') return ui.recommendTab;
+    return null;
+  }
+
+  function getFallbackActiveTab(kind, ui) {
+    const preferred = state[kind]?.ogvListMode
+      ? ['pages', 'comments', 'recommend']
+      : state[kind]?.liveListMode
+        ? ['live']
+        : ['comments', 'pages', 'playlist', 'recommend'];
+    return preferred.find((tab) => !isTabHidden(ui, tab)) || 'comments';
   }
 
   function syncTabButtons(tabs, activeTab) {
@@ -204,14 +258,14 @@ export function createCommentsTabsUi({
   function syncPageTabVisibility(kind, visible) {
     const ui = getUi(kind);
     if (!ui?.pagesTab) return;
-    ui.pagesTab.hidden = !visible;
-    if (!visible && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
+    ui.pagesTab.hidden = !state[kind].ogvListMode && !visible;
+    if (!visible && !state[kind].ogvListMode && state[kind].activeCommentsTab === 'pages') setTab(kind, 'comments');
   }
 
   function syncPageTabLabel(kind, label) {
     const ui = getUi(kind);
     if (!ui?.pagesTab) return;
-    ui.pagesTab.textContent = label || '合集/分P';
+    ui.pagesTab.textContent = state[kind].ogvListMode ? '选集' : (label || '合集/分P');
   }
 
   function syncLiveTabVisibility(kind, visible) {
@@ -327,7 +381,7 @@ export function createCommentsTabsUi({
       list: ui.recommendList,
       empty: ui.recommendEmpty,
       cards: state[kind].recommendationCards,
-      emptyText: bootstrap ? '没有扫到可播放的推荐卡片' : statusText,
+      emptyText: bootstrap ? (state[kind].ogvListMode ? '没有相关推荐' : '没有扫到可播放的推荐卡片') : statusText,
       kind,
       source: 'recommend',
       loading: !bootstrap,
@@ -511,6 +565,8 @@ export function createCommentsTabsUi({
     button.dataset.bvid = card.bvid || '';
     button.dataset.aid = card.aid || '';
     button.dataset.cid = card.cid || '';
+    button.dataset.seasonId = card.seasonId || '';
+    button.dataset.epId = card.epId || '';
     button.dataset.page = card.page || '';
     button.dataset.roomId = card.roomId || '';
     button.dataset.key = cardKey || '';
@@ -525,6 +581,10 @@ export function createCommentsTabsUi({
       button.setAttribute('aria-current', 'true');
     }
     button.addEventListener('click', () => {
+      if (source === 'pages' && options.hasChildren && !options.depth) {
+        options.onToggle?.();
+        return;
+      }
       state.lastButton = null;
       if (source === 'playlist') setSelectedPlaylistBvid(kind, cardKey);
       if (source === 'live') setSelectedLiveKey(kind, cardKey);
@@ -680,8 +740,7 @@ export function createCommentsTabsUi({
   }
 
   function getLastPlayedKey() {
-    if (state.playlistLastPlayed?.kind === 'video' && state.playlistLastPlayed?.bvid) return state.playlistLastPlayed.bvid;
-    return state.lastPlayed?.kind === 'video' && state.lastPlayed?.bvid ? state.lastPlayed.bvid : '';
+    return getPlayableKey(state.playlistLastPlayed) || getPlayableKey(state.lastPlayed) || '';
   }
 
   function syncLastPlayed() {
@@ -696,7 +755,7 @@ export function createCommentsTabsUi({
     const list = ui?.playlistList;
     if (!list || ui.playlistPanel?.hidden) return;
     const item = [...(list.querySelectorAll?.(`.${APP}__playlist-card`) || [])]
-      .find((card) => card.dataset.bvid === bvid);
+      .find((card) => card.dataset.key === bvid || card.dataset.bvid === bvid);
     scrollItemWithinPanel(ui.playlistPanel, item);
   }
 
@@ -758,6 +817,8 @@ export function createCommentsTabsUi({
 }
 
 function getPagePartCards(bootstrap) {
+  if (isOgvBootstrap(bootstrap)) return getOgvSelectionCards(bootstrap);
+
   const vd = bootstrap?.initialState?.videoData || {};
   const aid = vd.aid || bootstrap?.playerInfo?.aid;
   const bvid = bootstrap?.playerInfo?.bvid || vd.bvid;
@@ -861,6 +922,7 @@ function extractSeasonEpisodes(season) {
 }
 
 function getPageTabLabel(cards) {
+  if (cards.some((card) => card.pageType === 'ogv')) return '选集';
   const hasSeason = cards.some((card) => card.pageType === 'season');
   const hasPart = cards.some((card) => card.pageType === 'part');
   if (hasSeason && hasPart) return '合集/分P';
@@ -892,6 +954,17 @@ function isSameArchiveCard(card, current) {
 
 function getSelectedPageKey(bootstrap, cards = []) {
   const info = bootstrap?.playerInfo;
+  if (isOgvBootstrap(bootstrap)) {
+    const epId = Number(info?.epId || 0);
+    const cid = Number(info?.cid || 0);
+    const searchableCards = flattenPageCards(cards);
+    const matched = searchableCards.find((card) => (
+      (epId && Number(card.epId || 0) === epId) ||
+      (cid && Number(card.cid || 0) === cid)
+    ));
+    if (matched?.pageKey) return matched.pageKey;
+    return buildOgvPageKey(info?.seasonId, epId || cid || '');
+  }
   if (!info?.bvid) return '';
   const aid = Number(info.aid || 0);
   const cid = Number(info.cid || 0);
@@ -910,6 +983,133 @@ function getSelectedPageKey(bootstrap, cards = []) {
     if (card?.pageKey) return card.pageKey;
   }
   return buildPageKey('part', { bvid, cid, page });
+}
+
+function isOgvBootstrap(bootstrap) {
+  return bootstrap?.kind === 'ogv' || bootstrap?.playerInfo?.kind === 'ogv';
+}
+
+function getOgvSelectionCards(bootstrap) {
+  const vd = bootstrap?.initialState?.videoData || {};
+  const season = bootstrap?.initialState?.ogvSeason || vd.ogv_season || {};
+  const epList = bootstrap?.initialState?.ogvEpList || vd.ogv_ep_list || {};
+  const seasonId = bootstrap?.playerInfo?.seasonId || season.season_id;
+  const mainSectionTitle = cleanText(season?.positive?.title || epList?.positive?.title || '正片');
+  const cards = [
+    ...mergeOgvEpisodes(season?.episodes, epList?.episodes)
+      .map((episode, index) => buildOgvEpisodeCard({
+        episode,
+        fallbackSeasonId: seasonId,
+        index,
+        sectionTitle: mainSectionTitle,
+        season,
+      })),
+    ...getOgvSections(season, epList).flatMap((section) => {
+      const title = cleanText(section?.title || section?.section_title || section?.name || '选集');
+      return mergeOgvEpisodes(section?.episodes, [])
+        .map((episode, index) => buildOgvEpisodeCard({
+          episode,
+          fallbackSeasonId: seasonId,
+          index,
+          sectionTitle: title,
+          season,
+        }));
+    }),
+  ].filter(Boolean);
+
+  const seen = new Set();
+  return cards.filter((card) => {
+    const key = card.pageKey || getPlayableKey(card);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function getOgvSections(season, epList) {
+  const sections = [
+    ...(Array.isArray(season?.section) ? season.section : []),
+    ...(Array.isArray(season?.sections) ? season.sections : []),
+    ...(Array.isArray(epList?.section) ? epList.section : []),
+    ...(Array.isArray(epList?.sections) ? epList.sections : []),
+  ];
+  const seen = new Set();
+  return sections.filter((section) => {
+    const key = section?.id || section?.title || section?.section_title || section?.name || JSON.stringify(section?.episodes?.[0] || {});
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return Array.isArray(section?.episodes) && section.episodes.length;
+  });
+}
+
+function mergeOgvEpisodes(primary, secondary) {
+  const merged = new Map();
+  const add = (episode) => {
+    const epId = Number(episode?.ep_id || episode?.id || episode?.episode_id || 0);
+    if (!epId) return;
+    merged.set(epId, {
+      ...merged.get(epId),
+      ...episode,
+      ep_id: episode.ep_id || episode.id || episode.episode_id,
+    });
+  };
+  (Array.isArray(primary) ? primary : []).forEach(add);
+  (Array.isArray(secondary) ? secondary : []).forEach(add);
+  return [...merged.values()];
+}
+
+function buildOgvEpisodeCard({ episode, fallbackSeasonId, index, sectionTitle, season }) {
+  const epId = episode?.ep_id || episode?.id || episode?.episode_id;
+  if (!epId) return null;
+  const seasonId = episode?.season_id || fallbackSeasonId || season?.season_id || '';
+  const href = normalizeOgvHref(
+    episode?.link || episode?.share_url || episode?.url || `/bangumi/play/ep${epId}`,
+    `https://www.bilibili.com/bangumi/play/ss${seasonId || ''}`,
+  );
+  if (!href) return null;
+  const title = cleanText(episode?.show_title || buildOgvEpisodeTitle(episode)) || `第${index + 1}话`;
+  const longTitle = cleanText(episode?.long_title);
+  return {
+    kind: 'ogv',
+    pageType: 'ogv',
+    aid: episode?.aid,
+    bvid: episode?.bvid,
+    cid: episode?.cid,
+    seasonId: seasonId ? String(seasonId) : '',
+    epId: String(epId),
+    cover: normalizeResourceUrl(episode?.cover || season?.cover || season?.square_cover, href),
+    duration: formatDuration(normalizeOgvDurationSeconds(episode?.duration)),
+    href,
+    pageKey: buildOgvPageKey(seasonId, epId),
+    sectionTitle: sectionTitle || '选集',
+    stats: normalizeOgvCardStats(episode?.stat),
+    subtitle: longTitle && longTitle !== title ? longTitle : cleanText(season?.title || season?.season_title || ''),
+    title,
+  };
+}
+
+function buildOgvEpisodeTitle(episode) {
+  const title = cleanText(episode?.title || episode?.index_title);
+  const longTitle = cleanText(episode?.long_title);
+  if (title && longTitle) return `第${title}话 ${longTitle}`;
+  if (title) return `第${title}话`;
+  return longTitle;
+}
+
+function normalizeOgvDurationSeconds(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return number > 100000 ? Math.round(number / 1000) : Math.round(number);
+}
+
+function normalizeOgvCardStats(stat) {
+  const view = formatCount(stat?.play ?? stat?.view ?? stat?.views);
+  const danmaku = formatCount(stat?.danmaku ?? stat?.danmakus);
+  return view || danmaku ? { view, danmaku } : '';
+}
+
+function buildOgvPageKey(seasonId, epId) {
+  return ['ogv', seasonId || '', epId || ''].filter(Boolean).join(':');
 }
 
 function flattenPageCards(cards) {
@@ -983,6 +1183,18 @@ function normalizeStats(stats) {
     view: parts[0] || '',
     danmaku: parts[1] || '',
   };
+}
+
+function formatCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count <= 0) return '';
+  if (count >= 100000000) return `${trimFixed(count / 100000000)}亿`;
+  if (count >= 10000) return `${trimFixed(count / 10000)}万`;
+  return String(Math.round(count));
+}
+
+function trimFixed(value) {
+  return value.toFixed(1).replace(/\.0$/, '');
 }
 
 function formatDuration(value) {

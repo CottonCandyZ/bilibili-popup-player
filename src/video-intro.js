@@ -122,6 +122,8 @@ export async function requestFollowUp(mid, follow = true) {
 }
 
 function getVideoIntroInfo(bootstrap) {
+  if (bootstrap?.kind === 'ogv') return getOgvIntroInfo(bootstrap);
+
   const videoData = bootstrap?.initialState?.videoData || {};
   const owner = videoData.owner || {};
   const mid = Number(owner.mid);
@@ -144,6 +146,40 @@ function getVideoIntroInfo(bootstrap) {
       face: normalizeResourceUrl(owner.face, bootstrap?.href || location.href),
       href: Number.isFinite(mid) && mid > 0 ? `https://space.bilibili.com/${Math.trunc(mid)}` : '',
       sign: String(owner.sign || '').trim(),
+    },
+  };
+}
+
+function getOgvIntroInfo(bootstrap) {
+  const videoData = bootstrap?.initialState?.videoData || {};
+  const season = bootstrap?.initialState?.ogvSeason || videoData.ogv_season || {};
+  const episode = bootstrap?.initialState?.ogvCurrentEpisode || videoData.ogv_episode || {};
+  const seasonId = season.season_id || bootstrap?.playerInfo?.seasonId || '';
+  const title = String(season.title || season.season_title || videoData.title || 'Bilibili 番剧').trim();
+  const description = String(season.evaluate || videoData.desc || '').trim();
+  const meta = [];
+  const rating = season.rating?.score || season.new_ep?.desc;
+  if (rating) meta.push(String(rating).trim());
+  const stat = season.stat || {};
+  const views = formatCount(stat.view ?? stat.views ?? episode.stat?.play);
+  if (views) meta.push(`${views} 播放`);
+  const follows = formatCount(stat.follow ?? stat.favorites);
+  if (follows) meta.push(`${follows} 追番`);
+  const styles = Array.isArray(season.styles)
+    ? season.styles.map((item) => String(item?.name || item || '').trim()).filter(Boolean).slice(0, 3).join(' / ')
+    : '';
+  if (styles) meta.push(styles);
+
+  return {
+    description,
+    followed: season.user_status?.follow === 1 || season.user_status?.follow_status === 1,
+    meta,
+    owner: {
+      mid: 0,
+      name: title,
+      face: normalizeResourceUrl(season.square_cover || season.cover || episode.cover, bootstrap?.href || location.href),
+      href: seasonId ? `https://www.bilibili.com/bangumi/play/ss${seasonId}` : '',
+      sign: String(season.subtitle || season.share_sub_title || '').trim(),
     },
   };
 }

@@ -4,8 +4,11 @@ import {
   normalizeVideoHref,
 } from './video-meta.js';
 import { getPlayerNanoTheme } from './player-theme.js';
+import { isOgvMeta, resolveOgvPlaybackBootstrap } from './ogv-playback-bootstrap.js';
 
 export async function resolvePlaybackBootstrap(meta) {
+  if (isOgvMeta(meta)) return resolveOgvPlaybackBootstrap(meta);
+
   const apiBootstrap = await resolvePlaybackBootstrapFromApis(meta);
   if (apiBootstrap) return apiBootstrap;
 
@@ -162,6 +165,10 @@ function buildInitialStateFromApis({ meta, p, relatedItems, videoData }) {
     staffData: videoData.staff || [],
     nanoTheme: getPlayerNanoTheme(),
   };
+}
+
+function cleanText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
 function resolveCurrentPage(meta, initialState) {

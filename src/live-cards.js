@@ -43,6 +43,12 @@ export function getLiveCardRoot(link) {
 
 export function getPlayableKey(meta) {
   if (meta?.kind === 'live' || meta?.roomId) return meta.roomId ? `live:${meta.roomId}` : '';
+  if (meta?.kind === 'ogv' || meta?.epId || meta?.seasonId) {
+    if (meta.epId) return `ogv:ep:${meta.epId}`;
+    if (meta.seasonId) return `ogv:ss:${meta.seasonId}`;
+    if (meta.bvid) return `ogv:${meta.bvid}`;
+    return '';
+  }
   return meta?.bvid || '';
 }
 
