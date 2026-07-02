@@ -829,13 +829,24 @@ function getPagePartCards(bootstrap) {
 
   const season = getSeasonData(bootstrap);
   const seasonCards = season.episodes.length > 1 ? season.episodes
-    .map((episode, index) => buildSeasonEpisodeCard({
-      episode,
-      fallbackBvid: bvid,
-      fallbackHref: href,
-      index,
-      sectionTitle: season.title,
-    }))
+    .map((episode, index) => {
+      const card = buildSeasonEpisodeCard({
+        episode,
+        fallbackBvid: bvid,
+        fallbackHref: href,
+        index,
+        sectionTitle: season.title,
+      });
+      if (!card) return null;
+      const children = buildSeasonEpisodePageCards({
+        episode,
+        parentCard: card,
+        currentAid: aid,
+        currentBvid: bvid,
+        currentPageCards: pageCards,
+      });
+      return children.length > 1 ? { ...card, children } : card;
+    })
     .filter(Boolean) : [];
 
   if (isSameCidList(seasonCards, pageCards)) return pageCards;
@@ -893,6 +904,40 @@ function buildSeasonEpisodeCard({ episode, fallbackBvid, fallbackHref, index, se
     stats: episode?.arc?.stat,
     title: `${index + 1}. ${cleanText(episode?.title || episode?.part || episode?.page?.part) || '未命名片段'}`,
   };
+}
+
+function buildSeasonEpisodePageCards({ episode, parentCard, currentAid, currentBvid, currentPageCards }) {
+  if (!parentCard?.bvid) return [];
+  if (isSameArchiveCard(parentCard, { aid: currentAid, bvid: currentBvid }) && currentPageCards.length > 1) {
+    return currentPageCards;
+  }
+
+  const episodePages = getSeasonEpisodePages(episode);
+  if (episodePages.length <= 1) return [];
+  const episodeAid = episode?.aid || episode?.arc?.aid || parentCard.aid;
+  const episodeBvid = episode?.bvid || parentCard.bvid;
+  const episodeTitle = cleanText(episode?.arc?.title || episode?.title || parentCard.title);
+  return episodePages
+    .map((page, index) => buildPagePartCard({
+      aid: episodeAid,
+      bvid: episodeBvid,
+      href: parentCard.href,
+      index,
+      page,
+      title: episodeTitle,
+      cover: parentCard.cover,
+    }))
+    .filter(Boolean);
+}
+
+function getSeasonEpisodePages(episode) {
+  const pages = Array.isArray(episode?.pages)
+    ? episode.pages
+    : Array.isArray(episode?.arc?.pages)
+      ? episode.arc.pages
+      : [];
+  if (pages.length) return pages;
+  return episode?.page ? [episode.page] : [];
 }
 
 function getSeasonData(bootstrap) {

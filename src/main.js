@@ -3684,7 +3684,10 @@ import {
   function handlePlayerHandoff(kind, detail) {
     const offset = Number(detail?.offset);
     if (!Number.isInteger(offset)) return;
-    if (playAdjacentFromActiveTab(kind, offset, { absolute: Boolean(detail?.absolute) })) {
+    if (playAdjacentFromActiveTab(kind, offset, {
+      absolute: Boolean(detail?.absolute),
+      preferPageTree: true,
+    })) {
       showSwitchBurst(kind, offset);
     }
   }
@@ -3697,7 +3700,7 @@ import {
       return;
     }
     hideAutoPlayCountdown(kind);
-    playAdjacentFromActiveTab(kind, 1, { auto: true });
+    playAdjacentFromActiveTab(kind, 1, { auto: true, preferPageTree: true });
   }
 
   function startAutoPlayCountdownMonitor(kind) {
@@ -3767,6 +3770,13 @@ import {
   }
 
   function getNextAutoPlayCard(kind) {
+    const pageContext = getCurrentPageTraversalContext(kind);
+    if (pageContext) {
+      return getAdjacentCard(pageContext.cards, 1, {
+        findCurrentIndex: () => pageContext.currentIndex,
+      });
+    }
+
     const tab = state[kind]?.activeCommentsTab;
     if (tab === 'pages') {
       const pageCards = getPageTraversalCards(state[kind].pageCards);
@@ -4163,6 +4173,9 @@ import {
   }
 
   function getPlayerHandoffAvailability(kind) {
+    const pageContext = getCurrentPageTraversalContext(kind);
+    if (pageContext) return getCardHandoffAvailability(pageContext.cards, pageContext.currentIndex);
+
     const tab = state[kind]?.activeCommentsTab;
     if (tab === 'pages') {
       const pageCards = getPageTraversalCards(state[kind].pageCards);
@@ -4246,6 +4259,14 @@ import {
 
   function playAdjacentFromActiveTab(kind, direction, options = {}) {
     const tab = state[kind]?.activeCommentsTab;
+    const pageContext = options.preferPageTree ? getCurrentPageTraversalContext(kind) : null;
+    if (pageContext) return playAdjacentCard(kind, pageContext.cards, direction, {
+      ...options,
+      selectedKey: state[kind].selectedPageKey,
+      getKey: (card) => card.pageKey,
+      findCurrentIndex: () => pageContext.currentIndex,
+      fromPagePart: true,
+    });
     if (tab === 'pages') return playAdjacentCard(kind, getPageTraversalCards(state[kind].pageCards), direction, {
       ...options,
       selectedKey: state[kind].selectedPageKey,
@@ -4324,7 +4345,21 @@ import {
   }
 
   function getPageTraversalCards(cards) {
-    return flattenPageCards(cards).filter(getPlayableCard);
+    return flattenPageTraversalCards(cards).filter(getPlayableCard);
+  }
+
+  function flattenPageTraversalCards(cards) {
+    return (Array.isArray(cards) ? cards : []).flatMap((card) => {
+      const children = Array.isArray(card?.children) ? card.children.filter(Boolean) : [];
+      return children.length ? children : [card];
+    }).filter(Boolean);
+  }
+
+  function getCurrentPageTraversalContext(kind) {
+    const cards = getPageTraversalCards(state[kind]?.pageCards);
+    if (!cards.length) return null;
+    const currentIndex = findCurrentPageCardIndex(kind, cards);
+    return currentIndex >= 0 ? { cards, currentIndex } : null;
   }
 
   function flattenPageCards(cards) {

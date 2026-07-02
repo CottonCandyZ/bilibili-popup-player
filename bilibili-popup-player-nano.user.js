@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.23
+// @version      4.0.24
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
@@ -1536,13 +1536,27 @@
       cover: vd.pic
     })).filter(Boolean);
     const season = getSeasonData(bootstrap);
-    const seasonCards = season.episodes.length > 1 ? season.episodes.map((episode, index) => buildSeasonEpisodeCard({
-      episode,
-      fallbackBvid: bvid,
-      fallbackHref: href,
-      index,
-      sectionTitle: season.title
-    })).filter(Boolean) : [];
+    const seasonCards = season.episodes.length > 1 ? season.episodes.map((episode, index) => {
+      const card = buildSeasonEpisodeCard({
+        episode,
+        fallbackBvid: bvid,
+        fallbackHref: href,
+        index,
+        sectionTitle: season.title
+      });
+      if (!card) return null;
+      const children = buildSeasonEpisodePageCards({
+        episode,
+        parentCard: card,
+        currentAid: aid,
+        currentBvid: bvid,
+        currentPageCards: pageCards
+      });
+      return children.length > 1 ? {
+        ...card,
+        children
+      } : card;
+    }).filter(Boolean) : [];
     if (isSameCidList(seasonCards, pageCards)) return pageCards;
     if (seasonCards.length && pageCards.length > 1) {
       return seasonCards.map(card => isSameArchiveCard(card, {
@@ -1622,6 +1636,40 @@
       stats: episode?.arc?.stat,
       title: `${index + 1}. ${cleanText$2(episode?.title || episode?.part || episode?.page?.part) || '未命名片段'}`
     };
+  }
+  function buildSeasonEpisodePageCards({
+    episode,
+    parentCard,
+    currentAid,
+    currentBvid,
+    currentPageCards
+  }) {
+    if (!parentCard?.bvid) return [];
+    if (isSameArchiveCard(parentCard, {
+      aid: currentAid,
+      bvid: currentBvid
+    }) && currentPageCards.length > 1) {
+      return currentPageCards;
+    }
+    const episodePages = getSeasonEpisodePages(episode);
+    if (episodePages.length <= 1) return [];
+    const episodeAid = episode?.aid || episode?.arc?.aid || parentCard.aid;
+    const episodeBvid = episode?.bvid || parentCard.bvid;
+    const episodeTitle = cleanText$2(episode?.arc?.title || episode?.title || parentCard.title);
+    return episodePages.map((page, index) => buildPagePartCard({
+      aid: episodeAid,
+      bvid: episodeBvid,
+      href: parentCard.href,
+      index,
+      page,
+      title: episodeTitle,
+      cover: parentCard.cover
+    })).filter(Boolean);
+  }
+  function getSeasonEpisodePages(episode) {
+    const pages = Array.isArray(episode?.pages) ? episode.pages : Array.isArray(episode?.arc?.pages) ? episode.arc.pages : [];
+    if (pages.length) return pages;
+    return episode?.page ? [episode.page] : [];
   }
   function getSeasonData(bootstrap) {
     const vd = bootstrap?.initialState?.videoData || {};
@@ -10378,7 +10426,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const offset = Number(detail?.offset);
       if (!Number.isInteger(offset)) return;
       if (playAdjacentFromActiveTab(kind, offset, {
-        absolute: Boolean(detail?.absolute)
+        absolute: Boolean(detail?.absolute),
+        preferPageTree: true
       })) {
         showSwitchBurst(kind, offset);
       }
@@ -10392,7 +10441,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       }
       hideAutoPlayCountdown(kind);
       playAdjacentFromActiveTab(kind, 1, {
-        auto: true
+        auto: true,
+        preferPageTree: true
       });
     }
     function startAutoPlayCountdownMonitor(kind) {
@@ -10463,6 +10513,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       showAutoPlayCountdown(kind, remaining, key, nextCard);
     }
     function getNextAutoPlayCard(kind) {
+      const pageContext = getCurrentPageTraversalContext(kind);
+      if (pageContext) {
+        return getAdjacentCard(pageContext.cards, 1, {
+          findCurrentIndex: () => pageContext.currentIndex
+        });
+      }
       const tab = state[kind]?.activeCommentsTab;
       if (tab === 'pages') {
         const pageCards = getPageTraversalCards(state[kind].pageCards);
@@ -10809,6 +10865,8 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       applyPlayerHandoffAvailability(state[kind]?.player, availability);
     }
     function getPlayerHandoffAvailability(kind) {
+      const pageContext = getCurrentPageTraversalContext(kind);
+      if (pageContext) return getCardHandoffAvailability(pageContext.cards, pageContext.currentIndex);
       const tab = state[kind]?.activeCommentsTab;
       if (tab === 'pages') {
         const pageCards = getPageTraversalCards(state[kind].pageCards);
@@ -10883,6 +10941,14 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     }
     function playAdjacentFromActiveTab(kind, direction, options = {}) {
       const tab = state[kind]?.activeCommentsTab;
+      const pageContext = options.preferPageTree ? getCurrentPageTraversalContext(kind) : null;
+      if (pageContext) return playAdjacentCard(kind, pageContext.cards, direction, {
+        ...options,
+        selectedKey: state[kind].selectedPageKey,
+        getKey: card => card.pageKey,
+        findCurrentIndex: () => pageContext.currentIndex,
+        fromPagePart: true
+      });
       if (tab === 'pages') return playAdjacentCard(kind, getPageTraversalCards(state[kind].pageCards), direction, {
         ...options,
         selectedKey: state[kind].selectedPageKey,
@@ -10942,7 +11008,22 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       return getPlayableKey(card) && card.href ? card : null;
     }
     function getPageTraversalCards(cards) {
-      return flattenPageCards(cards).filter(getPlayableCard);
+      return flattenPageTraversalCards(cards).filter(getPlayableCard);
+    }
+    function flattenPageTraversalCards(cards) {
+      return (Array.isArray(cards) ? cards : []).flatMap(card => {
+        const children = Array.isArray(card?.children) ? card.children.filter(Boolean) : [];
+        return children.length ? children : [card];
+      }).filter(Boolean);
+    }
+    function getCurrentPageTraversalContext(kind) {
+      const cards = getPageTraversalCards(state[kind]?.pageCards);
+      if (!cards.length) return null;
+      const currentIndex = findCurrentPageCardIndex(kind, cards);
+      return currentIndex >= 0 ? {
+        cards,
+        currentIndex
+      } : null;
     }
     function flattenPageCards(cards) {
       return (Array.isArray(cards) ? cards : []).flatMap(card => [card, ...(Array.isArray(card?.children) ? card.children : [])]).filter(Boolean);
