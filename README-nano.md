@@ -5,28 +5,9 @@
 - 播放模式：`网页内弹窗` / `Document PiP`
 - 封面点击：`按钮起播` / `封面起播`
 
-## 发布地址
+## 安装
 
-- 入口页：https://pop-player.nanachi.moe/
-- Userscript 直链：https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
-
-安装方式：先安装对应浏览器的用户脚本管理器，再打开 Userscript 直链。
-
-Chrome：
-- Tampermonkey：https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo
-- ScriptCat：https://chromewebstore.google.com/detail/scriptcat/ndcooeababalnlpkfedmmbbbgkljhpjf
-
-Firefox：
-- Tampermonkey：https://addons.mozilla.org/firefox/addon/tampermonkey/
-- Violentmonkey：https://addons.mozilla.org/firefox/addon/violentmonkey/
-- ScriptCat：https://addons.mozilla.org/firefox/addon/scriptcat/
-
-Microsoft Edge：
-- Tampermonkey：https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd
-- Violentmonkey：https://microsoftedge.microsoft.com/addons/detail/violentmonkey/eeagobfjdenkkddmbclomhiblgggliao
-- ScriptCat：https://microsoftedge.microsoft.com/addons/detail/scriptcat/liilgpjgabokdklappibcjfablkpcekh
-
-Firefox 暂不支持 Document PiP，本脚本会自动隐藏 PiP 入口并使用网页内弹窗模式。
+访问 [pop-player.nanachi.moe](https://pop-player.nanachi.moe/)，按页面提示安装即可。
 
 ## 本地调试
 

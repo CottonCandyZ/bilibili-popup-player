@@ -1,5 +1,30 @@
+# Dependencies
 node_modules/
+
+# Local development state
+.dev/
 .wrangler/
+*.log
+*.pid
+
+# Environment variables and local secrets
 .env
-.env.local
+.env.*
+!.env.example
+
+# Test and build caches
+coverage/
+.cache/
+*.tsbuildinfo
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local screenshots
 Screenshot *.png
