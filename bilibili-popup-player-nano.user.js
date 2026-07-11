@@ -126,6 +126,10 @@
       isActive
     } = adapter;
     if (!mount) return;
+    const context = getCommentContext(bootstrap);
+    if (slot.comments && slot.commentContext && slot.commentContext !== context) {
+      disposeMountedComment(slot);
+    }
     if (!slot.comments) mount.textContent = '评论加载中...';
     try {
       beforeLoad?.();
@@ -136,11 +140,13 @@
       const scrollContainer = getScrollContainer?.();
       const props = buildCommentProps(bootstrap, scrollContainer);
       if (reloadCommentInstance(slot.comments, props)) {
+        slot.commentContext = context;
         applyCommentScrollContainer(slot.comments, scrollContainer);
         return;
       }
       mount.textContent = '';
       slot.comments = mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer);
+      slot.commentContext = context;
       slot.comments.addEventListener?.('seek', event => {
         try {
           const {
@@ -158,6 +164,9 @@
       if (!isActive()) return;
       mount.textContent = `评论加载失败：${error?.message || 'unknown'}`;
     }
+  }
+  function getCommentContext(bootstrap) {
+    return bootstrap?.kind === 'ogv' || bootstrap?.playerInfo?.kind === 'ogv' ? 'ogv' : 'ugc';
   }
   function mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer) {
     const instance = new CommentCtor(props);
@@ -209,7 +218,10 @@
     return false;
   }
   function disposeCommentInstance(state, kind) {
-    const current = state[kind].comments;
+    disposeMountedComment(state[kind]);
+  }
+  function disposeMountedComment(slot) {
+    const current = slot.comments;
     if (!current) return;
     try {
       current.destroy?.();
@@ -217,7 +229,8 @@
     } catch {
       // Ignore comment cleanup failures.
     }
-    state[kind].comments = null;
+    slot.comments = null;
+    slot.commentContext = '';
   }
 
   const LIVE_ROOM_HREF_RE = /^https?:\/\/live\.bilibili\.com\/(?:blanc\/)?(\d+)(?:[/?#]|$)/;
@@ -7247,6 +7260,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         ui: null,
         player: null,
         comments: null,
+        commentContext: '',
         bootstrap: null,
         screenHandler: null,
         navigateHandler: null,
@@ -7286,6 +7300,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         win: null,
         player: null,
         comments: null,
+        commentContext: '',
         bootstrap: null,
         screenHandler: null,
         navigateHandler: null,

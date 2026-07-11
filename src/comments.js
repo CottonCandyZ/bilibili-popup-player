@@ -3,6 +3,10 @@ import { loadScriptOnce } from './script-loader.js';
 export async function mountComments(adapter, bootstrap) {
   const { slot, mount, targetDocument, getCtor, beforeLoad, getPlayer, getScrollContainer, isActive } = adapter;
   if (!mount) return;
+  const context = getCommentContext(bootstrap);
+  if (slot.comments && slot.commentContext && slot.commentContext !== context) {
+    disposeMountedComment(slot);
+  }
   if (!slot.comments) mount.textContent = '评论加载中...';
 
   try {
@@ -16,12 +20,14 @@ export async function mountComments(adapter, bootstrap) {
     const scrollContainer = getScrollContainer?.();
     const props = buildCommentProps(bootstrap, scrollContainer);
     if (reloadCommentInstance(slot.comments, props)) {
+      slot.commentContext = context;
       applyCommentScrollContainer(slot.comments, scrollContainer);
       return;
     }
 
     mount.textContent = '';
     slot.comments = mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer);
+    slot.commentContext = context;
     slot.comments.addEventListener?.('seek', (event) => {
       try {
         const { time } = event.detail || {};
@@ -34,6 +40,10 @@ export async function mountComments(adapter, bootstrap) {
     if (!isActive()) return;
     mount.textContent = `评论加载失败：${error?.message || 'unknown'}`;
   }
+}
+
+function getCommentContext(bootstrap) {
+  return bootstrap?.kind === 'ogv' || bootstrap?.playerInfo?.kind === 'ogv' ? 'ogv' : 'ugc';
 }
 
 function mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer) {
@@ -88,7 +98,11 @@ export function reloadCommentInstance(instance, props) {
 }
 
 export function disposeCommentInstance(state, kind) {
-  const current = state[kind].comments;
+  disposeMountedComment(state[kind]);
+}
+
+function disposeMountedComment(slot) {
+  const current = slot.comments;
   if (!current) return;
   try {
     current.destroy?.();
@@ -96,5 +110,6 @@ export function disposeCommentInstance(state, kind) {
   } catch {
     // Ignore comment cleanup failures.
   }
-  state[kind].comments = null;
+  slot.comments = null;
+  slot.commentContext = '';
 }
