@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.24
+// @version      4.0.25
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
@@ -49,6 +49,15 @@
   const FONT_BASE = 'https://s1.hdslb.com/bfs/static/jinkela/long/font';
 
   const ARCHIVE_LIKE_API = 'https://api.bilibili.com/x/web-interface/archive/like';
+  const ARCHIVE_COIN_API = 'https://api.bilibili.com/x/web-interface/coin/add';
+  const ARCHIVE_TRIPLE_API = 'https://api.bilibili.com/x/web-interface/archive/like/triple';
+  const ARCHIVE_RELATION_API = 'https://api.bilibili.com/x/web-interface/archive/relation';
+  const COIN_TODAY_EXP_API = 'https://api.bilibili.com/x/web-interface/coin/today/exp';
+  const FAVORITE_FOLDERS_API = 'https://api.bilibili.com/x/v3/fav/folder/created/list-all';
+  const FAVORITE_FOLDER_ADD_API = 'https://api.bilibili.com/x/v3/fav/folder/add';
+  const FAVORITE_DEAL_API = 'https://api.bilibili.com/x/v3/fav/resource/deal';
+  const OGV_TRIPLE_API = 'https://api.bilibili.com/pgc/season/episode/like/triple';
+  const OGV_COIN_INFO_API = 'https://api.bilibili.com/pgc/season/episode/coin/user/number';
   async function requestArchiveLike(aid, like = true) {
     const normalizedAid = Number(aid);
     if (!Number.isFinite(normalizedAid) || normalizedAid <= 0) throw new Error('缺少 aid');
@@ -71,6 +80,119 @@
     if (!response.ok) throw new Error(`请求失败：${response.status}`);
     if (!payload || payload.code !== 0) throw new Error(payload?.message || '点赞失败');
     return payload;
+  }
+  async function fetchArchiveRelation(aid) {
+    const normalizedAid = normalizePositiveId(aid, 'aid');
+    return requestJson(`${ARCHIVE_RELATION_API}?aid=${normalizedAid}`);
+  }
+  async function requestArchiveCoin(aid, multiply = 1, alsoLike = false) {
+    const normalizedAid = normalizePositiveId(aid, 'aid');
+    return requestForm(ARCHIVE_COIN_API, {
+      aid: normalizedAid,
+      multiply: Math.max(1, Math.min(2, Math.trunc(Number(multiply) || 1))),
+      select_like: alsoLike ? 1 : 0
+    });
+  }
+  async function fetchCoinTodayExp() {
+    const payload = await requestJson(COIN_TODAY_EXP_API);
+    return Math.max(0, Number(payload?.data || 0));
+  }
+  async function fetchOgvCoinInfo(epId) {
+    const normalizedEpId = normalizePositiveId(epId, 'ep_id');
+    const payload = await requestJson(`${OGV_COIN_INFO_API}?ep_id=${normalizedEpId}`);
+    return payload?.result || payload?.data || {};
+  }
+  async function requestArchiveTriple(aid, bvid = '') {
+    const normalizedAid = normalizePositiveId(aid, 'aid');
+    return requestForm(ARCHIVE_TRIPLE_API, {
+      aid: normalizedAid,
+      bvid: String(bvid || '')
+    });
+  }
+  async function fetchFavoriteFolders(aid, type = 2) {
+    const normalizedAid = normalizePositiveId(aid, 'aid');
+    const normalizedType = normalizeFavoriteType(type);
+    const params = new URLSearchParams({
+      type: String(normalizedType),
+      rid: normalizedAid
+    });
+    const userMid = getCookieValue$3('DedeUserID');
+    if (userMid) params.set('up_mid', userMid);
+    const payload = await requestJson(`${FAVORITE_FOLDERS_API}?${params}`);
+    return Array.isArray(payload?.data?.list) ? payload.data.list : [];
+  }
+  async function requestFavoriteFolders(aid, addIds = [], removeIds = [], type = 2) {
+    const normalizedAid = normalizePositiveId(aid, 'aid');
+    return requestForm(FAVORITE_DEAL_API, {
+      rid: normalizedAid,
+      type: normalizeFavoriteType(type),
+      add_media_ids: normalizeIdList(addIds).join(','),
+      del_media_ids: normalizeIdList(removeIds).join(','),
+      platform: 'web'
+    });
+  }
+  async function requestCreateFavoriteFolder(title) {
+    const normalizedTitle = String(title || '').trim();
+    if (!normalizedTitle) throw new Error('请输入收藏夹名称');
+    if (normalizedTitle.length > 20) throw new Error('收藏夹名称不能超过 20 个字');
+    return requestForm(FAVORITE_FOLDER_ADD_API, {
+      title: normalizedTitle,
+      intro: '',
+      privacy: 0,
+      cover: ''
+    });
+  }
+  async function requestOgvTriple(epId) {
+    const normalizedEpId = normalizePositiveId(epId, 'ep_id');
+    return requestForm(OGV_TRIPLE_API, {
+      ep_id: normalizedEpId,
+      is_follow: 0
+    });
+  }
+  async function requestJson(url) {
+    const response = await fetch(url, {
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*'
+      }
+    });
+    const payload = await response.json().catch(() => null);
+    assertPayload(response, payload);
+    return payload;
+  }
+  async function requestForm(url, values) {
+    const csrf = getCookieValue$3('bili_jct');
+    if (!csrf) throw new Error('需要登录后才能操作');
+    const response = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'
+      },
+      body: new URLSearchParams({
+        ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])),
+        csrf
+      })
+    });
+    const payload = await response.json().catch(() => null);
+    assertPayload(response, payload);
+    return payload;
+  }
+  function assertPayload(response, payload) {
+    if (!response.ok) throw new Error(`请求失败：${response.status}`);
+    if (!payload || payload.code !== 0) throw new Error(payload?.message || `操作失败：${payload?.code ?? 'unknown'}`);
+  }
+  function normalizePositiveId(value, name) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) throw new Error(`缺少 ${name}`);
+    return String(Math.trunc(number));
+  }
+  function normalizeIdList(values) {
+    return [...new Set((Array.isArray(values) ? values : []).map(value => Number(value)).filter(value => Number.isFinite(value) && value > 0).map(value => Math.trunc(value)))];
+  }
+  function normalizeFavoriteType(type) {
+    return Number(type) === 42 ? 42 : 2;
   }
   function getCookieValue$3(name) {
     const prefix = `${encodeURIComponent(name)}=`;
@@ -142,11 +264,13 @@
       if (reloadCommentInstance(slot.comments, props)) {
         slot.commentContext = context;
         applyCommentScrollContainer(slot.comments, scrollContainer);
+        installCompactCommentStyles(slot, mount, targetDocument);
         return;
       }
       mount.textContent = '';
       slot.comments = mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer);
       slot.commentContext = context;
+      installCompactCommentStyles(slot, mount, targetDocument);
       slot.comments.addEventListener?.('seek', event => {
         try {
           const {
@@ -189,6 +313,58 @@
     const element = instance.el?.current;
     if (element) element.scrollContainer = scrollContainer;
   }
+  function installCompactCommentStyles(slot, mount, targetDocument) {
+    slot.commentStyleObserver?.disconnect?.();
+    slot.commentStyleWindow?.clearInterval?.(slot.commentStyleTimer);
+    slot.commentStyleWindow = targetDocument.defaultView;
+    const apply = () => {
+      const comments = mount.querySelector?.('bili-comments');
+      const root = comments?.shadowRoot;
+      if (!root) return false;
+      if (!root.querySelector(`style[${APP_STYLE_MARKER}]`)) {
+        const style = targetDocument.createElement('style');
+        style.setAttribute(APP_STYLE_MARKER, '');
+        style.textContent = '#spinner-container > #title { display: none !important; }';
+        root.appendChild(style);
+      }
+      const headerRoot = root.querySelector('bili-comments-header-renderer')?.shadowRoot;
+      if (!headerRoot) return false;
+      if (!headerRoot.querySelector(`style[${APP_STYLE_MARKER}]`)) {
+        const style = targetDocument.createElement('style');
+        style.setAttribute(APP_STYLE_MARKER, '');
+        style.textContent = '#title > h2 { display: none !important; }';
+        headerRoot.appendChild(style);
+      }
+      return true;
+    };
+    apply();
+    slot.commentStyleObserver = new targetDocument.defaultView.MutationObserver(() => {
+      if (!apply()) return;
+      slot.commentStyleObserver?.disconnect?.();
+      slot.commentStyleObserver = null;
+      targetDocument.defaultView.clearInterval(slot.commentStyleTimer);
+      slot.commentStyleTimer = 0;
+    });
+    slot.commentStyleObserver.observe(mount, {
+      childList: true,
+      subtree: true
+    });
+    const commentsRoot = mount.querySelector?.('bili-comments')?.shadowRoot;
+    if (commentsRoot) slot.commentStyleObserver.observe(commentsRoot, {
+      childList: true,
+      subtree: true
+    });
+    let attempts = 0;
+    slot.commentStyleTimer = targetDocument.defaultView.setInterval(() => {
+      attempts += 1;
+      if (!apply() && attempts < 40) return;
+      targetDocument.defaultView.clearInterval(slot.commentStyleTimer);
+      slot.commentStyleTimer = 0;
+      slot.commentStyleObserver?.disconnect?.();
+      slot.commentStyleObserver = null;
+    }, 250);
+  }
+  const APP_STYLE_MARKER = 'data-bili-popup-player-nano-compact';
   function buildCommentProps(bootstrap, scrollContainer) {
     const props = {
       params: bootstrap.commentInfo.params,
@@ -222,15 +398,21 @@
   }
   function disposeMountedComment(slot) {
     const current = slot.comments;
-    if (!current) return;
-    try {
-      current.destroy?.();
-      current.unmount?.();
-    } catch {
-      // Ignore comment cleanup failures.
+    if (current) {
+      try {
+        current.destroy?.();
+        current.unmount?.();
+      } catch {
+        // Ignore comment cleanup failures.
+      }
     }
     slot.comments = null;
     slot.commentContext = '';
+    slot.commentStyleObserver?.disconnect?.();
+    slot.commentStyleObserver = null;
+    slot.commentStyleWindow?.clearInterval?.(slot.commentStyleTimer);
+    slot.commentStyleWindow = null;
+    slot.commentStyleTimer = 0;
   }
 
   const LIVE_ROOM_HREF_RE = /^https?:\/\/live\.bilibili\.com\/(?:blanc\/)?(\d+)(?:[/?#]|$)/;
@@ -1932,8 +2114,8 @@
     };
     if (typeof stats === 'object') {
       return {
-        view: cleanText$2(stats.view),
-        danmaku: cleanText$2(stats.danmaku)
+        view: formatStatValue(stats.view ?? stats.play ?? stats.views),
+        danmaku: formatStatValue(stats.danmaku ?? stats.danmakus)
       };
     }
     const parts = cleanText$2(stats).split(/\s+/).filter(Boolean);
@@ -1941,6 +2123,12 @@
       view: parts[0] || '',
       danmaku: parts[1] || ''
     };
+  }
+  function formatStatValue(value) {
+    if (typeof value === 'number' || /^\d+(?:\.\d+)?$/.test(String(value || '').trim())) {
+      return formatCount$4(value);
+    }
+    return cleanText$2(value);
   }
   function formatCount$4(value) {
     const count = Number(value);
@@ -2737,6 +2925,120 @@
         overflow: visible;
       }
 
+      .${APP}__header-more {
+        position: relative;
+        flex: 0 0 auto;
+      }
+
+      .${APP}__header-more > summary {
+        list-style: none;
+      }
+
+      .${APP}__header-more > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .${APP}__header-more-toggle > span,
+      .${APP}__header-more-toggle > span::before,
+      .${APP}__header-more-toggle > span::after {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .${APP}__header-more-toggle > span {
+        position: relative;
+      }
+
+      .${APP}__header-more-toggle > span::before,
+      .${APP}__header-more-toggle > span::after {
+        content: "";
+        position: absolute;
+        top: 0;
+      }
+
+      .${APP}__header-more-toggle > span::before { left: -6px; }
+      .${APP}__header-more-toggle > span::after { left: 6px; }
+
+      .${APP}__header-more[open] .${APP}__header-more-toggle {
+        color: var(--${APP}-brand);
+        background: var(--${APP}-surface-soft);
+      }
+
+      .${APP}__header-menu {
+        position: absolute;
+        top: calc(100% + 7px);
+        right: 0;
+        z-index: 110;
+        width: 210px;
+        box-sizing: border-box;
+        padding: 7px;
+        border: 1px solid var(--${APP}-border);
+        border-radius: 9px;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface-elevated);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+      }
+
+      .${APP}__header-menu-label {
+        padding: 7px 8px 4px;
+        color: var(--${APP}-text-muted);
+        font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__header-menu-label:not(:first-child) {
+        margin-top: 4px;
+        border-top: 1px solid var(--${APP}-border);
+      }
+
+      .${APP}__header-menu-item,
+      .${APP}__header-menu-status {
+        width: 100%;
+        min-height: 34px;
+        box-sizing: border-box;
+        padding: 0 8px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        border: 0;
+        border-radius: 6px;
+        color: var(--${APP}-text-subtle);
+        background: transparent;
+        font: 500 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: left;
+      }
+
+      .${APP}__header-menu-item {
+        cursor: pointer;
+      }
+
+      .${APP}__header-menu-item:hover,
+      .${APP}__header-menu-item:focus-visible,
+      .${APP}__header-menu-status:focus-visible {
+        color: var(--${APP}-brand);
+        background: var(--${APP}-surface-soft);
+        outline: none;
+      }
+
+      .${APP}__header-menu-item:disabled,
+      .${APP}__header-menu-item:disabled:hover,
+      .${APP}__header-menu-item:disabled:focus-visible {
+        color: var(--${APP}-text-muted);
+        background: transparent;
+        cursor: default;
+        opacity: 0.45;
+        outline: none;
+      }
+
+      .${APP}__header-menu-item svg,
+      .${APP}__header-menu-status > svg {
+        width: 17px;
+        height: 17px;
+        flex: 0 0 auto;
+        stroke: currentColor;
+      }
+
       .${APP}__auto-play-hint {
         justify-self: end;
         max-width: 0;
@@ -2766,6 +3068,27 @@
         outline: none;
         opacity: 0.88;
         overflow: visible;
+      }
+
+      .${APP}__header-menu-status.${APP}__gamepad-indicator {
+        width: 100%;
+        height: 34px;
+        display: flex;
+        justify-content: flex-start;
+        opacity: 1;
+      }
+
+      .${APP}__header-menu-status.${APP}__gamepad-indicator::after {
+        left: 20px;
+        right: auto;
+        bottom: 7px;
+        box-shadow: 0 0 0 2px var(--${APP}-surface-elevated);
+      }
+
+      .${APP}__header-menu-status .${APP}__gamepad-popover {
+        top: auto;
+        right: calc(100% + 10px);
+        bottom: 0;
       }
 
       .${APP}__gamepad-indicator[hidden] {
@@ -2857,9 +3180,36 @@
       #${APP}-title {
         min-width: 0;
         overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--${APP}-text);
         font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .${APP}__header-title-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .${APP}__header-title-external {
+        width: 14px;
+        height: 14px;
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 auto;
+        color: var(--${APP}-text-subtle);
+      }
+
+      .${APP}__header-title-external svg {
+        width: 14px;
+        height: 14px;
+        display: block;
+        stroke: currentColor;
       }
 
       #${APP}-status {
@@ -3416,7 +3766,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         display: grid;
         grid-template-columns: 40px minmax(0, 1fr) auto;
         gap: 10px;
-        align-items: center;
+        align-items: start;
         min-width: 0;
       }
 
@@ -3456,15 +3806,620 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         white-space: nowrap;
       }
 
+      .${APP}__video-intro-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 8px;
+      }
+
+      .${APP}__video-intro-detail {
+        color: var(--text3, #9499a0);
+        font: 400 11px/16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+      }
+
       .${APP}__video-intro-owner-desc {
         display: -webkit-box;
-        margin-top: 3px;
         overflow: hidden;
         color: var(--text2, #61666d);
         font: 400 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         overflow-wrap: anywhere;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
+      }
+
+      .${APP}__video-intro-body {
+        margin: 7px 0 0 50px;
+      }
+
+      .${APP}__video-intro-owner-description {
+        margin-top: 5px;
+      }
+
+      .${APP}__video-intro-owner-description.${APP}--expanded .${APP}__video-intro-owner-desc {
+        display: block;
+        overflow: visible;
+        -webkit-line-clamp: unset;
+      }
+
+      .${APP}__video-actions {
+        position: relative;
+        margin-top: 10px;
+        margin-left: -50px;
+      }
+
+      .${APP}__video-actions-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+
+      .${APP}__video-action {
+        position: relative;
+        min-width: 0;
+        height: 32px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        overflow: visible;
+        border: 0;
+        color: var(--text2, #61666d);
+        background: transparent;
+        font: 400 13px/32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .${APP}__video-action-icon {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 auto;
+      }
+
+      .${APP}__video-action-label {
+        color: currentColor;
+      }
+
+      .${APP}__video-action:hover,
+      .${APP}__video-action:focus-visible,
+      .${APP}__video-action.${APP}--active {
+        color: var(--brand_blue, #00aeec);
+        outline: none;
+      }
+
+      .${APP}__video-action-ring {
+        position: absolute;
+        top: 50%;
+        left: -3px;
+        width: 34px;
+        height: 34px;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-50%) rotate(-90deg);
+      }
+
+      .${APP}__video-action-ring circle {
+        fill: none;
+        stroke: var(--brand_blue, #00aeec);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-dasharray: 125.66;
+        stroke-dashoffset: 125.66;
+      }
+
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action-ring {
+        opacity: 1;
+      }
+
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action-ring circle {
+        animation: ${APP}-triple-progress 1.5s linear forwards;
+      }
+
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action:first-child .${APP}__video-action-icon {
+        color: var(--brand_blue, #00aeec);
+        animation: ${APP}-triple-shake 0.16s linear infinite alternate;
+      }
+
+      .${APP}__video-action:disabled {
+        cursor: wait;
+        opacity: 0.55;
+      }
+
+      .${APP}__favorite-dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        box-sizing: border-box;
+        background: rgba(0, 0, 0, 0.65);
+      }
+
+      .${APP}__favorite-panel {
+        width: min(420px, calc(100vw - 32px));
+        max-height: min(560px, calc(100vh - 32px));
+        padding: 20px;
+        box-sizing: border-box;
+        overflow: auto;
+        border-radius: 8px;
+        background: var(--bg1, #fff);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+        outline: none;
+      }
+
+      .${APP}__favorite-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .${APP}__favorite-heading {
+        color: var(--text1, #18191c);
+        font: 500 16px/24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__favorite-close {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        color: var(--text3, #9499a0);
+        background: transparent;
+        font: 300 25px/26px Arial, sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-list {
+        max-height: 280px;
+        overflow: auto;
+      }
+
+      .${APP}__favorite-item {
+        min-height: 38px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        color: var(--text2, #61666d);
+        font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-item input {
+        accent-color: var(--brand_pink, #fb7299);
+      }
+
+      .${APP}__favorite-count,
+      .${APP}__favorite-message {
+        color: var(--text3, #9499a0);
+        font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__favorite-message.${APP}--error {
+        color: #f05b72;
+      }
+
+      .${APP}__favorite-create {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 7px;
+        margin-top: 8px;
+      }
+
+      .${APP}__favorite-create input {
+        min-width: 0;
+        height: 28px;
+        box-sizing: border-box;
+        padding: 0 8px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+        outline: none;
+      }
+
+      .${APP}__favorite-create input:focus {
+        border-color: var(--brand_pink, #fb7299);
+      }
+
+      .${APP}__favorite-create button {
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 9px;
+      }
+
+      .${APP}__favorite-footer button {
+        height: 28px;
+        padding: 0 12px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer .${APP}__favorite-save {
+        color: #fff;
+        border-color: var(--brand_blue, #00aeec);
+        background: var(--brand_blue, #00aeec);
+      }
+
+      .${APP}__action-dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+
+      .${APP}__dialog-close {
+        position: absolute;
+        z-index: 2;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border: 0;
+        color: #999;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .${APP}__dialog-close:hover,
+      .${APP}__dialog-close:focus-visible {
+        color: var(--brand_blue, #00aeec);
+        outline: none;
+      }
+
+      .${APP}__dialog-close svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+      }
+
+      .${APP}__coin-dialog { background: rgba(0, 0, 0, 0.5); }
+
+      .${APP}__coin-panel {
+        position: relative;
+        width: min(430px, calc(100vw - 24px));
+        min-height: 422px;
+        box-sizing: border-box;
+        overflow: hidden;
+        border-radius: 4px;
+        background: var(--bg1_float, var(--bg1, #fff));
+        outline: none;
+      }
+
+      .${APP}__coin-panel > .${APP}__dialog-close {
+        top: 12px;
+        right: 12px;
+      }
+
+      .${APP}__coin-title {
+        margin-top: 24px;
+        color: var(--text1, #18191c);
+        font-size: 16px;
+        text-align: center;
+      }
+
+      .${APP}__coin-title span {
+        color: var(--brand_blue, #00aeec);
+        font-size: 30px;
+      }
+
+      .${APP}__coin-choices {
+        display: flex;
+        justify-content: center;
+        gap: 30px;
+        margin-top: 35px;
+      }
+
+      .${APP}__coin-choice {
+        position: relative;
+        width: 160px;
+        height: 230px;
+        padding: 0;
+        overflow: hidden;
+        border: 2px dashed #ccd0d6;
+        border-radius: 5px;
+        background-color: transparent;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: 120px;
+        cursor: pointer;
+      }
+
+      .${APP}__coin-choice--1 { background-image: url("https://i0.hdslb.com/bfs/static/jinkela/video/asserts/22-coin.png"); }
+      .${APP}__coin-choice--2 { background-image: url("https://i0.hdslb.com/bfs/static/jinkela/video/asserts/33-coin.png"); }
+
+      .${APP}__coin-choice:hover,
+      .${APP}__coin-choice:focus-visible,
+      .${APP}__coin-choice.${APP}--selected {
+        border-color: #02a0d8;
+        outline: none;
+      }
+
+      .${APP}__coin-choice.${APP}--selected {
+        border-style: solid;
+        background-image: none;
+      }
+
+      .${APP}__coin-choice-label {
+        position: absolute;
+        top: 0;
+        left: 15px;
+        color: var(--text3, #9499a0);
+        font-size: 14px;
+        line-height: 40px;
+      }
+
+      .${APP}__coin-choice.${APP}--selected .${APP}__coin-choice-label { color: var(--brand_blue, #00aeec); }
+
+      .${APP}__coin-animation {
+        width: 120px;
+        height: 206px;
+        display: block;
+        overflow: hidden;
+        margin: 0 auto;
+      }
+
+      .${APP}__coin-animation img {
+        max-width: none;
+        height: 193px;
+        margin-top: 19px;
+        opacity: 0;
+      }
+
+      .${APP}__coin-choice.${APP}--selected .${APP}__coin-animation img {
+        opacity: 1;
+        animation: ${APP}-coin-run 2s steps(23) infinite;
+      }
+
+      .${APP}__coin-like {
+        margin: 12px 0 0 37px;
+        display: flex;
+        align-items: center;
+        color: var(--text1, #18191c);
+        font-size: 12px;
+        line-height: 16px;
+        cursor: pointer;
+      }
+
+      .${APP}__coin-like.${APP}--single { margin-left: 135px; }
+
+      .${APP}__coin-like input,
+      .${APP}__favorite-item input {
+        position: absolute;
+        width: 0;
+        height: 0;
+        opacity: 0;
+      }
+
+      .${APP}__coin-like i {
+        width: 16px;
+        height: 16px;
+        box-sizing: border-box;
+        margin-right: 5px;
+        border: 1px solid #ccd0d6;
+        border-radius: 2px;
+        background: var(--bg1, #fff);
+      }
+
+      .${APP}__coin-like input:checked + i {
+        border-color: var(--brand_blue, #00aeec);
+        background: var(--brand_blue, #00aeec);
+        box-shadow: inset 0 0 0 3px var(--bg1, #fff);
+      }
+
+      .${APP}__coin-bottom {
+        padding: 25px 0;
+        text-align: center;
+      }
+
+      .${APP}__coin-submit {
+        width: 128px;
+        height: 32px;
+        margin-top: 24px;
+        border: 1px solid #00a1d6;
+        border-radius: 4px;
+        color: #fff;
+        background: #00a1d6;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__coin-submit:hover:not(:disabled) { background: #00b5e5; border-color: #00b5e5; }
+      .${APP}__coin-submit:disabled { cursor: wait; opacity: 0.55; }
+
+      .${APP}__coin-tips {
+        margin: 12px 0 0;
+        color: var(--text3, #9499a0);
+        font-size: 12px;
+      }
+
+      .${APP}__favorite-dialog { background: rgba(0, 0, 0, 0.8); }
+
+      .${APP}__favorite-panel {
+        width: min(420px, calc(100vw - 24px));
+        max-height: calc(100vh - 24px);
+        padding: 0;
+        overflow: hidden;
+        border-radius: 4px;
+        background: var(--bg1_float, var(--bg1, #fff));
+        outline: none;
+      }
+
+      .${APP}__favorite-header {
+        position: relative;
+        height: 50px;
+        margin: 0;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        color: var(--text1, #18191c);
+        font: 400 16px/50px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: center;
+      }
+
+      .${APP}__favorite-header .${APP}__dialog-close { top: 13px; right: 20px; }
+
+      .${APP}__favorite-content {
+        height: 300px;
+        box-sizing: border-box;
+        padding: 0 36px;
+        overflow-y: auto;
+      }
+
+      .${APP}__favorite-list {
+        position: relative;
+        min-height: 210px;
+        max-height: none;
+        margin-top: 24px;
+        overflow: visible;
+      }
+
+      .${APP}__favorite-item {
+        min-height: 20px;
+        padding-bottom: 24px;
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 0;
+        color: var(--text1, #18191c);
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-item > i {
+        width: 20px;
+        height: 20px;
+        margin-right: 18px;
+        background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAMZJREFUOBFjZACCY8cuSP/4+6ebkYHB4T8DgyRIjFgA1PMcqOcABzNLqZWVwVNGkGE///45w8DANIGZ898iOxOT58QaBlJ36MwZyb/fmeIYGP4VsDOzmDDuO3xmGSMD00VHW6NOUgxCV7v/8Lny/wz/9JlA3gS5DF0BqXyQGSCzGIAuBAYBdQDILCbqGIUwZdRARFiQyxoNQ3JDDqFvCIQhqDwDFUEIR5PHApkBMosJVDhCyjPyDILpApkBMov6BSzIBmpWAQCEVFxRmF8CTgAAAABJRU5ErkJggg==") center/20px 20px no-repeat;
+      }
+
+      .${APP}__favorite-item input:checked + i {
+        background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAeJJREFUOBGtlEsvA1EUx/932ppqGtUKiVdFRaQSsbITQYsFiS9g5RvYdG/rWxCJWEpIvFmIjYV0UxKPaIkmNFUqqi/j3Dud1nikU9xF5/bO/f/OOf879zDwsXjWgnxuDgyDUJRGsWb0h7EoFOzDZA5gqvOGqbBskPQuo4wf9sVhsvRKIrO/w3gMF2dJoswfQla8TJZJFXtWiNJTK2PG60K9bCrFJf/NpX/GZ/5GG1aHWyGbJPQ4ZUwfRotiqTgzOOlvqMbKkArjkng6r1NWBOyrs2KNMrOZVdlRLIXZYOx3wF4qbcPvRk2V6lkw/oqx7QiSubfKgV5HFbZG3HAWDuAkkcbIVgQPGT2Mk3Uld5PwdNKDdV9r8fQ67BZsE6zeqp7fRTIDP8HuP3mnpakDjrfY0eWQMdZsFxnxMndG29Bks4j9kecsfJth3KZymv7Lk2E+pGirHsrmeKK96JOiKGCMidfRlywGNsI4T2a17d8+dRleUgbju9d4KRitwWKvOVFmORiPoAPyhYO7FCb3rpHOq4YnMnlxAKHHDH9dduhK/ribX60J8nT56gk8c6ODYeHk9rf3+UsQ6o3UHKg5/tcgliQ6LV3Jf2BSgzUHJN62eacF2BJ9I6W2YTSC0JCWM4j1DpU/mpmyFApZAAAAAElFTkSuQmCC");
+      }
+
+      .${APP}__favorite-item:hover { color: var(--brand_blue, #00aeec); }
+      .${APP}__favorite-item.${APP}--disabled { color: var(--text3, #9499a0); cursor: default; }
+      .${APP}__favorite-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .${APP}__favorite-private { margin-left: 4px; color: var(--text3, #9499a0); }
+      .${APP}__favorite-count { margin-left: 8px; color: var(--text2, #61666d); font-size: 12px; }
+
+      .${APP}__favorite-list-mask {
+        position: absolute;
+        inset: 0;
+        opacity: 0.5;
+        background: var(--bg1_float, var(--bg1, #fff));
+      }
+
+      .${APP}__favorite-create { width: 100%; margin: 0 0 5px; }
+
+      .${APP}__favorite-create-start {
+        width: 100%;
+        height: 34px;
+        padding: 0 34px;
+        border: 1px solid var(--text3, #9499a0);
+        border-radius: 4px;
+        color: var(--text2, #61666d);
+        background: var(--bg1_float, var(--bg1, #fff)) url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAOCAYAAAAfSC3RAAAAAXNSR0IArs4c6QAAAC5JREFUKBVjYMABZi5a9R+EcUgzMOGSICQ+EjQy4gs5fAFEduDgNHQ0HhnIT6sAudAOjNLnY/wAAAAASUVORK5CYII=") 10px center/14px 14px no-repeat;
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-create-start:hover { border-color: var(--brand_blue, #00aeec); }
+
+      .${APP}__favorite-create:has(input) {
+        height: 34px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 90px;
+        border: 1px solid var(--brand_blue, #00aeec);
+        border-radius: 4px;
+      }
+
+      .${APP}__favorite-create input {
+        width: auto;
+        height: 34px;
+        margin: 0;
+        padding: 0 10px;
+        border: 0;
+        color: var(--text1, #18191c);
+        background: transparent;
+        font-size: 12px;
+        outline: none;
+      }
+
+      .${APP}__favorite-create button:not(.${APP}__favorite-create-start) {
+        width: 90px;
+        height: 34px;
+        padding: 0;
+        border: 0;
+        border-left: 1px solid var(--brand_blue, #00aeec);
+        border-radius: 0 4px 4px 0;
+        color: var(--brand_blue, #00aeec);
+        background: #d9f1f9;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer {
+        height: 76px;
+        margin: 0 36px;
+        display: block;
+        border-top: 1px solid var(--line_regular, #e3e5e7);
+        text-align: center;
+      }
+
+      .${APP}__favorite-footer .${APP}__favorite-save {
+        width: 160px;
+        height: 40px;
+        margin-top: 18px;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        background: var(--brand_blue, #00aeec);
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer .${APP}__favorite-save:disabled {
+        color: var(--text3, #9499a0);
+        background: var(--graph_bg_thick, #e3e5e7);
+        cursor: default;
+      }
+
+      @keyframes ${APP}-coin-run {
+        to { transform: translate3d(-2767px, 0, 0); }
+      }
+
+      @keyframes ${APP}-triple-progress {
+        to { stroke-dashoffset: 0; }
+      }
+
+      @keyframes ${APP}-triple-shake {
+        from { transform: rotate(-5deg) scale(1.04); }
+        to { transform: rotate(5deg) scale(1.04); }
       }
 
       .${APP}__video-intro-follow {
@@ -3524,12 +4479,41 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       }
 
       .${APP}__video-intro-desc-text {
-        max-height: 144px;
-        overflow: auto;
+        display: -webkit-box;
+        max-height: 80px;
+        overflow: hidden;
         color: var(--text2, #61666d);
         font: 400 13px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 4;
+      }
+
+      .${APP}__video-intro-desc.${APP}--expanded .${APP}__video-intro-desc-text {
+        display: block;
+        max-height: none;
+        overflow: visible;
+        -webkit-line-clamp: unset;
+      }
+
+      .${APP}__video-intro-desc-toggle,
+      .${APP}__video-intro-owner-toggle {
+        margin: 5px 0 0;
+        padding: 0;
+        border: 0;
+        color: var(--brand_blue, #00aeec);
+        background: transparent;
+        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__video-intro-desc-toggle:hover,
+      .${APP}__video-intro-desc-toggle:focus-visible,
+      .${APP}__video-intro-owner-toggle:hover,
+      .${APP}__video-intro-owner-toggle:focus-visible {
+        color: var(--brand_pink, #fb7299);
+        outline: none;
       }
 
       .${APP}__playlist {
@@ -4143,7 +5127,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     return [node];
   }
 
-  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section tabindex=-1><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><div></div><div></div><div><span role=status aria-live=polite></span><span title=手柄未连接 aria-label=手柄未连接 tabindex=0><span role=tooltip><span>手柄控制已禁用</span><span>手柄未连接</span><span>连接后按任意键确认</span><span>A 暂停/播放</span><span>X / B 控制进度</span><span>Y 视频全屏</span><span>Menu 网页内全屏</span><span>LB / RB 循环切换标签</span><span>LT / RT 上一个/下一个</span><span>摇杆上下 滚动列表</span></span></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=打开原播放页 aria-label=打开原播放页></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><button type=button title=自动适配视频和评论区 aria-label=自动适配视频和评论区></button><button type=button title=重置窗口尺寸 aria-label=重置窗口尺寸></button><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
+  var _tmpl$ = /*#__PURE__*/template(`<div role=dialog aria-modal=true data-backdrop-pointer=0><section tabindex=-1><header><div><button type=button title=上一次播放 aria-label=上一次播放></button><button type=button title=下一次播放 aria-label=下一次播放></button></div><a href=# target=_blank rel="noopener noreferrer"title=在新标签页打开原页面><span></span><span aria-hidden=true></span></a><div></div><div><span role=status aria-live=polite></span><button type=button title="自动联播。按 J / L 手动切换"aria-label="自动联播。按 J / L 手动切换"></button><button type=button title=网页内全屏 aria-label=网页内全屏></button><details><summary title=更多操作 aria-label=更多操作 aria-haspopup=menu role=button><span aria-hidden=true></span></summary><div role=menu><div>窗口布局</div><button type=button role=menuitem><span>自动适配布局</span></button><button type=button role=menuitem disabled><span>重置窗口尺寸</span></button><div>控制器</div><span title=手柄未连接 aria-label=手柄未连接 tabindex=0><span>手柄状态与快捷键</span><span role=tooltip><span>手柄控制已禁用</span><span>手柄未连接</span><span>连接后按任意键确认</span><span>A 暂停/播放</span><span>X / B 控制进度</span><span>Y 视频全屏</span><span>Menu 网页内全屏</span><span>LB / RB 循环切换标签</span><span>LT / RT 上一个/下一个</span><span>摇杆上下 滚动列表</span></span></span></div></details><button type=button title=关闭 aria-label=关闭首页播放器></button></div></header><div><div><div></div></div><div tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section><div><div></div><div></div></div><div><div></div><div>合集加载中...</div></div><div><div></div><div>播放列表加载中...</div></div><div><div></div><div>直播列表加载中...</div></div><div><div></div><div>相关推荐加载中...</div></div></section></div><button type=button title=回到顶部 aria-label=回到顶部></button><button type=button title=调整窗口尺寸 aria-label=调整窗口尺寸>`),
     _tmpl$2 = /*#__PURE__*/template(`<button type=button title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。">`),
     _tmpl$3 = /*#__PURE__*/template(`<div id=shell><main id=layout><div id=stage><div id=bilibili-player></div></div><div id=comments-resizer tabindex=0 role=separator aria-orientation=vertical aria-label=调整评论区宽度></div><section id=comments><div id=comments-panel><div id=video-intro></div><div id=comments-mount>评论加载中...</div></div><div id=pages-panel><div id=pages-list></div><div id=pages-empty>合集加载中...</div></div><div id=playlist-panel><div id=playlist-list></div><div id=playlist-empty>播放列表加载中...</div></div><div id=live-panel><div id=live-list></div><div id=live-empty>直播列表加载中...</div></div><div id=recommend-panel><div id=recommend-list></div><div id=recommend-empty>相关推荐加载中...</div></div></section></main><button type=button id=back-to-top title=回到顶部 aria-label=回到顶部>`);
   function mountHomePlayerPage({
@@ -4156,7 +5140,6 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     onFullscreen,
     onHistoryNext,
     onHistoryPrevious,
-    onOpenOriginal,
     onOpenPip,
     onPlayerControlClick,
     supportsPip = true,
@@ -4182,7 +5165,6 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       onFullscreen: onFullscreen,
       onHistoryNext: onHistoryNext,
       onHistoryPrevious: onHistoryPrevious,
-      onOpenOriginal: onOpenOriginal,
       onOpenPip: onOpenPip,
       onPlayerControlClick: onPlayerControlClick,
       supportsPip: supportsPip,
@@ -4233,49 +5215,58 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         _el$5 = _el$4.firstChild,
         _el$6 = _el$5.nextSibling,
         _el$7 = _el$4.nextSibling,
-        _el$8 = _el$7.nextSibling,
+        _el$8 = _el$7.firstChild,
         _el$9 = _el$8.nextSibling,
-        _el$0 = _el$9.firstChild,
+        _el$0 = _el$7.nextSibling,
         _el$1 = _el$0.nextSibling,
         _el$10 = _el$1.firstChild,
-        _el$11 = _el$10.firstChild,
+        _el$11 = _el$10.nextSibling,
         _el$12 = _el$11.nextSibling,
         _el$13 = _el$12.nextSibling,
-        _el$14 = _el$13.nextSibling,
+        _el$14 = _el$13.firstChild,
         _el$15 = _el$14.nextSibling,
-        _el$16 = _el$15.nextSibling,
+        _el$16 = _el$15.firstChild,
         _el$17 = _el$16.nextSibling,
-        _el$18 = _el$17.nextSibling,
-        _el$19 = _el$18.nextSibling,
-        _el$20 = _el$19.nextSibling,
-        _el$21 = _el$1.nextSibling,
+        _el$18 = _el$17.firstChild,
+        _el$19 = _el$17.nextSibling,
+        _el$20 = _el$19.firstChild,
+        _el$21 = _el$19.nextSibling,
         _el$22 = _el$21.nextSibling,
-        _el$23 = _el$22.nextSibling,
+        _el$23 = _el$22.firstChild,
         _el$24 = _el$23.nextSibling,
-        _el$25 = _el$24.nextSibling,
+        _el$25 = _el$24.firstChild,
         _el$26 = _el$25.nextSibling,
-        _el$27 = _el$3.nextSibling,
-        _el$28 = _el$27.firstChild,
-        _el$29 = _el$28.firstChild,
-        _el$30 = _el$28.nextSibling,
+        _el$27 = _el$26.nextSibling,
+        _el$28 = _el$27.nextSibling,
+        _el$29 = _el$28.nextSibling,
+        _el$30 = _el$29.nextSibling,
         _el$31 = _el$30.nextSibling,
-        _el$32 = _el$31.firstChild,
-        _el$33 = _el$32.firstChild,
+        _el$32 = _el$31.nextSibling,
+        _el$33 = _el$32.nextSibling,
         _el$34 = _el$33.nextSibling,
-        _el$35 = _el$32.nextSibling,
-        _el$36 = _el$35.firstChild,
-        _el$37 = _el$36.nextSibling,
-        _el$38 = _el$35.nextSibling,
-        _el$39 = _el$38.firstChild,
+        _el$35 = _el$13.nextSibling,
+        _el$36 = _el$3.nextSibling,
+        _el$37 = _el$36.firstChild,
+        _el$38 = _el$37.firstChild,
+        _el$39 = _el$37.nextSibling,
         _el$40 = _el$39.nextSibling,
-        _el$41 = _el$38.nextSibling,
+        _el$41 = _el$40.firstChild,
         _el$42 = _el$41.firstChild,
         _el$43 = _el$42.nextSibling,
         _el$44 = _el$41.nextSibling,
         _el$45 = _el$44.firstChild,
         _el$46 = _el$45.nextSibling,
-        _el$47 = _el$27.nextSibling,
-        _el$48 = _el$47.nextSibling;
+        _el$47 = _el$44.nextSibling,
+        _el$48 = _el$47.firstChild,
+        _el$49 = _el$48.nextSibling,
+        _el$50 = _el$47.nextSibling,
+        _el$51 = _el$50.firstChild,
+        _el$52 = _el$51.nextSibling,
+        _el$53 = _el$50.nextSibling,
+        _el$54 = _el$53.firstChild,
+        _el$55 = _el$54.nextSibling,
+        _el$56 = _el$36.nextSibling,
+        _el$57 = _el$56.nextSibling;
       _el$.addEventListener("pointercancel", event => {
         backdropPointer = '0';
         event.currentTarget.dataset.backdropPointer = '0';
@@ -4308,155 +5299,168 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       typeof _ref$4 === "function" && use(_ref$4, _el$6);
       className(_el$6, `${APP}__header-button`);
       insert(_el$6, createHistoryForwardIcon);
-      var _ref$5 = props.refs('title');
-      typeof _ref$5 === "function" && use(_ref$5, _el$7);
+      use(element => {
+        props.refs('openOriginal')(element);
+      }, _el$7);
       setAttribute(_el$7, "id", `${APP}-title`);
+      var _ref$5 = props.refs('title');
+      typeof _ref$5 === "function" && use(_ref$5, _el$8);
+      className(_el$8, `${APP}__header-title-text`);
+      className(_el$9, `${APP}__header-title-external`);
+      insert(_el$9, createExternalLinkIcon);
       var _ref$6 = props.refs('status');
-      typeof _ref$6 === "function" && use(_ref$6, _el$8);
-      setAttribute(_el$8, "id", `${APP}-status`);
-      className(_el$9, `${APP}__header-actions`);
+      typeof _ref$6 === "function" && use(_ref$6, _el$0);
+      setAttribute(_el$0, "id", `${APP}-status`);
+      className(_el$1, `${APP}__header-actions`);
       var _ref$7 = props.refs('autoPlayHint');
-      typeof _ref$7 === "function" && use(_ref$7, _el$0);
-      className(_el$0, `${APP}__auto-play-hint`);
-      var _ref$8 = props.refs('gamepadIndicator');
-      typeof _ref$8 === "function" && use(_ref$8, _el$1);
-      className(_el$1, `${APP}__gamepad-indicator`);
-      insert(_el$1, createGamepadIcon, _el$10);
-      className(_el$10, `${APP}__gamepad-popover`);
-      className(_el$11, `${APP}__gamepad-disabled-hint`);
-      className(_el$12, `${APP}__gamepad-disconnected-hint`);
-      className(_el$13, `${APP}__gamepad-disconnected-hint`);
-      className(_el$14, `${APP}__gamepad-connected-hint`);
-      className(_el$15, `${APP}__gamepad-connected-hint`);
-      className(_el$16, `${APP}__gamepad-connected-hint`);
-      className(_el$17, `${APP}__gamepad-connected-hint`);
-      className(_el$18, `${APP}__gamepad-connected-hint`);
-      className(_el$19, `${APP}__gamepad-connected-hint`);
-      className(_el$20, `${APP}__gamepad-connected-hint`);
-      _el$21.$$click = () => props.onToggleAutoPlay?.();
-      var _ref$9 = props.refs('autoPlayNext');
-      typeof _ref$9 === "function" && use(_ref$9, _el$21);
-      className(_el$21, `${APP}__header-button`);
-      insert(_el$21, createAutoPlayIcon);
-      insert(_el$9, (() => {
+      typeof _ref$7 === "function" && use(_ref$7, _el$10);
+      className(_el$10, `${APP}__auto-play-hint`);
+      _el$11.$$click = () => props.onToggleAutoPlay?.();
+      var _ref$8 = props.refs('autoPlayNext');
+      typeof _ref$8 === "function" && use(_ref$8, _el$11);
+      className(_el$11, `${APP}__header-button`);
+      insert(_el$11, createAutoPlayIcon);
+      insert(_el$1, (() => {
         var _c$ = memo(() => !!props.supportsPip);
         return () => _c$() && (() => {
-          var _el$49 = _tmpl$2();
-          _el$49.$$click = () => props.onOpenPip?.();
-          var _ref$34 = props.refs('openPip');
-          typeof _ref$34 === "function" && use(_ref$34, _el$49);
-          className(_el$49, `${APP}__header-button`);
-          insert(_el$49, createPictureInPictureIcon);
-          return _el$49;
+          var _el$58 = _tmpl$2();
+          _el$58.$$click = () => props.onOpenPip?.();
+          var _ref$33 = props.refs('openPip');
+          typeof _ref$33 === "function" && use(_ref$33, _el$58);
+          className(_el$58, `${APP}__header-button`);
+          insert(_el$58, createPictureInPictureIcon);
+          return _el$58;
         })();
-      })(), _el$22);
-      _el$22.$$click = event => props.onOpenOriginal?.(event.currentTarget.dataset.href);
-      var _ref$0 = props.refs('openOriginal');
-      typeof _ref$0 === "function" && use(_ref$0, _el$22);
-      className(_el$22, `${APP}__header-button`);
-      insert(_el$22, createExternalLinkIcon);
-      _el$23.$$click = () => props.onFullscreen?.();
-      var _ref$1 = props.refs('fullscreen');
-      typeof _ref$1 === "function" && use(_ref$1, _el$23);
-      className(_el$23, `${APP}__header-button`);
-      insert(_el$23, createMaximizeIcon);
-      _el$24.$$click = () => props.onFitLayout?.();
-      className(_el$24, `${APP}__header-button`);
-      insert(_el$24, createFitLayoutIcon);
-      _el$25.$$click = () => props.onResetSize?.();
-      var _ref$10 = props.refs('resetSize');
-      typeof _ref$10 === "function" && use(_ref$10, _el$25);
-      className(_el$25, `${APP}__header-button`);
-      insert(_el$25, createResetSizeIcon);
-      _el$26.$$click = () => props.onClose?.();
-      var _ref$11 = props.refs('close');
-      typeof _ref$11 === "function" && use(_ref$11, _el$26);
-      className(_el$26, `${APP}__header-button ${APP}__header-button--close`);
-      insert(_el$26, createCloseIcon);
-      var _ref$12 = props.refs('content');
-      typeof _ref$12 === "function" && use(_ref$12, _el$27);
-      setAttribute(_el$27, "id", `${APP}-content`);
-      var _ref$13 = props.refs('playerWrap');
-      typeof _ref$13 === "function" && use(_ref$13, _el$28);
-      setAttribute(_el$28, "id", `${APP}-player-wrap`);
-      var _ref$14 = props.refs('playerRoot');
-      typeof _ref$14 === "function" && use(_ref$14, _el$29);
-      setAttribute(_el$29, "id", `${APP}-player`);
-      _el$30.$$pointerdown = event => props.onResizeStart?.(event);
-      var _ref$15 = props.refs('commentsResizer');
-      typeof _ref$15 === "function" && use(_ref$15, _el$30);
-      setAttribute(_el$30, "id", `${APP}-comments-resizer`);
-      var _ref$16 = props.refs('comments');
-      typeof _ref$16 === "function" && use(_ref$16, _el$31);
-      setAttribute(_el$31, "id", `${APP}-comments`);
-      insert(_el$31, () => props.commentsTabs, _el$32);
-      var _ref$17 = props.refs('commentsPanel');
-      typeof _ref$17 === "function" && use(_ref$17, _el$32);
-      setAttribute(_el$32, "id", `${APP}-comments-panel`);
-      className(_el$32, `${APP}__comments-panel`);
-      var _ref$18 = props.refs('videoIntro');
-      typeof _ref$18 === "function" && use(_ref$18, _el$33);
-      setAttribute(_el$33, "id", `${APP}-video-intro`);
-      var _ref$19 = props.refs('commentsMount');
-      typeof _ref$19 === "function" && use(_ref$19, _el$34);
-      setAttribute(_el$34, "id", `${APP}-comments-mount`);
-      var _ref$20 = props.refs('pagesPanel');
-      typeof _ref$20 === "function" && use(_ref$20, _el$35);
-      setAttribute(_el$35, "id", `${APP}-pages-panel`);
-      className(_el$35, `${APP}__comments-panel`);
-      var _ref$21 = props.refs('pagesList');
-      typeof _ref$21 === "function" && use(_ref$21, _el$36);
-      setAttribute(_el$36, "id", `${APP}-pages-list`);
-      className(_el$36, `${APP}__playlist`);
-      var _ref$22 = props.refs('pagesEmpty');
-      typeof _ref$22 === "function" && use(_ref$22, _el$37);
-      setAttribute(_el$37, "id", `${APP}-pages-empty`);
-      className(_el$37, `${APP}__playlist-empty`);
-      var _ref$23 = props.refs('playlistPanel');
-      typeof _ref$23 === "function" && use(_ref$23, _el$38);
-      setAttribute(_el$38, "id", `${APP}-playlist-panel`);
-      className(_el$38, `${APP}__comments-panel`);
-      var _ref$24 = props.refs('playlistList');
-      typeof _ref$24 === "function" && use(_ref$24, _el$39);
-      setAttribute(_el$39, "id", `${APP}-playlist-list`);
-      className(_el$39, `${APP}__playlist`);
-      var _ref$25 = props.refs('playlistEmpty');
-      typeof _ref$25 === "function" && use(_ref$25, _el$40);
-      setAttribute(_el$40, "id", `${APP}-playlist-empty`);
-      className(_el$40, `${APP}__playlist-empty`);
-      var _ref$26 = props.refs('livePanel');
-      typeof _ref$26 === "function" && use(_ref$26, _el$41);
-      setAttribute(_el$41, "id", `${APP}-live-panel`);
+      })(), _el$12);
+      _el$12.$$click = () => props.onFullscreen?.();
+      var _ref$9 = props.refs('fullscreen');
+      typeof _ref$9 === "function" && use(_ref$9, _el$12);
+      className(_el$12, `${APP}__header-button`);
+      insert(_el$12, createMaximizeIcon);
+      className(_el$13, `${APP}__header-more`);
+      className(_el$14, `${APP}__header-button ${APP}__header-more-toggle`);
+      className(_el$15, `${APP}__header-menu`);
+      className(_el$16, `${APP}__header-menu-label`);
+      _el$17.$$click = event => {
+        event.currentTarget.closest('details')?.removeAttribute('open');
+        props.onFitLayout?.();
+      };
+      className(_el$17, `${APP}__header-menu-item`);
+      insert(_el$17, createFitLayoutIcon, _el$18);
+      _el$19.$$click = event => {
+        event.currentTarget.closest('details')?.removeAttribute('open');
+        props.onResetSize?.();
+      };
+      var _ref$0 = props.refs('resetSize');
+      typeof _ref$0 === "function" && use(_ref$0, _el$19);
+      className(_el$19, `${APP}__header-menu-item`);
+      insert(_el$19, createResetSizeIcon, _el$20);
+      className(_el$21, `${APP}__header-menu-label`);
+      var _ref$1 = props.refs('gamepadIndicator');
+      typeof _ref$1 === "function" && use(_ref$1, _el$22);
+      className(_el$22, `${APP}__header-menu-status ${APP}__gamepad-indicator`);
+      insert(_el$22, createGamepadIcon, _el$23);
+      className(_el$23, `${APP}__gamepad-status-text`);
+      className(_el$24, `${APP}__gamepad-popover`);
+      className(_el$25, `${APP}__gamepad-disabled-hint`);
+      className(_el$26, `${APP}__gamepad-disconnected-hint`);
+      className(_el$27, `${APP}__gamepad-disconnected-hint`);
+      className(_el$28, `${APP}__gamepad-connected-hint`);
+      className(_el$29, `${APP}__gamepad-connected-hint`);
+      className(_el$30, `${APP}__gamepad-connected-hint`);
+      className(_el$31, `${APP}__gamepad-connected-hint`);
+      className(_el$32, `${APP}__gamepad-connected-hint`);
+      className(_el$33, `${APP}__gamepad-connected-hint`);
+      className(_el$34, `${APP}__gamepad-connected-hint`);
+      _el$35.$$click = () => props.onClose?.();
+      var _ref$10 = props.refs('close');
+      typeof _ref$10 === "function" && use(_ref$10, _el$35);
+      className(_el$35, `${APP}__header-button ${APP}__header-button--close`);
+      insert(_el$35, createCloseIcon);
+      var _ref$11 = props.refs('content');
+      typeof _ref$11 === "function" && use(_ref$11, _el$36);
+      setAttribute(_el$36, "id", `${APP}-content`);
+      var _ref$12 = props.refs('playerWrap');
+      typeof _ref$12 === "function" && use(_ref$12, _el$37);
+      setAttribute(_el$37, "id", `${APP}-player-wrap`);
+      var _ref$13 = props.refs('playerRoot');
+      typeof _ref$13 === "function" && use(_ref$13, _el$38);
+      setAttribute(_el$38, "id", `${APP}-player`);
+      _el$39.$$pointerdown = event => props.onResizeStart?.(event);
+      var _ref$14 = props.refs('commentsResizer');
+      typeof _ref$14 === "function" && use(_ref$14, _el$39);
+      setAttribute(_el$39, "id", `${APP}-comments-resizer`);
+      var _ref$15 = props.refs('comments');
+      typeof _ref$15 === "function" && use(_ref$15, _el$40);
+      setAttribute(_el$40, "id", `${APP}-comments`);
+      insert(_el$40, () => props.commentsTabs, _el$41);
+      var _ref$16 = props.refs('commentsPanel');
+      typeof _ref$16 === "function" && use(_ref$16, _el$41);
+      setAttribute(_el$41, "id", `${APP}-comments-panel`);
       className(_el$41, `${APP}__comments-panel`);
-      var _ref$27 = props.refs('liveList');
-      typeof _ref$27 === "function" && use(_ref$27, _el$42);
-      setAttribute(_el$42, "id", `${APP}-live-list`);
-      className(_el$42, `${APP}__playlist`);
-      var _ref$28 = props.refs('liveEmpty');
-      typeof _ref$28 === "function" && use(_ref$28, _el$43);
-      setAttribute(_el$43, "id", `${APP}-live-empty`);
-      className(_el$43, `${APP}__playlist-empty`);
-      var _ref$29 = props.refs('recommendPanel');
-      typeof _ref$29 === "function" && use(_ref$29, _el$44);
-      setAttribute(_el$44, "id", `${APP}-recommend-panel`);
+      var _ref$17 = props.refs('videoIntro');
+      typeof _ref$17 === "function" && use(_ref$17, _el$42);
+      setAttribute(_el$42, "id", `${APP}-video-intro`);
+      var _ref$18 = props.refs('commentsMount');
+      typeof _ref$18 === "function" && use(_ref$18, _el$43);
+      setAttribute(_el$43, "id", `${APP}-comments-mount`);
+      var _ref$19 = props.refs('pagesPanel');
+      typeof _ref$19 === "function" && use(_ref$19, _el$44);
+      setAttribute(_el$44, "id", `${APP}-pages-panel`);
       className(_el$44, `${APP}__comments-panel`);
-      var _ref$30 = props.refs('recommendList');
-      typeof _ref$30 === "function" && use(_ref$30, _el$45);
-      setAttribute(_el$45, "id", `${APP}-recommend-list`);
+      var _ref$20 = props.refs('pagesList');
+      typeof _ref$20 === "function" && use(_ref$20, _el$45);
+      setAttribute(_el$45, "id", `${APP}-pages-list`);
       className(_el$45, `${APP}__playlist`);
-      var _ref$31 = props.refs('recommendEmpty');
-      typeof _ref$31 === "function" && use(_ref$31, _el$46);
-      setAttribute(_el$46, "id", `${APP}-recommend-empty`);
+      var _ref$21 = props.refs('pagesEmpty');
+      typeof _ref$21 === "function" && use(_ref$21, _el$46);
+      setAttribute(_el$46, "id", `${APP}-pages-empty`);
       className(_el$46, `${APP}__playlist-empty`);
-      _el$47.$$click = () => props.onBackToTop?.();
-      var _ref$32 = props.refs('backToTop');
-      typeof _ref$32 === "function" && use(_ref$32, _el$47);
-      className(_el$47, `${APP}__back-to-top`);
-      insert(_el$47, () => backToTopIcon.content.firstElementChild);
-      _el$48.$$pointerdown = event => props.onModalResizeStart?.(event);
-      var _ref$33 = props.refs('modalResizeHandle');
-      typeof _ref$33 === "function" && use(_ref$33, _el$48);
-      className(_el$48, `${APP}__modal-resize-handle`);
+      var _ref$22 = props.refs('playlistPanel');
+      typeof _ref$22 === "function" && use(_ref$22, _el$47);
+      setAttribute(_el$47, "id", `${APP}-playlist-panel`);
+      className(_el$47, `${APP}__comments-panel`);
+      var _ref$23 = props.refs('playlistList');
+      typeof _ref$23 === "function" && use(_ref$23, _el$48);
+      setAttribute(_el$48, "id", `${APP}-playlist-list`);
+      className(_el$48, `${APP}__playlist`);
+      var _ref$24 = props.refs('playlistEmpty');
+      typeof _ref$24 === "function" && use(_ref$24, _el$49);
+      setAttribute(_el$49, "id", `${APP}-playlist-empty`);
+      className(_el$49, `${APP}__playlist-empty`);
+      var _ref$25 = props.refs('livePanel');
+      typeof _ref$25 === "function" && use(_ref$25, _el$50);
+      setAttribute(_el$50, "id", `${APP}-live-panel`);
+      className(_el$50, `${APP}__comments-panel`);
+      var _ref$26 = props.refs('liveList');
+      typeof _ref$26 === "function" && use(_ref$26, _el$51);
+      setAttribute(_el$51, "id", `${APP}-live-list`);
+      className(_el$51, `${APP}__playlist`);
+      var _ref$27 = props.refs('liveEmpty');
+      typeof _ref$27 === "function" && use(_ref$27, _el$52);
+      setAttribute(_el$52, "id", `${APP}-live-empty`);
+      className(_el$52, `${APP}__playlist-empty`);
+      var _ref$28 = props.refs('recommendPanel');
+      typeof _ref$28 === "function" && use(_ref$28, _el$53);
+      setAttribute(_el$53, "id", `${APP}-recommend-panel`);
+      className(_el$53, `${APP}__comments-panel`);
+      var _ref$29 = props.refs('recommendList');
+      typeof _ref$29 === "function" && use(_ref$29, _el$54);
+      setAttribute(_el$54, "id", `${APP}-recommend-list`);
+      className(_el$54, `${APP}__playlist`);
+      var _ref$30 = props.refs('recommendEmpty');
+      typeof _ref$30 === "function" && use(_ref$30, _el$55);
+      setAttribute(_el$55, "id", `${APP}-recommend-empty`);
+      className(_el$55, `${APP}__playlist-empty`);
+      _el$56.$$click = () => props.onBackToTop?.();
+      var _ref$31 = props.refs('backToTop');
+      typeof _ref$31 === "function" && use(_ref$31, _el$56);
+      className(_el$56, `${APP}__back-to-top`);
+      insert(_el$56, () => backToTopIcon.content.firstElementChild);
+      _el$57.$$pointerdown = event => props.onModalResizeStart?.(event);
+      var _ref$32 = props.refs('modalResizeHandle');
+      typeof _ref$32 === "function" && use(_ref$32, _el$57);
+      className(_el$57, `${APP}__modal-resize-handle`);
       return _el$;
     })();
   }
@@ -4464,42 +5468,42 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
     const backToTopIcon = props.targetDocument.createElement('template');
     backToTopIcon.innerHTML = arrowUpIconMarkup();
     return (() => {
-      var _el$50 = _tmpl$3(),
-        _el$51 = _el$50.firstChild,
-        _el$52 = _el$51.firstChild,
-        _el$53 = _el$52.nextSibling,
-        _el$54 = _el$53.nextSibling,
-        _el$55 = _el$54.firstChild,
-        _el$56 = _el$55.nextSibling,
-        _el$57 = _el$56.firstChild,
-        _el$58 = _el$57.nextSibling,
-        _el$59 = _el$56.nextSibling,
+      var _el$59 = _tmpl$3(),
         _el$60 = _el$59.firstChild,
-        _el$61 = _el$60.nextSibling,
-        _el$62 = _el$59.nextSibling,
-        _el$63 = _el$62.firstChild,
-        _el$64 = _el$63.nextSibling,
-        _el$65 = _el$62.nextSibling,
+        _el$61 = _el$60.firstChild,
+        _el$62 = _el$61.nextSibling,
+        _el$63 = _el$62.nextSibling,
+        _el$64 = _el$63.firstChild,
+        _el$65 = _el$64.nextSibling,
         _el$66 = _el$65.firstChild,
         _el$67 = _el$66.nextSibling,
-        _el$68 = _el$51.nextSibling;
-      insert(_el$54, () => props.commentsTabs, _el$55);
-      className(_el$55, `${APP}__comments-panel`);
-      className(_el$56, `${APP}__comments-panel`);
-      className(_el$57, `${APP}__playlist`);
-      className(_el$58, `${APP}__playlist-empty`);
-      className(_el$59, `${APP}__comments-panel`);
-      className(_el$60, `${APP}__playlist`);
-      className(_el$61, `${APP}__playlist-empty`);
-      className(_el$62, `${APP}__comments-panel`);
-      className(_el$63, `${APP}__playlist`);
-      className(_el$64, `${APP}__playlist-empty`);
+        _el$68 = _el$65.nextSibling,
+        _el$69 = _el$68.firstChild,
+        _el$70 = _el$69.nextSibling,
+        _el$71 = _el$68.nextSibling,
+        _el$72 = _el$71.firstChild,
+        _el$73 = _el$72.nextSibling,
+        _el$74 = _el$71.nextSibling,
+        _el$75 = _el$74.firstChild,
+        _el$76 = _el$75.nextSibling,
+        _el$77 = _el$60.nextSibling;
+      insert(_el$63, () => props.commentsTabs, _el$64);
+      className(_el$64, `${APP}__comments-panel`);
       className(_el$65, `${APP}__comments-panel`);
       className(_el$66, `${APP}__playlist`);
       className(_el$67, `${APP}__playlist-empty`);
-      className(_el$68, `${APP}__back-to-top`);
-      insert(_el$68, () => backToTopIcon.content.firstElementChild);
-      return _el$50;
+      className(_el$68, `${APP}__comments-panel`);
+      className(_el$69, `${APP}__playlist`);
+      className(_el$70, `${APP}__playlist-empty`);
+      className(_el$71, `${APP}__comments-panel`);
+      className(_el$72, `${APP}__playlist`);
+      className(_el$73, `${APP}__playlist-empty`);
+      className(_el$74, `${APP}__comments-panel`);
+      className(_el$75, `${APP}__playlist`);
+      className(_el$76, `${APP}__playlist-empty`);
+      className(_el$77, `${APP}__back-to-top`);
+      insert(_el$77, () => backToTopIcon.content.firstElementChild);
+      return _el$59;
     })();
   }
   delegateEvents(["pointerdown", "pointerup", "click"]);
@@ -4971,7 +5975,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         display: grid;
         grid-template-columns: 40px minmax(0, 1fr) auto;
         gap: 10px;
-        align-items: center;
+        align-items: start;
         min-width: 0;
       }
       .${APP}__video-intro-avatar {
@@ -5005,15 +6009,278 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .${APP}__video-intro-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 8px;
+      }
+      .${APP}__video-intro-detail {
+        color: var(--text3, #9499a0);
+        font: 400 11px/16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+      }
       .${APP}__video-intro-owner-desc {
         display: -webkit-box;
-        margin-top: 3px;
         overflow: hidden;
         color: var(--text2, #61666d);
         font: 400 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         overflow-wrap: anywhere;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
+      }
+      .${APP}__video-intro-body {
+        margin: 7px 0 0 50px;
+      }
+      .${APP}__video-intro-owner-description {
+        margin-top: 5px;
+      }
+      .${APP}__video-intro-owner-description.${APP}--expanded .${APP}__video-intro-owner-desc {
+        display: block;
+        overflow: visible;
+        -webkit-line-clamp: unset;
+      }
+      .${APP}__video-actions {
+        position: relative;
+        margin-top: 10px;
+        margin-left: -50px;
+      }
+      .${APP}__video-actions-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+      .${APP}__video-action {
+        position: relative;
+        min-width: 0;
+        height: 32px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        overflow: visible;
+        border: 0;
+        color: var(--text2, #61666d);
+        background: transparent;
+        font: 400 13px/32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      .${APP}__video-action-icon {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 auto;
+      }
+      .${APP}__video-action-label { color: currentColor; }
+      .${APP}__video-action:hover,
+      .${APP}__video-action:focus-visible,
+      .${APP}__video-action.${APP}--active {
+        color: var(--brand_blue, #00aeec);
+        outline: none;
+      }
+      .${APP}__video-action-ring {
+        position: absolute;
+        top: 50%;
+        left: -3px;
+        width: 34px;
+        height: 34px;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-50%) rotate(-90deg);
+      }
+      .${APP}__video-action-ring circle {
+        fill: none;
+        stroke: var(--brand_blue, #00aeec);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-dasharray: 125.66;
+        stroke-dashoffset: 125.66;
+      }
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action-ring { opacity: 1; }
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action-ring circle {
+        animation: ${APP}-triple-progress 1.5s linear forwards;
+      }
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action:first-child .${APP}__video-action-icon {
+        color: var(--brand_blue, #00aeec);
+        animation: ${APP}-triple-shake 0.16s linear infinite alternate;
+      }
+      .${APP}__video-action:disabled {
+        cursor: wait;
+        opacity: 0.55;
+      }
+      .${APP}__favorite-dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        box-sizing: border-box;
+        background: rgba(0, 0, 0, 0.65);
+      }
+      .${APP}__favorite-panel {
+        width: min(420px, calc(100vw - 32px));
+        max-height: min(560px, calc(100vh - 32px));
+        padding: 20px;
+        box-sizing: border-box;
+        overflow: auto;
+        border-radius: 8px;
+        background: var(--bg1, #fff);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+        outline: none;
+      }
+      .${APP}__favorite-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .${APP}__favorite-heading {
+        color: var(--text1, #18191c);
+        font: 500 16px/24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__favorite-close {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        color: var(--text3, #9499a0);
+        background: transparent;
+        font: 300 25px/26px Arial, sans-serif;
+        cursor: pointer;
+      }
+      .${APP}__favorite-list {
+        max-height: 280px;
+        overflow: auto;
+      }
+      .${APP}__favorite-item {
+        min-height: 38px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        color: var(--text2, #61666d);
+        font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      .${APP}__favorite-item input { accent-color: var(--brand_pink, #fb7299); }
+      .${APP}__favorite-count,
+      .${APP}__favorite-message {
+        color: var(--text3, #9499a0);
+        font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .${APP}__favorite-message.${APP}--error { color: #f05b72; }
+      .${APP}__favorite-create {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 7px;
+        margin-top: 8px;
+      }
+      .${APP}__favorite-create input {
+        min-width: 0;
+        height: 28px;
+        box-sizing: border-box;
+        padding: 0 8px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+        outline: none;
+      }
+      .${APP}__favorite-create input:focus { border-color: var(--brand_pink, #fb7299); }
+      .${APP}__favorite-create button {
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        cursor: pointer;
+      }
+      .${APP}__favorite-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 9px;
+      }
+      .${APP}__favorite-footer button {
+        height: 28px;
+        padding: 0 12px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        cursor: pointer;
+      }
+      .${APP}__favorite-footer .${APP}__favorite-save {
+        color: #fff;
+        border-color: var(--brand_blue, #00aeec);
+        background: var(--brand_blue, #00aeec);
+      }
+
+      .${APP}__action-dialog { position: fixed; inset: 0; z-index: 2147483600; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+      .${APP}__dialog-close { position: absolute; z-index: 2; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: 0; color: #999; background: transparent; cursor: pointer; }
+      .${APP}__dialog-close:hover, .${APP}__dialog-close:focus-visible { color: var(--brand_blue, #00aeec); outline: none; }
+      .${APP}__dialog-close svg { width: 18px; height: 18px; stroke: currentColor; }
+      .${APP}__coin-dialog { background: rgba(0, 0, 0, 0.5); }
+      .${APP}__coin-panel { position: relative; width: min(430px, calc(100vw - 24px)); min-height: 422px; box-sizing: border-box; overflow: hidden; border-radius: 4px; background: var(--bg1_float, var(--bg1, #fff)); outline: none; }
+      .${APP}__coin-panel > .${APP}__dialog-close { top: 12px; right: 12px; }
+      .${APP}__coin-title { margin-top: 24px; color: var(--text1, #18191c); font-size: 16px; text-align: center; }
+      .${APP}__coin-title span { color: var(--brand_blue, #00aeec); font-size: 30px; }
+      .${APP}__coin-choices { display: flex; justify-content: center; gap: 30px; margin-top: 35px; }
+      .${APP}__coin-choice { position: relative; width: 160px; height: 230px; padding: 0; overflow: hidden; border: 2px dashed #ccd0d6; border-radius: 5px; background-color: transparent; background-position: center; background-repeat: no-repeat; background-size: 120px; cursor: pointer; }
+      .${APP}__coin-choice--1 { background-image: url("https://i0.hdslb.com/bfs/static/jinkela/video/asserts/22-coin.png"); }
+      .${APP}__coin-choice--2 { background-image: url("https://i0.hdslb.com/bfs/static/jinkela/video/asserts/33-coin.png"); }
+      .${APP}__coin-choice:hover, .${APP}__coin-choice:focus-visible, .${APP}__coin-choice.${APP}--selected { border-color: #02a0d8; outline: none; }
+      .${APP}__coin-choice.${APP}--selected { border-style: solid; background-image: none; }
+      .${APP}__coin-choice-label { position: absolute; top: 0; left: 15px; color: var(--text3, #9499a0); font-size: 14px; line-height: 40px; }
+      .${APP}__coin-choice.${APP}--selected .${APP}__coin-choice-label { color: var(--brand_blue, #00aeec); }
+      .${APP}__coin-animation { width: 120px; height: 206px; display: block; overflow: hidden; margin: 0 auto; }
+      .${APP}__coin-animation img { max-width: none; height: 193px; margin-top: 19px; opacity: 0; }
+      .${APP}__coin-choice.${APP}--selected .${APP}__coin-animation img { opacity: 1; animation: ${APP}-coin-run 2s steps(23) infinite; }
+      .${APP}__coin-like { margin: 12px 0 0 37px; display: flex; align-items: center; color: var(--text1, #18191c); font-size: 12px; line-height: 16px; cursor: pointer; }
+      .${APP}__coin-like.${APP}--single { margin-left: 135px; }
+      .${APP}__coin-like input, .${APP}__favorite-item input { position: absolute; width: 0; height: 0; opacity: 0; }
+      .${APP}__coin-like i { width: 16px; height: 16px; box-sizing: border-box; margin-right: 5px; border: 1px solid #ccd0d6; border-radius: 2px; background: var(--bg1, #fff); }
+      .${APP}__coin-like input:checked + i { border-color: var(--brand_blue, #00aeec); background: var(--brand_blue, #00aeec); box-shadow: inset 0 0 0 3px var(--bg1, #fff); }
+      .${APP}__coin-bottom { padding: 25px 0; text-align: center; }
+      .${APP}__coin-submit { width: 128px; height: 32px; margin-top: 24px; border: 1px solid #00a1d6; border-radius: 4px; color: #fff; background: #00a1d6; font-size: 14px; cursor: pointer; }
+      .${APP}__coin-submit:hover:not(:disabled) { background: #00b5e5; border-color: #00b5e5; }
+      .${APP}__coin-submit:disabled { cursor: wait; opacity: 0.55; }
+      .${APP}__coin-tips { margin: 12px 0 0; color: var(--text3, #9499a0); font-size: 12px; }
+      .${APP}__favorite-dialog { background: rgba(0, 0, 0, 0.8); }
+      .${APP}__favorite-panel { width: min(420px, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 0; overflow: hidden; border-radius: 4px; background: var(--bg1_float, var(--bg1, #fff)); outline: none; }
+      .${APP}__favorite-header { position: relative; height: 50px; margin: 0; padding: 0 20px; border-bottom: 1px solid var(--line_regular, #e3e5e7); color: var(--text1, #18191c); font: 400 16px/50px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: center; }
+      .${APP}__favorite-header .${APP}__dialog-close { top: 13px; right: 20px; }
+      .${APP}__favorite-content { height: 300px; box-sizing: border-box; padding: 0 36px; overflow-y: auto; }
+      .${APP}__favorite-list { position: relative; min-height: 210px; max-height: none; margin-top: 24px; overflow: visible; }
+      .${APP}__favorite-item { min-height: 20px; padding-bottom: 24px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto auto; align-items: center; gap: 0; color: var(--text1, #18191c); font-size: 14px; cursor: pointer; }
+      .${APP}__favorite-item > i { width: 20px; height: 20px; margin-right: 18px; background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAMZJREFUOBFjZACCY8cuSP/4+6ebkYHB4T8DgyRIjFgA1PMcqOcABzNLqZWVwVNGkGE///45w8DANIGZ898iOxOT58QaBlJ36MwZyb/fmeIYGP4VsDOzmDDuO3xmGSMD00VHW6NOUgxCV7v/8Lny/wz/9JlA3gS5DF0BqXyQGSCzGIAuBAYBdQDILCbqGIUwZdRARFiQyxoNQ3JDDqFvCIQhqDwDFUEIR5PHApkBMosJVDhCyjPyDILpApkBMov6BSzIBmpWAQCEVFxRmF8CTgAAAABJRU5ErkJggg==") center/20px 20px no-repeat; }
+      .${APP}__favorite-item input:checked + i { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAeJJREFUOBGtlEsvA1EUx/932ppqGtUKiVdFRaQSsbITQYsFiS9g5RvYdG/rWxCJWEpIvFmIjYV0UxKPaIkmNFUqqi/j3Dud1nikU9xF5/bO/f/OOf879zDwsXjWgnxuDgyDUJRGsWb0h7EoFOzDZA5gqvOGqbBskPQuo4wf9sVhsvRKIrO/w3gMF2dJoswfQla8TJZJFXtWiNJTK2PG60K9bCrFJf/NpX/GZ/5GG1aHWyGbJPQ4ZUwfRotiqTgzOOlvqMbKkArjkng6r1NWBOyrs2KNMrOZVdlRLIXZYOx3wF4qbcPvRk2V6lkw/oqx7QiSubfKgV5HFbZG3HAWDuAkkcbIVgQPGT2Mk3Uld5PwdNKDdV9r8fQ67BZsE6zeqp7fRTIDP8HuP3mnpakDjrfY0eWQMdZsFxnxMndG29Bks4j9kecsfJth3KZymv7Lk2E+pGirHsrmeKK96JOiKGCMidfRlywGNsI4T2a17d8+dRleUgbju9d4KRitwWKvOVFmORiPoAPyhYO7FCb3rpHOq4YnMnlxAKHHDH9dduhK/ribX60J8nT56gk8c6ODYeHk9rf3+UsQ6o3UHKg5/tcgliQ6LV3Jf2BSgzUHJN62eacF2BJ9I6W2YTSC0JCWM4j1DpU/mpmyFApZAAAAAElFTkSuQmCC"); }
+      .${APP}__favorite-item:hover { color: var(--brand_blue, #00aeec); }
+      .${APP}__favorite-item.${APP}--disabled { color: var(--text3, #9499a0); cursor: default; }
+      .${APP}__favorite-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .${APP}__favorite-private { margin-left: 4px; color: var(--text3, #9499a0); }
+      .${APP}__favorite-count { margin-left: 8px; color: var(--text2, #61666d); font-size: 12px; }
+      .${APP}__favorite-list-mask { position: absolute; inset: 0; opacity: 0.5; background: var(--bg1_float, var(--bg1, #fff)); }
+      .${APP}__favorite-create { width: 100%; margin: 0 0 5px; }
+      .${APP}__favorite-create-start { width: 100%; height: 34px; padding: 0 34px; border: 1px solid var(--text3, #9499a0); border-radius: 4px; color: var(--text2, #61666d); background: var(--bg1_float, var(--bg1, #fff)) url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAOCAYAAAAfSC3RAAAAAXNSR0IArs4c6QAAAC5JREFUKBVjYMABZi5a9R+EcUgzMOGSICQ+EjQy4gs5fAFEduDgNHQ0HhnIT6sAudAOjNLnY/wAAAAASUVORK5CYII=") 10px center/14px 14px no-repeat; font-size: 12px; text-align: left; cursor: pointer; }
+      .${APP}__favorite-create-start:hover { border-color: var(--brand_blue, #00aeec); }
+      .${APP}__favorite-create:has(input) { height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) 90px; border: 1px solid var(--brand_blue, #00aeec); border-radius: 4px; }
+      .${APP}__favorite-create input { width: auto; height: 34px; margin: 0; padding: 0 10px; border: 0; color: var(--text1, #18191c); background: transparent; font-size: 12px; outline: none; }
+      .${APP}__favorite-create button:not(.${APP}__favorite-create-start) { width: 90px; height: 34px; padding: 0; border: 0; border-left: 1px solid var(--brand_blue, #00aeec); border-radius: 0 4px 4px 0; color: var(--brand_blue, #00aeec); background: #d9f1f9; font-size: 14px; cursor: pointer; }
+      .${APP}__favorite-footer { height: 76px; margin: 0 36px; display: block; border-top: 1px solid var(--line_regular, #e3e5e7); text-align: center; }
+      .${APP}__favorite-footer .${APP}__favorite-save { width: 160px; height: 40px; margin-top: 18px; border: 0; border-radius: 4px; color: #fff; background: var(--brand_blue, #00aeec); font-size: 14px; cursor: pointer; }
+      .${APP}__favorite-footer .${APP}__favorite-save:disabled { color: var(--text3, #9499a0); background: var(--graph_bg_thick, #e3e5e7); cursor: default; }
+      @keyframes ${APP}-coin-run { to { transform: translate3d(-2767px, 0, 0); } }
+      @keyframes ${APP}-triple-progress {
+        to { stroke-dashoffset: 0; }
+      }
+      @keyframes ${APP}-triple-shake {
+        from { transform: rotate(-5deg) scale(1.04); }
+        to { transform: rotate(5deg) scale(1.04); }
       }
       .${APP}__video-intro-follow {
         position: relative;
@@ -5063,12 +6330,38 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         font: 600 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       .${APP}__video-intro-desc-text {
-        max-height: 144px;
-        overflow: auto;
+        display: -webkit-box;
+        max-height: 80px;
+        overflow: hidden;
         color: var(--text2, #61666d);
         font: 400 13px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 4;
+      }
+      .${APP}__video-intro-desc.${APP}--expanded .${APP}__video-intro-desc-text {
+        display: block;
+        max-height: none;
+        overflow: visible;
+        -webkit-line-clamp: unset;
+      }
+      .${APP}__video-intro-desc-toggle,
+      .${APP}__video-intro-owner-toggle {
+        margin: 5px 0 0;
+        padding: 0;
+        border: 0;
+        color: var(--brand_blue, #00aeec);
+        background: transparent;
+        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      .${APP}__video-intro-desc-toggle:hover,
+      .${APP}__video-intro-desc-toggle:focus-visible,
+      .${APP}__video-intro-owner-toggle:hover,
+      .${APP}__video-intro-owner-toggle:focus-visible {
+        color: var(--brand_pink, #fb7299);
+        outline: none;
       }
       .${APP}__playlist {
         display: grid;
@@ -6959,9 +8252,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     mount,
     bootstrap,
     followBusy = false,
-    onFollow
+    onFollow,
+    actions = null,
+    onAction
   }) {
     if (!mount) return;
+    cleanupFavoriteDialog(targetDocument);
     const info = getVideoIntroInfo(bootstrap);
     mount.textContent = '';
     mount.hidden = !info.owner.mid && !info.description;
@@ -6992,12 +8288,44 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     meta.className = `${APP}__video-intro-meta`;
     meta.textContent = info.meta.join(' · ');
     main.appendChild(meta);
+    const body = targetDocument.createElement('div');
+    body.className = `${APP}__video-intro-body`;
+    if (info.details.length) {
+      const details = targetDocument.createElement('div');
+      details.className = `${APP}__video-intro-details`;
+      info.details.forEach(item => {
+        const detail = targetDocument.createElement('span');
+        detail.className = `${APP}__video-intro-detail`;
+        detail.title = item.label;
+        detail.textContent = item.value;
+        details.appendChild(detail);
+      });
+      body.appendChild(details);
+    }
     if (info.owner.sign) {
+      const ownerDescription = targetDocument.createElement('div');
+      ownerDescription.className = `${APP}__video-intro-owner-description`;
       const sign = targetDocument.createElement('div');
       sign.className = `${APP}__video-intro-owner-desc`;
       sign.textContent = info.owner.sign;
-      main.appendChild(sign);
+      const toggle = targetDocument.createElement('button');
+      toggle.type = 'button';
+      toggle.className = `${APP}__video-intro-owner-toggle`;
+      toggle.textContent = '展开';
+      toggle.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.addEventListener('click', () => {
+        const expanded = ownerDescription.classList.toggle(`${APP}--expanded`);
+        toggle.textContent = expanded ? '收起' : '展开';
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      });
+      ownerDescription.append(sign, toggle);
+      body.appendChild(ownerDescription);
+      targetDocument.defaultView?.requestAnimationFrame?.(() => {
+        toggle.hidden = sign.scrollHeight <= sign.clientHeight + 1;
+      });
     }
+    if (actions) body.appendChild(renderPlaybackActions(targetDocument, actions, onAction));
     up.appendChild(main);
     if (info.owner.mid) {
       const follow = targetDocument.createElement('button');
@@ -7018,6 +8346,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       up.appendChild(follow);
     }
     mount.appendChild(up);
+    if (body.childNodes.length) mount.appendChild(body);
     if (info.description) {
       const description = targetDocument.createElement('div');
       description.className = `${APP}__video-intro-desc`;
@@ -7027,10 +8356,431 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const text = targetDocument.createElement('div');
       text.className = `${APP}__video-intro-desc-text`;
       text.textContent = info.description;
-      description.append(title, text);
+      const toggle = targetDocument.createElement('button');
+      toggle.type = 'button';
+      toggle.className = `${APP}__video-intro-desc-toggle`;
+      toggle.textContent = '展开';
+      toggle.hidden = true;
+      toggle.addEventListener('click', () => {
+        const expanded = description.classList.toggle(`${APP}--expanded`);
+        toggle.textContent = expanded ? '收起' : '展开';
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      });
+      description.append(title, text, toggle);
       mount.appendChild(description);
+      const checkOverflow = () => {
+        toggle.hidden = text.scrollHeight <= text.clientHeight + 1;
+        toggle.setAttribute('aria-expanded', 'false');
+      };
+      targetDocument.defaultView?.requestAnimationFrame?.(checkOverflow);
     }
   }
+  function renderPlaybackActions(targetDocument, actions, onAction) {
+    const section = targetDocument.createElement('div');
+    section.className = `${APP}__video-actions`;
+    const row = targetDocument.createElement('div');
+    row.className = `${APP}__video-actions-row`;
+    const like = createActionButton(targetDocument, {
+      active: actions.liked,
+      disabled: actions.busy,
+      icon: 'like',
+      label: actions.liked ? '已点赞' : '点赞'
+    });
+    like.title = `${like.title}（长按三连）`;
+    like.setAttribute('aria-label', `${like.getAttribute('aria-label')}，长按三连`);
+    bindLongPress(like, row, () => onAction?.('like'), () => onAction?.('triple'));
+    const coin = createActionButton(targetDocument, {
+      active: Number(actions.coin) > 0,
+      disabled: actions.busy,
+      icon: 'coin',
+      label: Number(actions.coin) > 0 ? `已投 ${actions.coin} 币` : '投币',
+      onClick: () => onAction?.('coin')
+    });
+    coin.appendChild(createLongPressRing(targetDocument));
+    const favorite = createActionButton(targetDocument, {
+      active: actions.favorite,
+      disabled: actions.busy,
+      icon: 'favorite',
+      label: actions.favorite ? '已收藏' : '收藏',
+      onClick: () => onAction?.('favorite')
+    });
+    favorite.appendChild(createLongPressRing(targetDocument));
+    row.append(like, coin, favorite);
+    section.appendChild(row);
+    if (actions.coinOpen) mountCoinDialog(targetDocument, actions, onAction);else if (actions.folderOpen) mountFavoriteDialog(targetDocument, actions, onAction);
+    return section;
+  }
+  function mountCoinDialog(targetDocument, actions, onAction) {
+    const mask = createDialogMask(targetDocument, `${APP}__coin-dialog`, 'close-coin', actions, onAction);
+    const panel = targetDocument.createElement('div');
+    panel.className = `${APP}__coin-panel`;
+    setDialogAttributes(panel, '投币');
+    panel.appendChild(createDialogClose(targetDocument, actions.busy, () => onAction?.('close-coin')));
+    const title = targetDocument.createElement('div');
+    title.className = `${APP}__coin-title`;
+    title.append('给UP主投上 ');
+    const count = targetDocument.createElement('span');
+    count.textContent = String(actions.coinSelected || 1);
+    title.append(count, ' 枚硬币');
+    panel.appendChild(title);
+    const choices = targetDocument.createElement('div');
+    choices.className = `${APP}__coin-choices`;
+    choices.appendChild(createCoinChoice(targetDocument, 1, actions.coinSelected === 1, onAction));
+    if (Number(actions.coinRemaining) > 1) {
+      choices.appendChild(createCoinChoice(targetDocument, 2, actions.coinSelected === 2, onAction));
+    }
+    panel.appendChild(choices);
+    const likeLabel = targetDocument.createElement('label');
+    likeLabel.className = `${APP}__coin-like`;
+    likeLabel.classList.toggle(`${APP}--single`, !actions.coinOriginal);
+    const likeCheckbox = targetDocument.createElement('input');
+    likeCheckbox.type = 'checkbox';
+    likeCheckbox.checked = Boolean(actions.coinAlsoLike);
+    likeCheckbox.disabled = actions.busy;
+    likeCheckbox.addEventListener('change', () => onAction?.('toggle-coin-like', {
+      checked: likeCheckbox.checked
+    }));
+    const likeMark = targetDocument.createElement('i');
+    likeLabel.append(likeCheckbox, likeMark, '同时点赞内容');
+    panel.appendChild(likeLabel);
+    const bottom = targetDocument.createElement('div');
+    bottom.className = `${APP}__coin-bottom`;
+    const submit = targetDocument.createElement('button');
+    submit.type = 'button';
+    submit.className = `${APP}__coin-submit`;
+    submit.disabled = actions.busy;
+    submit.textContent = actions.busy ? '处理中…' : '确定';
+    submit.addEventListener('click', () => onAction?.('confirm-coin'));
+    const tips = targetDocument.createElement('p');
+    tips.className = `${APP}__coin-tips`;
+    const exp = Math.max(0, Number(actions.coinExp || 0));
+    tips.textContent = exp < 50 ? `经验值+${10 * Number(actions.coinSelected || 1)}（今日${exp}/50）` : '今日投币+50经验成就 get√ 赞！';
+    bottom.append(submit, tips);
+    panel.appendChild(bottom);
+    finishDialogMount(targetDocument, mask, panel, 'close-coin', actions, onAction);
+  }
+  function createCoinChoice(targetDocument, value, selected, onAction) {
+    const choice = targetDocument.createElement('button');
+    choice.type = 'button';
+    choice.className = `${APP}__coin-choice ${APP}__coin-choice--${value}`;
+    choice.classList.toggle(`${APP}--selected`, selected);
+    choice.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    choice.addEventListener('click', () => onAction?.('set-coin-count', {
+      value
+    }));
+    const animation = targetDocument.createElement('span');
+    animation.className = `${APP}__coin-animation`;
+    const image = targetDocument.createElement('img');
+    image.alt = '';
+    image.src = value === 2 ? 'https://i0.hdslb.com/bfs/static/jinkela/video/asserts/33-coin-ani.png' : 'https://i0.hdslb.com/bfs/static/jinkela/video/asserts/22-coin-ani.png';
+    animation.appendChild(image);
+    const label = targetDocument.createElement('span');
+    label.className = `${APP}__coin-choice-label`;
+    label.textContent = `${value}硬币`;
+    choice.append(animation, label);
+    return choice;
+  }
+  function mountFavoriteDialog(targetDocument, actions, onAction) {
+    const mask = createDialogMask(targetDocument, `${APP}__favorite-dialog`, 'close-favorite', actions, onAction);
+    const panel = targetDocument.createElement('div');
+    panel.className = `${APP}__favorite-panel`;
+    setDialogAttributes(panel, '添加到收藏夹');
+    const header = targetDocument.createElement('div');
+    header.className = `${APP}__favorite-header`;
+    header.textContent = '添加到收藏夹';
+    header.appendChild(createDialogClose(targetDocument, actions.busy, () => onAction?.('close-favorite')));
+    panel.appendChild(header);
+    const content = targetDocument.createElement('div');
+    content.className = `${APP}__favorite-content`;
+    const list = targetDocument.createElement('div');
+    list.className = `${APP}__favorite-list`;
+    const selected = new Set((actions.folderDraftIds || []).map(Number));
+    const original = new Set((actions.folderOriginalIds || []).map(Number));
+    if (actions.folderLoading) {
+      list.appendChild(createDialogMessage(targetDocument, '收藏夹加载中…'));
+    } else if (!actions.folders?.length) {
+      list.appendChild(createDialogMessage(targetDocument, actions.folderError || '暂无可用收藏夹'));
+    } else {
+      actions.folders.forEach(folder => {
+        const id = Number(folder.id);
+        const attr = Number(folder.attr || 0);
+        const isPrivate = Boolean(attr & 1);
+        const isDefault = (attr >> 1 & 1) === 0;
+        const mediaCount = Number(folder.media_count ?? folder.mediaCount ?? 0);
+        const maxCount = Number(folder.max_count || (isDefault ? 50000 : 1000));
+        const full = mediaCount >= maxCount && !original.has(id);
+        const item = targetDocument.createElement('label');
+        item.className = `${APP}__favorite-item`;
+        item.classList.toggle(`${APP}--disabled`, full);
+        const checkbox = targetDocument.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selected.has(id);
+        checkbox.disabled = actions.busy || full || actions.folderAdding;
+        checkbox.addEventListener('change', () => onAction?.('toggle-folder', {
+          checked: checkbox.checked,
+          id
+        }));
+        const mark = targetDocument.createElement('i');
+        const name = targetDocument.createElement('span');
+        name.className = `${APP}__favorite-name`;
+        name.title = folder.title || '';
+        name.textContent = folder.title || '未命名收藏夹';
+        item.append(checkbox, mark, name);
+        if (isPrivate) {
+          const privacy = targetDocument.createElement('span');
+          privacy.className = `${APP}__favorite-private`;
+          privacy.textContent = '[私密]';
+          item.appendChild(privacy);
+        }
+        const count = targetDocument.createElement('span');
+        count.className = `${APP}__favorite-count`;
+        const pendingCount = mediaCount + (selected.has(id) ? 1 : 0) - (original.has(id) ? 1 : 0);
+        count.textContent = isDefault ? String(pendingCount) : `${pendingCount}/1000`;
+        item.appendChild(count);
+        list.appendChild(item);
+      });
+    }
+    if (actions.folderAdding) {
+      const listMask = targetDocument.createElement('div');
+      listMask.className = `${APP}__favorite-list-mask`;
+      list.appendChild(listMask);
+    }
+    content.appendChild(list);
+    content.appendChild(createFavoriteNewFolder(targetDocument, actions, onAction));
+    if (actions.folderError && actions.folders?.length) {
+      content.appendChild(createDialogMessage(targetDocument, actions.folderError, true));
+    }
+    panel.appendChild(content);
+    const footer = targetDocument.createElement('div');
+    footer.className = `${APP}__favorite-footer`;
+    const submit = targetDocument.createElement('button');
+    submit.type = 'button';
+    submit.className = `${APP}__favorite-save`;
+    submit.textContent = actions.busy ? '保存中…' : '确定';
+    submit.disabled = actions.busy || actions.folderLoading || actions.folderAdding || !actions.folderDirty;
+    submit.addEventListener('click', () => onAction?.('save-favorite'));
+    footer.appendChild(submit);
+    panel.appendChild(footer);
+    finishDialogMount(targetDocument, mask, panel, 'close-favorite', actions, onAction);
+  }
+  function createFavoriteNewFolder(targetDocument, actions, onAction) {
+    const wrap = targetDocument.createElement('div');
+    wrap.className = `${APP}__favorite-create`;
+    if (!actions.folderAdding) {
+      const start = targetDocument.createElement('button');
+      start.type = 'button';
+      start.className = `${APP}__favorite-create-start`;
+      start.textContent = '新建收藏夹';
+      start.disabled = actions.busy;
+      start.addEventListener('click', () => onAction?.('start-create-folder'));
+      wrap.appendChild(start);
+      return wrap;
+    }
+    const input = targetDocument.createElement('input');
+    input.type = 'text';
+    input.autofocus = true;
+    input.maxLength = 20;
+    input.placeholder = '最多可输入20个字';
+    input.value = actions.folderNewTitle || '';
+    input.disabled = actions.busy;
+    const submit = targetDocument.createElement('button');
+    submit.type = 'button';
+    submit.textContent = '新建';
+    submit.disabled = actions.busy || !input.value.trim();
+    input.addEventListener('input', () => {
+      submit.disabled = actions.busy || !input.value.trim();
+      onAction?.('set-folder-title', {
+        value: input.value
+      });
+    });
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onAction?.('cancel-create-folder');
+      } else if (event.key === 'Enter' && input.value.trim()) {
+        event.preventDefault();
+        onAction?.('create-folder');
+      }
+    });
+    input.addEventListener('blur', event => {
+      if (!wrap.contains(event.relatedTarget)) onAction?.('cancel-create-folder');
+    });
+    submit.addEventListener('mousedown', event => event.preventDefault());
+    submit.addEventListener('click', () => onAction?.('create-folder'));
+    wrap.append(input, submit);
+    return wrap;
+  }
+  function createDialogMask(targetDocument, className, closeAction, actions, onAction) {
+    const mask = targetDocument.createElement('div');
+    mask.className = `${APP}__action-dialog ${className}`;
+    mask.addEventListener('mousedown', event => {
+      if (event.target === mask && !actions.busy) onAction?.(closeAction);
+    });
+    return mask;
+  }
+  function setDialogAttributes(panel, label) {
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', label);
+    panel.tabIndex = -1;
+  }
+  function createDialogClose(targetDocument, disabled, onClick) {
+    const close = targetDocument.createElement('button');
+    close.type = 'button';
+    close.className = `${APP}__dialog-close`;
+    close.setAttribute('aria-label', '关闭');
+    close.disabled = Boolean(disabled);
+    close.appendChild(createCloseIcon());
+    close.addEventListener('click', onClick);
+    return close;
+  }
+  function createDialogMessage(targetDocument, message, error = false) {
+    const node = targetDocument.createElement('div');
+    node.className = `${APP}__favorite-message${error ? ` ${APP}--error` : ''}`;
+    node.textContent = message;
+    return node;
+  }
+  function finishDialogMount(targetDocument, mask, panel, closeAction, actions, onAction) {
+    mask.appendChild(panel);
+    const closeOnEscape = event => {
+      if (event.key === 'Escape' && !actions.busy) onAction?.(closeAction);
+    };
+    targetDocument.addEventListener('keydown', closeOnEscape);
+    mask.__biliCleanup = () => targetDocument.removeEventListener('keydown', closeOnEscape);
+    targetDocument.body.appendChild(mask);
+    targetDocument.defaultView?.requestAnimationFrame?.(() => {
+      const input = panel.querySelector(`.${APP}__favorite-create input`);
+      if (input) input.focus();else panel.focus({
+        preventScroll: true
+      });
+    });
+  }
+  function createActionButton(targetDocument, {
+    active,
+    disabled,
+    icon,
+    label,
+    onClick
+  }) {
+    const button = targetDocument.createElement('button');
+    button.type = 'button';
+    button.className = `${APP}__video-action`;
+    button.classList.toggle(`${APP}--active`, Boolean(active));
+    button.disabled = Boolean(disabled);
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.appendChild(createOfficialActionIcon(targetDocument, icon));
+    const text = targetDocument.createElement('span');
+    text.className = `${APP}__video-action-label`;
+    text.textContent = label;
+    button.appendChild(text);
+    if (onClick) button.addEventListener('click', onClick);
+    return button;
+  }
+  function bindLongPress(button, row, onClick, onLongPress) {
+    const thresholdDuration = 800;
+    const chargeDuration = 1500;
+    let thresholdTimer = 0;
+    let chargeTimer = 0;
+    let pointerId = null;
+    let phase = 'idle';
+    let suppressClick = false;
+    const reset = () => {
+      const view = button.ownerDocument.defaultView;
+      if (thresholdTimer) view?.clearTimeout(thresholdTimer);
+      if (chargeTimer) view?.clearTimeout(chargeTimer);
+      thresholdTimer = 0;
+      chargeTimer = 0;
+      phase = 'idle';
+      row.classList.remove(`${APP}--long-pressing`);
+    };
+    button.addEventListener('pointerdown', event => {
+      if (button.disabled || event.button !== 0) return;
+      pointerId = event.pointerId;
+      phase = 'threshold';
+      button.setPointerCapture?.(event.pointerId);
+      thresholdTimer = button.ownerDocument.defaultView?.setTimeout(() => {
+        thresholdTimer = 0;
+        phase = 'charging';
+        row.classList.add(`${APP}--long-pressing`);
+        chargeTimer = button.ownerDocument.defaultView?.setTimeout(() => {
+          chargeTimer = 0;
+          phase = 'triggered';
+          suppressClick = true;
+          row.classList.remove(`${APP}--long-pressing`);
+          onLongPress?.();
+        }, chargeDuration);
+      }, thresholdDuration);
+    });
+    button.addEventListener('pointerup', event => {
+      if (pointerId !== event.pointerId) return;
+      pointerId = null;
+      suppressClick = true;
+      const shortClick = phase === 'threshold';
+      reset();
+      if (shortClick) onClick?.();
+    });
+    for (const eventName of ['pointercancel', 'lostpointercapture']) {
+      button.addEventListener(eventName, () => {
+        pointerId = null;
+        reset();
+      });
+    }
+    button.addEventListener('click', event => {
+      if (suppressClick) {
+        suppressClick = false;
+        event.preventDefault();
+        return;
+      }
+      if (event.detail === 0) onClick?.();
+    });
+  }
+  function createLongPressRing(targetDocument) {
+    const svg = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 42 42');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.classList.add(`${APP}__video-action-ring`);
+    const circle = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', '21');
+    circle.setAttribute('cy', '21');
+    circle.setAttribute('r', '20');
+    svg.appendChild(circle);
+    return svg;
+  }
+  function cleanupFavoriteDialog(targetDocument) {
+    targetDocument.querySelectorAll(`.${APP}__action-dialog`).forEach(dialog => {
+      dialog.__biliCleanup?.();
+      dialog.remove();
+    });
+  }
+  function createOfficialActionIcon(targetDocument, type) {
+    const definition = OFFICIAL_ACTION_ICONS[type] || OFFICIAL_ACTION_ICONS.favorite;
+    const svg = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', definition.viewBox);
+    svg.setAttribute('aria-hidden', 'true');
+    svg.classList.add(`${APP}__video-action-icon`, `${APP}__video-action-icon--${type}`);
+    const path = targetDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill-rule', 'evenodd');
+    path.setAttribute('clip-rule', 'evenodd');
+    path.setAttribute('d', definition.path);
+    path.setAttribute('fill', 'currentColor');
+    svg.appendChild(path);
+    return svg;
+  }
+  const OFFICIAL_ACTION_ICONS = {
+    like: {
+      viewBox: '0 0 36 36',
+      path: 'M9.77234 30.8573V11.7471H7.54573C5.50932 11.7471 3.85742 13.3931 3.85742 15.425V27.1794C3.85742 29.2112 5.50932 30.8573 7.54573 30.8573H9.77234ZM11.9902 30.8573V11.7054C14.9897 10.627 16.6942 7.8853 17.1055 3.33591C17.2666 1.55463 18.9633 0.814421 20.5803 1.59505C22.1847 2.36964 23.243 4.32583 23.243 6.93947C23.243 8.50265 23.0478 10.1054 22.6582 11.7471H29.7324C31.7739 11.7471 33.4289 13.402 33.4289 15.4435C33.4289 15.7416 33.3928 16.0386 33.3215 16.328L30.9883 25.7957C30.2558 28.7683 27.5894 30.8573 24.528 30.8573H11.9911H11.9902Z'
+    },
+    coin: {
+      viewBox: '0 0 28 28',
+      path: 'M14.045 25.5454C7.69377 25.5454 2.54504 20.3967 2.54504 14.0454C2.54504 7.69413 7.69377 2.54541 14.045 2.54541C20.3963 2.54541 25.545 7.69413 25.545 14.0454C25.545 17.0954 24.3334 20.0205 22.1768 22.1771C20.0201 24.3338 17.095 25.5454 14.045 25.5454ZM9.66202 6.81624H18.2761C18.825 6.81624 19.27 7.22183 19.27 7.72216C19.27 8.22248 18.825 8.62807 18.2761 8.62807H14.95V10.2903C17.989 10.4444 20.3766 12.9487 20.3855 15.9916V17.1995C20.3854 17.6997 19.9799 18.1052 19.4796 18.1052C18.9793 18.1052 18.5738 17.6997 18.5737 17.1995V15.9916C18.5667 13.9478 16.9882 12.2535 14.95 12.1022V20.5574C14.95 21.0577 14.5444 21.4633 14.0441 21.4633C13.5437 21.4633 13.1382 21.0577 13.1382 20.5574V12.1022C11.1 12.2535 9.52148 13.9478 9.51448 15.9916V17.1995C9.5144 17.6997 9.10883 18.1052 8.60856 18.1052C8.1083 18.1052 7.70273 17.6997 7.70265 17.1995V15.9916C7.71158 12.9487 10.0992 10.4444 13.1382 10.2903V8.62807H9.66202C9.11309 8.62807 8.66809 8.22248 8.66809 7.72216C8.66809 7.22183 9.11309 6.81624 9.66202 6.81624Z'
+    },
+    favorite: {
+      viewBox: '0 0 28 28',
+      path: 'M19.8071 9.26152C18.7438 9.09915 17.7624 8.36846 17.3534 7.39421L15.4723 3.4972C14.8998 2.1982 13.1004 2.1982 12.4461 3.4972L10.6468 7.39421C10.1561 8.36846 9.25639 9.09915 8.19315 9.26152L3.94016 9.91102C2.63155 10.0734 2.05904 11.6972 3.04049 12.6714L6.23023 15.9189C6.96632 16.6496 7.29348 17.705 7.1299 18.7605L6.39381 23.307C6.14844 24.6872 7.62063 25.6614 8.84745 25.0119L12.4461 23.0634C13.4276 22.4951 14.6544 22.4951 15.6359 23.0634L19.2345 25.0119C20.4614 25.6614 21.8518 24.6872 21.6882 23.307L20.8703 18.7605C20.7051 17.705 21.0339 16.6496 21.77 15.9189L24.9597 12.6714C25.9412 11.6972 25.3687 10.0734 24.06 9.91102L19.8071 9.26152Z'
+    }
+  };
   async function requestFollowUp(mid, follow = true) {
     const normalizedMid = Number(mid);
     if (!Number.isFinite(normalizedMid) || normalizedMid <= 0) throw new Error('缺少 UP 主 mid');
@@ -7066,8 +8816,15 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     if (publishedAt) meta.push(publishedAt);
     const fans = formatCount(owner.fans);
     if (fans) meta.push(`${fans} 粉丝`);
+    const stat = videoData.stat || {};
+    const details = [buildDetail('播放', stat.view), buildDetail('弹幕', stat.danmaku), buildDetail('点赞', stat.like), buildDetail('投币', stat.coin), buildDetail('收藏', stat.favorite)].filter(Boolean);
+    const category = String(videoData.tname || '').trim();
+    if (category) meta.push(category);
+    const pageCount = Number(videoData.videos || videoData.pages?.length || 0);
+    if (pageCount > 1) meta.push(`${pageCount}P`);
     return {
       description,
+      details,
       followed: videoData.req_user?.attention === true || videoData.req_user?.attention === 1 || videoData.req_user?.attention === '1',
       meta,
       owner: {
@@ -7096,8 +8853,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     if (follows) meta.push(`${follows} 追番`);
     const styles = Array.isArray(season.styles) ? season.styles.map(item => String(item?.name || item || '').trim()).filter(Boolean).slice(0, 3).join(' / ') : '';
     if (styles) meta.push(styles);
+    const details = [buildDetail('播放', stat.view ?? stat.views ?? episode.stat?.play), buildDetail('追番', stat.follow ?? stat.favorites), buildDetail('弹幕', stat.danmakus ?? stat.danmaku), buildDetail('评分', season.rating?.score, false)].filter(Boolean);
+    const episodeCount = Array.isArray(season.episodes) ? season.episodes.length : 0;
+    if (episodeCount) meta.push(`${episodeCount} 集`);
     return {
       description,
+      details,
       followed: season.user_status?.follow === 1 || season.user_status?.follow_status === 1,
       meta,
       owner: {
@@ -7108,6 +8869,13 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         sign: String(season.subtitle || season.share_sub_title || '').trim()
       }
     };
+  }
+  function buildDetail(label, value, compact = true) {
+    const formatted = compact ? formatCount(value) : String(value || '').trim();
+    return formatted ? {
+      label,
+      value: `${formatted} ${label}`
+    } : null;
   }
   function getDescriptionText(videoData) {
     const desc = String(videoData?.desc || '').trim();
@@ -7631,14 +9399,11 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (!href) return;
       window.open(href, '_blank', 'noopener,noreferrer');
     }
-    function openOriginalPlaybackPage(href, player) {
-      const nextHref = withPlaybackTime(href, getPlaybackTime(player));
-      console.debug('[bili-popup-player] open original page', {
-        href,
-        nextHref
-      });
-      openOriginalPage(nextHref);
-      pausePlayer(player);
+    function setOriginalLink(ui, href) {
+      if (!ui?.openOriginal) return;
+      const value = String(href || '').trim();
+      ui.openOriginal.dataset.href = value;
+      ui.openOriginal.href = value || '#';
     }
     function withPlaybackTime(href, seconds) {
       if (!href) return '';
@@ -7785,7 +9550,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       bindPlayableLink(element, getLiveCardRoot(element), meta);
     }
     function bindPlayableLink(link, card, meta) {
-      if (!card) return;
+      if (!card || isOwnUiScanTarget(link) || isOwnUiScanTarget(card)) return;
       const existing = state.cardEntries.find(entry => entry.card === card || entry.link === link);
       if (existing) {
         upgradeCardEntry(existing, link, card, meta);
@@ -8183,17 +9948,20 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       ensureControlOverlay();
       const currentOgvKey = getCurrentPageOgvKey();
       [...document.querySelectorAll(getVideoLinkSelector())].sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a))).forEach(link => {
+        if (isOwnUiScanTarget(link)) return;
         const meta = getVideoMetaFromLink(link);
         if (!meta || meta.bvid === getCurrentPageBvid()) return;
         bindLink(link, meta);
       });
       [...document.querySelectorAll(OGV_VIDEO_LINK_SELECTOR)].sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a))).forEach(link => {
+        if (isOwnUiScanTarget(link)) return;
         const meta = getOgvMetaFromLink(link);
         const key = meta?.epId ? `ep${meta.epId}` : meta?.seasonId ? `ss${meta.seasonId}` : '';
         if (!meta || currentOgvKey && key === currentOgvKey) return;
         bindOgvLink(link, meta);
       });
       [...document.querySelectorAll(LIVE_CARD_LINK_SELECTOR)].forEach(link => {
+        if (isOwnUiScanTarget(link)) return;
         const meta = getLiveMetaFromLink(link);
         const currentLive = getCurrentLiveMeta();
         if (!meta || currentLive?.roomId && String(meta.roomId) === String(currentLive.roomId)) return;
@@ -8271,7 +10039,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (mutation.type !== 'attributes') return false;
       const target = mutation.target;
       if (!(target instanceof Element)) return false;
+      if (isOwnUiScanTarget(target)) return false;
       return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], [title], [aria-label]') || target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, .bangumi-card, .season-item, .episode-item, .ep-list-item, .media-card, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bangumi"], [class*="season"], [class*="episode"], [class*="bili-dyn"]');
+    }
+    function isOwnUiScanTarget(element) {
+      if (!(element instanceof Element)) return false;
+      return Boolean(element.closest?.(`#${APP}-overlay, #${HOST_ID}`));
     }
     function isPlaybackPageWebFullscreen() {
       if (!isPlaybackPage() && !isOgvPage()) return false;
@@ -8489,7 +10262,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const preserveRightList = Boolean(meta.fromHistory);
       const ogv = isOgvBootstrap(bootstrap);
       showHomeShell(bootstrap.title || meta.title || meta.bvid);
-      ui.openOriginal.dataset.href = meta.href || bootstrap.href;
+      setOriginalLink(ui, meta.href || bootstrap.href);
       ui.status.textContent = '播放器：继续播放';
       saveLastPlayed(meta, bootstrap);
       recordPlaybackHistory(meta, bootstrap);
@@ -8522,7 +10295,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       showHomeShell(meta.title || meta.bvid, {
         preserveScroll: Boolean(meta.fromPagePart || preserveRightList)
       });
-      ui.openOriginal.dataset.href = meta.href;
+      setOriginalLink(ui, meta.href);
       ui.status.textContent = state.home.player ? '播放页参数：解析中，准备 reload' : '播放页参数：解析中';
       if (ogv) {
         state.home.playlistCards = [];
@@ -8564,7 +10337,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       setOgvListMode('home', ogv);
       syncPlaybackPageMeta('home', bootstrap);
       ui.title.textContent = bootstrap.title || ui.title.textContent;
-      ui.openOriginal.dataset.href = bootstrap.href;
+      setOriginalLink(ui, bootstrap.href);
       ui.status.textContent = ogv ? `OGV 参数：ep=${bootstrap.playerInfo.epId || '-'} aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}` : `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
       if (ogv) {
         state.home.playlistCards = [];
@@ -8590,7 +10363,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
     function prepareLiveHome(meta) {
       const ui = ensureHomeShell();
       showHomeShell(meta.title || `Bilibili 直播 ${meta.roomId}`);
-      ui.openOriginal.dataset.href = meta.href;
+      setOriginalLink(ui, meta.href);
       ui.status.textContent = state.home.player ? '直播参数：解析中，准备换源' : '直播参数：解析中';
       setOgvListMode('home', false);
       setLiveListMode('home', true);
@@ -8609,7 +10382,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       } = context;
       state.home.bootstrap = bootstrap;
       ui.title.textContent = bootstrap.title || ui.title.textContent;
-      ui.openOriginal.dataset.href = bootstrap.href;
+      setOriginalLink(ui, bootstrap.href);
       ui.status.textContent = `直播参数：room=${bootstrap.playerInfo.roomId}`;
       setSelectedLiveKey('home', getPlayableKey(bootstrap.playerInfo));
       renderLiveList('home', '当前页面没有扫到直播卡片');
@@ -8638,7 +10411,6 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         onHistoryNext: () => openPlaybackHistoryOffset(1),
         onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
         onModalResizeStart: startHomeModalResize,
-        onOpenOriginal: href => openOriginalPlaybackPage(href, state.home.player),
         onOpenPip: openCurrentHomeInPip,
         onPlayerControlClick: onHomePlayerControlClick,
         onResetSize: resetHomeModalSize,
@@ -8786,6 +10558,298 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       if (!videoData) return;
       videoData.req_user ||= {};
       videoData.req_user.like = liked ? 1 : 0;
+      if (bootstrap.__biliPopupPlayerNanoActions) bootstrap.__biliPopupPlayerNanoActions.liked = Boolean(liked);
+    }
+    function getPlaybackActionState(bootstrap) {
+      if (!bootstrap) return null;
+      if (bootstrap.__biliPopupPlayerNanoActions) return bootstrap.__biliPopupPlayerNanoActions;
+      const videoData = bootstrap.initialState?.videoData || {};
+      const reqUser = videoData.req_user || {};
+      const ogv = isOgvBootstrap(bootstrap);
+      bootstrap.__biliPopupPlayerNanoActions = {
+        busy: false,
+        coin: Math.max(0, Number(reqUser.coin || 0)),
+        coinAlsoLike: true,
+        coinExp: 0,
+        coinExpLoading: false,
+        coinOpen: false,
+        coinOriginal: !ogv && Number(videoData.copyright) === 1,
+        coinSelected: 1,
+        favorite: isPositiveActionState(reqUser.favorite),
+        folderAdding: false,
+        folderDraftIds: [],
+        folderError: '',
+        folderLoading: false,
+        folderNewTitle: '',
+        folderOpen: false,
+        folderOriginalIds: [],
+        folders: null,
+        liked: isPositiveActionState(reqUser.like),
+        loaded: false,
+        loading: false,
+        ogv
+      };
+      return bootstrap.__biliPopupPlayerNanoActions;
+    }
+    function getPlaybackActionView(bootstrap) {
+      const actionState = getPlaybackActionState(bootstrap);
+      if (!actionState) return null;
+      const coinLimit = actionState.coinOriginal ? 2 : 1;
+      return {
+        ...actionState,
+        coinRemaining: Math.max(0, coinLimit - Number(actionState.coin || 0)),
+        folderDirty: !areIdSetsEqual(actionState.folderOriginalIds, actionState.folderDraftIds),
+        folders: actionState.folders || [],
+        triple: Boolean(actionState.liked && Number(actionState.coin) > 0 && actionState.favorite)
+      };
+    }
+    function areIdSetsEqual(left = [], right = []) {
+      const leftIds = new Set(left.map(Number).filter(Boolean));
+      const rightIds = new Set(right.map(Number).filter(Boolean));
+      return leftIds.size === rightIds.size && [...leftIds].every(id => rightIds.has(id));
+    }
+    async function ensurePlaybackActionState(kind, bootstrap) {
+      const actionState = getPlaybackActionState(bootstrap);
+      const aid = Number(bootstrap?.playerInfo?.aid);
+      if (!actionState || actionState.loaded || actionState.loading || !Number.isFinite(aid) || aid <= 0) return;
+      actionState.loading = true;
+      try {
+        const [payload, ogvCoinInfo] = await Promise.all([fetchArchiveRelation(aid), actionState.ogv ? fetchOgvCoinInfo(bootstrap.playerInfo?.epId).catch(() => null) : Promise.resolve(null)]);
+        if (state[kind]?.bootstrap !== bootstrap) return;
+        const relation = payload?.data || {};
+        actionState.liked = isPositiveActionState(relation.like);
+        actionState.coin = Math.max(0, Number(relation.coin || 0));
+        actionState.favorite = isPositiveActionState(relation.favorite);
+        if (ogvCoinInfo) actionState.coinOriginal = Number(ogvCoinInfo.is_original) === 1;
+        const videoData = bootstrap.initialState?.videoData;
+        if (videoData) {
+          videoData.req_user ||= {};
+          videoData.req_user.like = actionState.liked ? 1 : 0;
+          videoData.req_user.coin = actionState.coin;
+          videoData.req_user.favorite = actionState.favorite ? 1 : 0;
+        }
+        actionState.loaded = true;
+        actionState.folderError = '';
+      } catch (error) {
+        actionState.folderError = error?.message || '操作状态加载失败';
+        actionState.loaded = true;
+      } finally {
+        actionState.loading = false;
+        if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+      }
+    }
+    async function handlePlaybackAction(kind, action, payload = {}) {
+      const slot = state[kind];
+      const bootstrap = slot?.bootstrap;
+      const actionState = getPlaybackActionState(bootstrap);
+      if (!slot || !bootstrap || !actionState || isLiveBootstrap(bootstrap)) return;
+      if (action === 'toggle-folder') {
+        const ids = new Set(actionState.folderDraftIds);
+        if (payload.checked) ids.add(Number(payload.id));else ids.delete(Number(payload.id));
+        actionState.folderDraftIds = [...ids].filter(Boolean);
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'set-folder-title') {
+        actionState.folderNewTitle = String(payload.value || '').slice(0, 20);
+        return;
+      }
+      if (action === 'start-create-folder') {
+        if ((actionState.folders?.length || 0) >= 100) {
+          announcePlaybackAction(kind, '收藏夹个数已达到上限', 'error');
+          return;
+        }
+        actionState.folderAdding = true;
+        actionState.folderNewTitle = '';
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'cancel-create-folder') {
+        actionState.folderAdding = false;
+        actionState.folderNewTitle = '';
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'close-favorite') {
+        actionState.folderOpen = false;
+        actionState.folderAdding = false;
+        actionState.folderError = '';
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'close-coin') {
+        actionState.coinOpen = false;
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'set-coin-count') {
+        actionState.coinSelected = Math.max(1, Math.min(Number(actionState.coinOriginal ? 2 : 1), Number(payload.value) || 1));
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'toggle-coin-like') {
+        actionState.coinAlsoLike = Boolean(payload.checked);
+        syncVideoIntro(kind);
+        return;
+      }
+      if (action === 'favorite') {
+        actionState.folderOpen = !actionState.folderOpen;
+        actionState.coinOpen = false;
+        actionState.folderAdding = false;
+        actionState.folderError = '';
+        syncVideoIntro(kind);
+        if (actionState.folderOpen) await loadFavoriteFolderState(kind, bootstrap, actionState);
+        return;
+      }
+      if (action === 'coin') {
+        const remaining = Math.max(0, (actionState.coinOriginal ? 2 : 1) - Number(actionState.coin || 0));
+        if (remaining <= 0) {
+          announcePlaybackAction(kind, '对本稿件的投币枚数已用完', 'neutral');
+          return;
+        }
+        actionState.folderOpen = false;
+        actionState.coinOpen = true;
+        actionState.coinSelected = remaining;
+        actionState.coinAlsoLike = true;
+        syncVideoIntro(kind);
+        void loadCoinExpState(kind, bootstrap, actionState);
+        return;
+      }
+      if (actionState.busy) return;
+      const aid = Number(bootstrap.playerInfo?.aid);
+      const bvid = bootstrap.playerInfo?.bvid || '';
+      actionState.busy = true;
+      actionState.folderError = '';
+      syncVideoIntro(kind);
+      try {
+        let message = '';
+        if (action === 'like') {
+          const next = !actionState.liked;
+          await requestArchiveLike(aid, next);
+          actionState.liked = next;
+          message = next ? '已点赞' : '已取消点赞';
+        } else if (action === 'confirm-coin') {
+          const remaining = Math.max(0, (actionState.coinOriginal ? 2 : 1) - Number(actionState.coin || 0));
+          const multiply = Math.max(1, Math.min(remaining, Number(actionState.coinSelected) || 1));
+          await requestArchiveCoin(aid, multiply, actionState.coinAlsoLike);
+          actionState.coin += multiply;
+          if (actionState.coinAlsoLike) actionState.liked = true;
+          actionState.coinOpen = false;
+          message = `成功投出 ${multiply} 枚硬币`;
+        } else if (action === 'save-favorite') {
+          await saveFavoriteFolderState(aid, actionState);
+          message = actionState.favorite ? '收藏夹已更新' : '已取消收藏';
+        } else if (action === 'create-folder') {
+          const result = await requestCreateFavoriteFolder(actionState.folderNewTitle);
+          const newId = Number(result?.data?.id || result?.data?.fid || 0);
+          const created = result?.data || {};
+          actionState.folderNewTitle = '';
+          actionState.folderAdding = false;
+          if (newId) actionState.folders = [...(actionState.folders || []), {
+            ...created,
+            id: newId,
+            fav_state: 0,
+            media_count: Number(created.media_count || 0)
+          }];
+          if (newId) actionState.folderDraftIds = [...new Set([...actionState.folderDraftIds, newId])];
+          message = '收藏夹已创建';
+        } else if (action === 'triple') {
+          if (actionState.liked && actionState.coin > 0 && actionState.favorite) {
+            message = '已经三连过了';
+          } else if (actionState.ogv) {
+            const result = await requestOgvTriple(bootstrap.playerInfo?.epId);
+            const triple = result?.data || {};
+            actionState.liked = isPositiveActionState(triple.like) || actionState.liked;
+            actionState.coin = Math.max(actionState.coin, Number(triple.coin_number || (isPositiveActionState(triple.coin) ? 1 : 0)));
+            actionState.favorite = isPositiveActionState(triple.favorite) || actionState.favorite;
+            actionState.folders = null;
+            message = '三连成功';
+          } else {
+            await requestArchiveTriple(aid, bvid);
+            actionState.liked = true;
+            actionState.coin = Math.max(1, actionState.coin);
+            actionState.favorite = true;
+            actionState.folders = null;
+            message = '三连成功';
+          }
+        }
+        syncBootstrapActionState(bootstrap, actionState);
+        syncPlayerExternalState(kind);
+        announcePlaybackAction(kind, message, 'success');
+      } catch (error) {
+        const message = error?.message || '操作失败';
+        actionState.folderError = message;
+        announcePlaybackAction(kind, message, 'error');
+      } finally {
+        actionState.busy = false;
+        if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+      }
+    }
+    async function loadFavoriteFolderState(kind, bootstrap, actionState) {
+      if (actionState.folders || actionState.folderLoading) return;
+      actionState.folderLoading = true;
+      syncVideoIntro(kind);
+      try {
+        const favoriteType = actionState.ogv ? 42 : 2;
+        const folders = await fetchFavoriteFolders(bootstrap.playerInfo?.aid, favoriteType);
+        if (state[kind]?.bootstrap !== bootstrap) return;
+        actionState.folders = [...folders].sort((left, right) => Number(right.fav_state || right.favState || 0) - Number(left.fav_state || left.favState || 0));
+        actionState.folderOriginalIds = folders.filter(folder => folder.fav_state === 1 || folder.favState === 1).map(folder => Number(folder.id));
+        actionState.folderDraftIds = [...actionState.folderOriginalIds];
+        actionState.favorite = actionState.folderOriginalIds.length > 0;
+        actionState.folderError = '';
+      } catch (error) {
+        actionState.folderError = error?.message || '收藏夹加载失败';
+        actionState.folders = [];
+      } finally {
+        actionState.folderLoading = false;
+        if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+      }
+    }
+    async function loadCoinExpState(kind, bootstrap, actionState) {
+      if (actionState.coinExpLoading) return;
+      actionState.coinExpLoading = true;
+      try {
+        actionState.coinExp = await fetchCoinTodayExp();
+      } catch {
+        actionState.coinExp = 0;
+      } finally {
+        actionState.coinExpLoading = false;
+        if (state[kind]?.bootstrap === bootstrap && actionState.coinOpen) syncVideoIntro(kind);
+      }
+    }
+    async function saveFavoriteFolderState(aid, actionState) {
+      const original = new Set(actionState.folderOriginalIds);
+      const draft = new Set(actionState.folderDraftIds);
+      const addIds = [...draft].filter(id => !original.has(id));
+      const removeIds = [...original].filter(id => !draft.has(id));
+      if (addIds.length || removeIds.length) await requestFavoriteFolders(aid, addIds, removeIds, actionState.ogv ? 42 : 2);
+      actionState.folderOriginalIds = [...draft];
+      actionState.favorite = draft.size > 0;
+      actionState.folders = (actionState.folders || []).map(folder => ({
+        ...folder,
+        fav_state: draft.has(Number(folder.id)) ? 1 : 0
+      }));
+      actionState.folderOpen = false;
+    }
+    function syncBootstrapActionState(bootstrap, actionState) {
+      const videoData = bootstrap?.initialState?.videoData;
+      if (!videoData) return;
+      videoData.req_user ||= {};
+      videoData.req_user.like = actionState.liked ? 1 : 0;
+      videoData.req_user.coin = actionState.coin;
+      videoData.req_user.favorite = actionState.favorite ? 1 : 0;
+    }
+    function announcePlaybackAction(kind, message, tone) {
+      if (!message) return;
+      showLikeBurst(kind, message, tone, {
+        icon: false
+      });
+      if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = message;
+      if (kind === 'pip') setPipStatus(message);
+    }
+    function isPositiveActionState(value) {
+      return value === true || value === 1 || value === '1';
     }
     function showLikeBurst(kind, message, tone = 'success', {
       icon = true
@@ -8855,9 +10919,12 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         mount,
         bootstrap: slot.bootstrap,
         followBusy: slot.followBusy,
-        onFollow: (mid, follow) => handleFollowUp(kind, mid, follow)
+        onFollow: (mid, follow) => handleFollowUp(kind, mid, follow),
+        actions: getPlaybackActionView(slot.bootstrap),
+        onAction: (action, payload) => void handlePlaybackAction(kind, action, payload)
       });
       void ensureOwnerProfile(kind, slot.bootstrap);
+      void ensurePlaybackActionState(kind, slot.bootstrap);
     }
     function getVideoIntroDocument(kind) {
       if (kind === 'pip') {
@@ -10779,7 +12846,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         const ui = state.home.ui;
         if (ui) {
           ui.title.textContent = bootstrap.title || meta.title || meta.bvid;
-          ui.openOriginal.dataset.href = bootstrap.href || meta.href;
+          setOriginalLink(ui, bootstrap.href || meta.href);
           ui.status.textContent = `播放器内部换源：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
         }
         updateDebug(buildHomePrimarySetting(bootstrap), bootstrap);

@@ -1219,8 +1219,8 @@ function normalizeStats(stats) {
   if (!stats) return { view: '', danmaku: '' };
   if (typeof stats === 'object') {
     return {
-      view: cleanText(stats.view),
-      danmaku: cleanText(stats.danmaku),
+      view: formatStatValue(stats.view ?? stats.play ?? stats.views),
+      danmaku: formatStatValue(stats.danmaku ?? stats.danmakus),
     };
   }
   const parts = cleanText(stats).split(/\s+/).filter(Boolean);
@@ -1228,6 +1228,13 @@ function normalizeStats(stats) {
     view: parts[0] || '',
     danmaku: parts[1] || '',
   };
+}
+
+function formatStatValue(value) {
+  if (typeof value === 'number' || /^\d+(?:\.\d+)?$/.test(String(value || '').trim())) {
+    return formatCount(value);
+  }
+  return cleanText(value);
 }
 
 function formatCount(value) {

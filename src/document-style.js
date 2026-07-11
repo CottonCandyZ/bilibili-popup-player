@@ -241,6 +241,120 @@ export function installDocumentStyle(targetDocument = document) {
         overflow: visible;
       }
 
+      .${APP}__header-more {
+        position: relative;
+        flex: 0 0 auto;
+      }
+
+      .${APP}__header-more > summary {
+        list-style: none;
+      }
+
+      .${APP}__header-more > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .${APP}__header-more-toggle > span,
+      .${APP}__header-more-toggle > span::before,
+      .${APP}__header-more-toggle > span::after {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .${APP}__header-more-toggle > span {
+        position: relative;
+      }
+
+      .${APP}__header-more-toggle > span::before,
+      .${APP}__header-more-toggle > span::after {
+        content: "";
+        position: absolute;
+        top: 0;
+      }
+
+      .${APP}__header-more-toggle > span::before { left: -6px; }
+      .${APP}__header-more-toggle > span::after { left: 6px; }
+
+      .${APP}__header-more[open] .${APP}__header-more-toggle {
+        color: var(--${APP}-brand);
+        background: var(--${APP}-surface-soft);
+      }
+
+      .${APP}__header-menu {
+        position: absolute;
+        top: calc(100% + 7px);
+        right: 0;
+        z-index: 110;
+        width: 210px;
+        box-sizing: border-box;
+        padding: 7px;
+        border: 1px solid var(--${APP}-border);
+        border-radius: 9px;
+        color: var(--${APP}-text);
+        background: var(--${APP}-surface-elevated);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+      }
+
+      .${APP}__header-menu-label {
+        padding: 7px 8px 4px;
+        color: var(--${APP}-text-muted);
+        font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__header-menu-label:not(:first-child) {
+        margin-top: 4px;
+        border-top: 1px solid var(--${APP}-border);
+      }
+
+      .${APP}__header-menu-item,
+      .${APP}__header-menu-status {
+        width: 100%;
+        min-height: 34px;
+        box-sizing: border-box;
+        padding: 0 8px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        border: 0;
+        border-radius: 6px;
+        color: var(--${APP}-text-subtle);
+        background: transparent;
+        font: 500 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: left;
+      }
+
+      .${APP}__header-menu-item {
+        cursor: pointer;
+      }
+
+      .${APP}__header-menu-item:hover,
+      .${APP}__header-menu-item:focus-visible,
+      .${APP}__header-menu-status:focus-visible {
+        color: var(--${APP}-brand);
+        background: var(--${APP}-surface-soft);
+        outline: none;
+      }
+
+      .${APP}__header-menu-item:disabled,
+      .${APP}__header-menu-item:disabled:hover,
+      .${APP}__header-menu-item:disabled:focus-visible {
+        color: var(--${APP}-text-muted);
+        background: transparent;
+        cursor: default;
+        opacity: 0.45;
+        outline: none;
+      }
+
+      .${APP}__header-menu-item svg,
+      .${APP}__header-menu-status > svg {
+        width: 17px;
+        height: 17px;
+        flex: 0 0 auto;
+        stroke: currentColor;
+      }
+
       .${APP}__auto-play-hint {
         justify-self: end;
         max-width: 0;
@@ -270,6 +384,27 @@ export function installDocumentStyle(targetDocument = document) {
         outline: none;
         opacity: 0.88;
         overflow: visible;
+      }
+
+      .${APP}__header-menu-status.${APP}__gamepad-indicator {
+        width: 100%;
+        height: 34px;
+        display: flex;
+        justify-content: flex-start;
+        opacity: 1;
+      }
+
+      .${APP}__header-menu-status.${APP}__gamepad-indicator::after {
+        left: 20px;
+        right: auto;
+        bottom: 7px;
+        box-shadow: 0 0 0 2px var(--${APP}-surface-elevated);
+      }
+
+      .${APP}__header-menu-status .${APP}__gamepad-popover {
+        top: auto;
+        right: calc(100% + 10px);
+        bottom: 0;
       }
 
       .${APP}__gamepad-indicator[hidden] {
@@ -361,9 +496,36 @@ export function installDocumentStyle(targetDocument = document) {
       #${APP}-title {
         min-width: 0;
         overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--${APP}-text);
         font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .${APP}__header-title-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .${APP}__header-title-external {
+        width: 14px;
+        height: 14px;
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 auto;
+        color: var(--${APP}-text-subtle);
+      }
+
+      .${APP}__header-title-external svg {
+        width: 14px;
+        height: 14px;
+        display: block;
+        stroke: currentColor;
       }
 
       #${APP}-status {
@@ -920,7 +1082,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         display: grid;
         grid-template-columns: 40px minmax(0, 1fr) auto;
         gap: 10px;
-        align-items: center;
+        align-items: start;
         min-width: 0;
       }
 
@@ -960,15 +1122,620 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         white-space: nowrap;
       }
 
+      .${APP}__video-intro-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 8px;
+      }
+
+      .${APP}__video-intro-detail {
+        color: var(--text3, #9499a0);
+        font: 400 11px/16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+      }
+
       .${APP}__video-intro-owner-desc {
         display: -webkit-box;
-        margin-top: 3px;
         overflow: hidden;
         color: var(--text2, #61666d);
         font: 400 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         overflow-wrap: anywhere;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
+      }
+
+      .${APP}__video-intro-body {
+        margin: 7px 0 0 50px;
+      }
+
+      .${APP}__video-intro-owner-description {
+        margin-top: 5px;
+      }
+
+      .${APP}__video-intro-owner-description.${APP}--expanded .${APP}__video-intro-owner-desc {
+        display: block;
+        overflow: visible;
+        -webkit-line-clamp: unset;
+      }
+
+      .${APP}__video-actions {
+        position: relative;
+        margin-top: 10px;
+        margin-left: -50px;
+      }
+
+      .${APP}__video-actions-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+
+      .${APP}__video-action {
+        position: relative;
+        min-width: 0;
+        height: 32px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        overflow: visible;
+        border: 0;
+        color: var(--text2, #61666d);
+        background: transparent;
+        font: 400 13px/32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: nowrap;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .${APP}__video-action-icon {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 auto;
+      }
+
+      .${APP}__video-action-label {
+        color: currentColor;
+      }
+
+      .${APP}__video-action:hover,
+      .${APP}__video-action:focus-visible,
+      .${APP}__video-action.${APP}--active {
+        color: var(--brand_blue, #00aeec);
+        outline: none;
+      }
+
+      .${APP}__video-action-ring {
+        position: absolute;
+        top: 50%;
+        left: -3px;
+        width: 34px;
+        height: 34px;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-50%) rotate(-90deg);
+      }
+
+      .${APP}__video-action-ring circle {
+        fill: none;
+        stroke: var(--brand_blue, #00aeec);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-dasharray: 125.66;
+        stroke-dashoffset: 125.66;
+      }
+
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action-ring {
+        opacity: 1;
+      }
+
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action-ring circle {
+        animation: ${APP}-triple-progress 1.5s linear forwards;
+      }
+
+      .${APP}__video-actions-row.${APP}--long-pressing .${APP}__video-action:first-child .${APP}__video-action-icon {
+        color: var(--brand_blue, #00aeec);
+        animation: ${APP}-triple-shake 0.16s linear infinite alternate;
+      }
+
+      .${APP}__video-action:disabled {
+        cursor: wait;
+        opacity: 0.55;
+      }
+
+      .${APP}__favorite-dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        box-sizing: border-box;
+        background: rgba(0, 0, 0, 0.65);
+      }
+
+      .${APP}__favorite-panel {
+        width: min(420px, calc(100vw - 32px));
+        max-height: min(560px, calc(100vh - 32px));
+        padding: 20px;
+        box-sizing: border-box;
+        overflow: auto;
+        border-radius: 8px;
+        background: var(--bg1, #fff);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+        outline: none;
+      }
+
+      .${APP}__favorite-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .${APP}__favorite-heading {
+        color: var(--text1, #18191c);
+        font: 500 16px/24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__favorite-close {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        color: var(--text3, #9499a0);
+        background: transparent;
+        font: 300 25px/26px Arial, sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-list {
+        max-height: 280px;
+        overflow: auto;
+      }
+
+      .${APP}__favorite-item {
+        min-height: 38px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        color: var(--text2, #61666d);
+        font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-item input {
+        accent-color: var(--brand_pink, #fb7299);
+      }
+
+      .${APP}__favorite-count,
+      .${APP}__favorite-message {
+        color: var(--text3, #9499a0);
+        font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .${APP}__favorite-message.${APP}--error {
+        color: #f05b72;
+      }
+
+      .${APP}__favorite-create {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 7px;
+        margin-top: 8px;
+      }
+
+      .${APP}__favorite-create input {
+        min-width: 0;
+        height: 28px;
+        box-sizing: border-box;
+        padding: 0 8px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text1, #18191c);
+        background: var(--bg1, #fff);
+        outline: none;
+      }
+
+      .${APP}__favorite-create input:focus {
+        border-color: var(--brand_pink, #fb7299);
+      }
+
+      .${APP}__favorite-create button {
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 9px;
+      }
+
+      .${APP}__favorite-footer button {
+        height: 28px;
+        padding: 0 12px;
+        border: 1px solid var(--line_regular, #e3e5e7);
+        border-radius: 5px;
+        color: var(--text2, #61666d);
+        background: var(--bg1, #fff);
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer .${APP}__favorite-save {
+        color: #fff;
+        border-color: var(--brand_blue, #00aeec);
+        background: var(--brand_blue, #00aeec);
+      }
+
+      .${APP}__action-dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+
+      .${APP}__dialog-close {
+        position: absolute;
+        z-index: 2;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border: 0;
+        color: #999;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .${APP}__dialog-close:hover,
+      .${APP}__dialog-close:focus-visible {
+        color: var(--brand_blue, #00aeec);
+        outline: none;
+      }
+
+      .${APP}__dialog-close svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+      }
+
+      .${APP}__coin-dialog { background: rgba(0, 0, 0, 0.5); }
+
+      .${APP}__coin-panel {
+        position: relative;
+        width: min(430px, calc(100vw - 24px));
+        min-height: 422px;
+        box-sizing: border-box;
+        overflow: hidden;
+        border-radius: 4px;
+        background: var(--bg1_float, var(--bg1, #fff));
+        outline: none;
+      }
+
+      .${APP}__coin-panel > .${APP}__dialog-close {
+        top: 12px;
+        right: 12px;
+      }
+
+      .${APP}__coin-title {
+        margin-top: 24px;
+        color: var(--text1, #18191c);
+        font-size: 16px;
+        text-align: center;
+      }
+
+      .${APP}__coin-title span {
+        color: var(--brand_blue, #00aeec);
+        font-size: 30px;
+      }
+
+      .${APP}__coin-choices {
+        display: flex;
+        justify-content: center;
+        gap: 30px;
+        margin-top: 35px;
+      }
+
+      .${APP}__coin-choice {
+        position: relative;
+        width: 160px;
+        height: 230px;
+        padding: 0;
+        overflow: hidden;
+        border: 2px dashed #ccd0d6;
+        border-radius: 5px;
+        background-color: transparent;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: 120px;
+        cursor: pointer;
+      }
+
+      .${APP}__coin-choice--1 { background-image: url("https://i0.hdslb.com/bfs/static/jinkela/video/asserts/22-coin.png"); }
+      .${APP}__coin-choice--2 { background-image: url("https://i0.hdslb.com/bfs/static/jinkela/video/asserts/33-coin.png"); }
+
+      .${APP}__coin-choice:hover,
+      .${APP}__coin-choice:focus-visible,
+      .${APP}__coin-choice.${APP}--selected {
+        border-color: #02a0d8;
+        outline: none;
+      }
+
+      .${APP}__coin-choice.${APP}--selected {
+        border-style: solid;
+        background-image: none;
+      }
+
+      .${APP}__coin-choice-label {
+        position: absolute;
+        top: 0;
+        left: 15px;
+        color: var(--text3, #9499a0);
+        font-size: 14px;
+        line-height: 40px;
+      }
+
+      .${APP}__coin-choice.${APP}--selected .${APP}__coin-choice-label { color: var(--brand_blue, #00aeec); }
+
+      .${APP}__coin-animation {
+        width: 120px;
+        height: 206px;
+        display: block;
+        overflow: hidden;
+        margin: 0 auto;
+      }
+
+      .${APP}__coin-animation img {
+        max-width: none;
+        height: 193px;
+        margin-top: 19px;
+        opacity: 0;
+      }
+
+      .${APP}__coin-choice.${APP}--selected .${APP}__coin-animation img {
+        opacity: 1;
+        animation: ${APP}-coin-run 2s steps(23) infinite;
+      }
+
+      .${APP}__coin-like {
+        margin: 12px 0 0 37px;
+        display: flex;
+        align-items: center;
+        color: var(--text1, #18191c);
+        font-size: 12px;
+        line-height: 16px;
+        cursor: pointer;
+      }
+
+      .${APP}__coin-like.${APP}--single { margin-left: 135px; }
+
+      .${APP}__coin-like input,
+      .${APP}__favorite-item input {
+        position: absolute;
+        width: 0;
+        height: 0;
+        opacity: 0;
+      }
+
+      .${APP}__coin-like i {
+        width: 16px;
+        height: 16px;
+        box-sizing: border-box;
+        margin-right: 5px;
+        border: 1px solid #ccd0d6;
+        border-radius: 2px;
+        background: var(--bg1, #fff);
+      }
+
+      .${APP}__coin-like input:checked + i {
+        border-color: var(--brand_blue, #00aeec);
+        background: var(--brand_blue, #00aeec);
+        box-shadow: inset 0 0 0 3px var(--bg1, #fff);
+      }
+
+      .${APP}__coin-bottom {
+        padding: 25px 0;
+        text-align: center;
+      }
+
+      .${APP}__coin-submit {
+        width: 128px;
+        height: 32px;
+        margin-top: 24px;
+        border: 1px solid #00a1d6;
+        border-radius: 4px;
+        color: #fff;
+        background: #00a1d6;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__coin-submit:hover:not(:disabled) { background: #00b5e5; border-color: #00b5e5; }
+      .${APP}__coin-submit:disabled { cursor: wait; opacity: 0.55; }
+
+      .${APP}__coin-tips {
+        margin: 12px 0 0;
+        color: var(--text3, #9499a0);
+        font-size: 12px;
+      }
+
+      .${APP}__favorite-dialog { background: rgba(0, 0, 0, 0.8); }
+
+      .${APP}__favorite-panel {
+        width: min(420px, calc(100vw - 24px));
+        max-height: calc(100vh - 24px);
+        padding: 0;
+        overflow: hidden;
+        border-radius: 4px;
+        background: var(--bg1_float, var(--bg1, #fff));
+        outline: none;
+      }
+
+      .${APP}__favorite-header {
+        position: relative;
+        height: 50px;
+        margin: 0;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line_regular, #e3e5e7);
+        color: var(--text1, #18191c);
+        font: 400 16px/50px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: center;
+      }
+
+      .${APP}__favorite-header .${APP}__dialog-close { top: 13px; right: 20px; }
+
+      .${APP}__favorite-content {
+        height: 300px;
+        box-sizing: border-box;
+        padding: 0 36px;
+        overflow-y: auto;
+      }
+
+      .${APP}__favorite-list {
+        position: relative;
+        min-height: 210px;
+        max-height: none;
+        margin-top: 24px;
+        overflow: visible;
+      }
+
+      .${APP}__favorite-item {
+        min-height: 20px;
+        padding-bottom: 24px;
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 0;
+        color: var(--text1, #18191c);
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-item > i {
+        width: 20px;
+        height: 20px;
+        margin-right: 18px;
+        background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAMZJREFUOBFjZACCY8cuSP/4+6ebkYHB4T8DgyRIjFgA1PMcqOcABzNLqZWVwVNGkGE///45w8DANIGZ898iOxOT58QaBlJ36MwZyb/fmeIYGP4VsDOzmDDuO3xmGSMD00VHW6NOUgxCV7v/8Lny/wz/9JlA3gS5DF0BqXyQGSCzGIAuBAYBdQDILCbqGIUwZdRARFiQyxoNQ3JDDqFvCIQhqDwDFUEIR5PHApkBMosJVDhCyjPyDILpApkBMov6BSzIBmpWAQCEVFxRmF8CTgAAAABJRU5ErkJggg==") center/20px 20px no-repeat;
+      }
+
+      .${APP}__favorite-item input:checked + i {
+        background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAeJJREFUOBGtlEsvA1EUx/932ppqGtUKiVdFRaQSsbITQYsFiS9g5RvYdG/rWxCJWEpIvFmIjYV0UxKPaIkmNFUqqi/j3Dud1nikU9xF5/bO/f/OOf879zDwsXjWgnxuDgyDUJRGsWb0h7EoFOzDZA5gqvOGqbBskPQuo4wf9sVhsvRKIrO/w3gMF2dJoswfQla8TJZJFXtWiNJTK2PG60K9bCrFJf/NpX/GZ/5GG1aHWyGbJPQ4ZUwfRotiqTgzOOlvqMbKkArjkng6r1NWBOyrs2KNMrOZVdlRLIXZYOx3wF4qbcPvRk2V6lkw/oqx7QiSubfKgV5HFbZG3HAWDuAkkcbIVgQPGT2Mk3Uld5PwdNKDdV9r8fQ67BZsE6zeqp7fRTIDP8HuP3mnpakDjrfY0eWQMdZsFxnxMndG29Bks4j9kecsfJth3KZymv7Lk2E+pGirHsrmeKK96JOiKGCMidfRlywGNsI4T2a17d8+dRleUgbju9d4KRitwWKvOVFmORiPoAPyhYO7FCb3rpHOq4YnMnlxAKHHDH9dduhK/ribX60J8nT56gk8c6ODYeHk9rf3+UsQ6o3UHKg5/tcgliQ6LV3Jf2BSgzUHJN62eacF2BJ9I6W2YTSC0JCWM4j1DpU/mpmyFApZAAAAAElFTkSuQmCC");
+      }
+
+      .${APP}__favorite-item:hover { color: var(--brand_blue, #00aeec); }
+      .${APP}__favorite-item.${APP}--disabled { color: var(--text3, #9499a0); cursor: default; }
+      .${APP}__favorite-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .${APP}__favorite-private { margin-left: 4px; color: var(--text3, #9499a0); }
+      .${APP}__favorite-count { margin-left: 8px; color: var(--text2, #61666d); font-size: 12px; }
+
+      .${APP}__favorite-list-mask {
+        position: absolute;
+        inset: 0;
+        opacity: 0.5;
+        background: var(--bg1_float, var(--bg1, #fff));
+      }
+
+      .${APP}__favorite-create { width: 100%; margin: 0 0 5px; }
+
+      .${APP}__favorite-create-start {
+        width: 100%;
+        height: 34px;
+        padding: 0 34px;
+        border: 1px solid var(--text3, #9499a0);
+        border-radius: 4px;
+        color: var(--text2, #61666d);
+        background: var(--bg1_float, var(--bg1, #fff)) url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAOCAYAAAAfSC3RAAAAAXNSR0IArs4c6QAAAC5JREFUKBVjYMABZi5a9R+EcUgzMOGSICQ+EjQy4gs5fAFEduDgNHQ0HhnIT6sAudAOjNLnY/wAAAAASUVORK5CYII=") 10px center/14px 14px no-repeat;
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-create-start:hover { border-color: var(--brand_blue, #00aeec); }
+
+      .${APP}__favorite-create:has(input) {
+        height: 34px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 90px;
+        border: 1px solid var(--brand_blue, #00aeec);
+        border-radius: 4px;
+      }
+
+      .${APP}__favorite-create input {
+        width: auto;
+        height: 34px;
+        margin: 0;
+        padding: 0 10px;
+        border: 0;
+        color: var(--text1, #18191c);
+        background: transparent;
+        font-size: 12px;
+        outline: none;
+      }
+
+      .${APP}__favorite-create button:not(.${APP}__favorite-create-start) {
+        width: 90px;
+        height: 34px;
+        padding: 0;
+        border: 0;
+        border-left: 1px solid var(--brand_blue, #00aeec);
+        border-radius: 0 4px 4px 0;
+        color: var(--brand_blue, #00aeec);
+        background: #d9f1f9;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer {
+        height: 76px;
+        margin: 0 36px;
+        display: block;
+        border-top: 1px solid var(--line_regular, #e3e5e7);
+        text-align: center;
+      }
+
+      .${APP}__favorite-footer .${APP}__favorite-save {
+        width: 160px;
+        height: 40px;
+        margin-top: 18px;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        background: var(--brand_blue, #00aeec);
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .${APP}__favorite-footer .${APP}__favorite-save:disabled {
+        color: var(--text3, #9499a0);
+        background: var(--graph_bg_thick, #e3e5e7);
+        cursor: default;
+      }
+
+      @keyframes ${APP}-coin-run {
+        to { transform: translate3d(-2767px, 0, 0); }
+      }
+
+      @keyframes ${APP}-triple-progress {
+        to { stroke-dashoffset: 0; }
+      }
+
+      @keyframes ${APP}-triple-shake {
+        from { transform: rotate(-5deg) scale(1.04); }
+        to { transform: rotate(5deg) scale(1.04); }
       }
 
       .${APP}__video-intro-follow {
@@ -1028,12 +1795,41 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       }
 
       .${APP}__video-intro-desc-text {
-        max-height: 144px;
-        overflow: auto;
+        display: -webkit-box;
+        max-height: 80px;
+        overflow: hidden;
         color: var(--text2, #61666d);
         font: 400 13px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 4;
+      }
+
+      .${APP}__video-intro-desc.${APP}--expanded .${APP}__video-intro-desc-text {
+        display: block;
+        max-height: none;
+        overflow: visible;
+        -webkit-line-clamp: unset;
+      }
+
+      .${APP}__video-intro-desc-toggle,
+      .${APP}__video-intro-owner-toggle {
+        margin: 5px 0 0;
+        padding: 0;
+        border: 0;
+        color: var(--brand_blue, #00aeec);
+        background: transparent;
+        font: 500 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      .${APP}__video-intro-desc-toggle:hover,
+      .${APP}__video-intro-desc-toggle:focus-visible,
+      .${APP}__video-intro-owner-toggle:hover,
+      .${APP}__video-intro-owner-toggle:focus-visible {
+        color: var(--brand_pink, #fb7299);
+        outline: none;
       }
 
       .${APP}__playlist {

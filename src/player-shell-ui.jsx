@@ -24,7 +24,6 @@ export function mountHomePlayerPage({
   onFullscreen,
   onHistoryNext,
   onHistoryPrevious,
-  onOpenOriginal,
   onOpenPip,
   onPlayerControlClick,
   supportsPip = true,
@@ -52,7 +51,6 @@ export function mountHomePlayerPage({
       onFullscreen={onFullscreen}
       onHistoryNext={onHistoryNext}
       onHistoryPrevious={onHistoryPrevious}
-      onOpenOriginal={onOpenOriginal}
       onOpenPip={onOpenPip}
       onPlayerControlClick={onPlayerControlClick}
       supportsPip={supportsPip}
@@ -150,7 +148,21 @@ function HomePlayerPage(props) {
               {createHistoryForwardIcon()}
             </button>
           </div>
-          <div id={`${APP}-title`} ref={props.refs('title')} />
+          <a
+            id={`${APP}-title`}
+            ref={(element) => {
+              props.refs('openOriginal')(element);
+            }}
+            href="#"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="在新标签页打开原页面"
+          >
+            <span class={`${APP}__header-title-text`} ref={props.refs('title')} />
+            <span class={`${APP}__header-title-external`} aria-hidden="true">
+              {createExternalLinkIcon()}
+            </span>
+          </a>
           <div id={`${APP}-status`} ref={props.refs('status')} />
           <div class={`${APP}__header-actions`}>
             <span
@@ -159,27 +171,6 @@ function HomePlayerPage(props) {
               role="status"
               aria-live="polite"
             />
-            <span
-              class={`${APP}__gamepad-indicator`}
-              ref={props.refs('gamepadIndicator')}
-              title="手柄未连接"
-              aria-label="手柄未连接"
-              tabIndex={0}
-            >
-              {createGamepadIcon()}
-              <span class={`${APP}__gamepad-popover`} role="tooltip">
-                <span class={`${APP}__gamepad-disabled-hint`}>手柄控制已禁用</span>
-                <span class={`${APP}__gamepad-disconnected-hint`}>手柄未连接</span>
-                <span class={`${APP}__gamepad-disconnected-hint`}>连接后按任意键确认</span>
-                <span class={`${APP}__gamepad-connected-hint`}>A 暂停/播放</span>
-                <span class={`${APP}__gamepad-connected-hint`}>X / B 控制进度</span>
-                <span class={`${APP}__gamepad-connected-hint`}>Y 视频全屏</span>
-                <span class={`${APP}__gamepad-connected-hint`}>Menu 网页内全屏</span>
-                <span class={`${APP}__gamepad-connected-hint`}>LB / RB 循环切换标签</span>
-                <span class={`${APP}__gamepad-connected-hint`}>LT / RT 上一个/下一个</span>
-                <span class={`${APP}__gamepad-connected-hint`}>摇杆上下 滚动列表</span>
-              </span>
-            </span>
             <button
               type="button"
               class={`${APP}__header-button`}
@@ -205,16 +196,6 @@ function HomePlayerPage(props) {
             <button
               type="button"
               class={`${APP}__header-button`}
-              title="打开原播放页"
-              aria-label="打开原播放页"
-              ref={props.refs('openOriginal')}
-              onClick={(event) => props.onOpenOriginal?.(event.currentTarget.dataset.href)}
-            >
-              {createExternalLinkIcon()}
-            </button>
-            <button
-              type="button"
-              class={`${APP}__header-button`}
               title="网页内全屏"
               aria-label="网页内全屏"
               ref={props.refs('fullscreen')}
@@ -222,25 +203,69 @@ function HomePlayerPage(props) {
             >
               {createMaximizeIcon()}
             </button>
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="自动适配视频和评论区"
-              aria-label="自动适配视频和评论区"
-              onClick={() => props.onFitLayout?.()}
-            >
-              {createFitLayoutIcon()}
-            </button>
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="重置窗口尺寸"
-              aria-label="重置窗口尺寸"
-              ref={props.refs('resetSize')}
-              onClick={() => props.onResetSize?.()}
-            >
-              {createResetSizeIcon()}
-            </button>
+            <details class={`${APP}__header-more`}>
+              <summary
+                class={`${APP}__header-button ${APP}__header-more-toggle`}
+                title="更多操作"
+                aria-label="更多操作"
+                aria-haspopup="menu"
+                role="button"
+              >
+                <span aria-hidden="true" />
+              </summary>
+              <div class={`${APP}__header-menu`} role="menu">
+                <div class={`${APP}__header-menu-label`}>窗口布局</div>
+                <button
+                  type="button"
+                  class={`${APP}__header-menu-item`}
+                  role="menuitem"
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                    props.onFitLayout?.();
+                  }}
+                >
+                  {createFitLayoutIcon()}
+                  <span>自动适配布局</span>
+                </button>
+                <button
+                  type="button"
+                  class={`${APP}__header-menu-item`}
+                  role="menuitem"
+                  ref={props.refs('resetSize')}
+                  disabled
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                    props.onResetSize?.();
+                  }}
+                >
+                  {createResetSizeIcon()}
+                  <span>重置窗口尺寸</span>
+                </button>
+                <div class={`${APP}__header-menu-label`}>控制器</div>
+                <span
+                  class={`${APP}__header-menu-status ${APP}__gamepad-indicator`}
+                  ref={props.refs('gamepadIndicator')}
+                  title="手柄未连接"
+                  aria-label="手柄未连接"
+                  tabIndex={0}
+                >
+                  {createGamepadIcon()}
+                  <span class={`${APP}__gamepad-status-text`}>手柄状态与快捷键</span>
+                  <span class={`${APP}__gamepad-popover`} role="tooltip">
+                    <span class={`${APP}__gamepad-disabled-hint`}>手柄控制已禁用</span>
+                    <span class={`${APP}__gamepad-disconnected-hint`}>手柄未连接</span>
+                    <span class={`${APP}__gamepad-disconnected-hint`}>连接后按任意键确认</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>A 暂停/播放</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>X / B 控制进度</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>Y 视频全屏</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>Menu 网页内全屏</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>LB / RB 循环切换标签</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>LT / RT 上一个/下一个</span>
+                    <span class={`${APP}__gamepad-connected-hint`}>摇杆上下 滚动列表</span>
+                  </span>
+                </span>
+              </div>
+            </details>
             <button
               type="button"
               class={`${APP}__header-button ${APP}__header-button--close`}

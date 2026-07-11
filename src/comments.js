@@ -22,12 +22,14 @@ export async function mountComments(adapter, bootstrap) {
     if (reloadCommentInstance(slot.comments, props)) {
       slot.commentContext = context;
       applyCommentScrollContainer(slot.comments, scrollContainer);
+      installCompactCommentStyles(slot, mount, targetDocument);
       return;
     }
 
     mount.textContent = '';
     slot.comments = mountCommentInstance(CommentCtor, props, mount, targetDocument, scrollContainer);
     slot.commentContext = context;
+    installCompactCommentStyles(slot, mount, targetDocument);
     slot.comments.addEventListener?.('seek', (event) => {
       try {
         const { time } = event.detail || {};
@@ -71,6 +73,56 @@ function applyCommentScrollContainer(instance, scrollContainer) {
   if (element) element.scrollContainer = scrollContainer;
 }
 
+function installCompactCommentStyles(slot, mount, targetDocument) {
+  slot.commentStyleObserver?.disconnect?.();
+  slot.commentStyleWindow?.clearInterval?.(slot.commentStyleTimer);
+  slot.commentStyleWindow = targetDocument.defaultView;
+
+  const apply = () => {
+    const comments = mount.querySelector?.('bili-comments');
+    const root = comments?.shadowRoot;
+    if (!root) return false;
+    if (!root.querySelector(`style[${APP_STYLE_MARKER}]`)) {
+      const style = targetDocument.createElement('style');
+      style.setAttribute(APP_STYLE_MARKER, '');
+      style.textContent = '#spinner-container > #title { display: none !important; }';
+      root.appendChild(style);
+    }
+    const headerRoot = root.querySelector('bili-comments-header-renderer')?.shadowRoot;
+    if (!headerRoot) return false;
+    if (!headerRoot.querySelector(`style[${APP_STYLE_MARKER}]`)) {
+      const style = targetDocument.createElement('style');
+      style.setAttribute(APP_STYLE_MARKER, '');
+      style.textContent = '#title > h2 { display: none !important; }';
+      headerRoot.appendChild(style);
+    }
+    return true;
+  };
+
+  apply();
+  slot.commentStyleObserver = new targetDocument.defaultView.MutationObserver(() => {
+    if (!apply()) return;
+    slot.commentStyleObserver?.disconnect?.();
+    slot.commentStyleObserver = null;
+    targetDocument.defaultView.clearInterval(slot.commentStyleTimer);
+    slot.commentStyleTimer = 0;
+  });
+  slot.commentStyleObserver.observe(mount, { childList: true, subtree: true });
+  const commentsRoot = mount.querySelector?.('bili-comments')?.shadowRoot;
+  if (commentsRoot) slot.commentStyleObserver.observe(commentsRoot, { childList: true, subtree: true });
+  let attempts = 0;
+  slot.commentStyleTimer = targetDocument.defaultView.setInterval(() => {
+    attempts += 1;
+    if (!apply() && attempts < 40) return;
+    targetDocument.defaultView.clearInterval(slot.commentStyleTimer);
+    slot.commentStyleTimer = 0;
+    slot.commentStyleObserver?.disconnect?.();
+    slot.commentStyleObserver = null;
+  }, 250);
+}
+
+const APP_STYLE_MARKER = 'data-bili-popup-player-nano-compact';
+
 function buildCommentProps(bootstrap, scrollContainer) {
   const props = {
     params: bootstrap.commentInfo.params,
@@ -103,13 +155,19 @@ export function disposeCommentInstance(state, kind) {
 
 function disposeMountedComment(slot) {
   const current = slot.comments;
-  if (!current) return;
-  try {
-    current.destroy?.();
-    current.unmount?.();
-  } catch {
-    // Ignore comment cleanup failures.
+  if (current) {
+    try {
+      current.destroy?.();
+      current.unmount?.();
+    } catch {
+      // Ignore comment cleanup failures.
+    }
   }
   slot.comments = null;
   slot.commentContext = '';
+  slot.commentStyleObserver?.disconnect?.();
+  slot.commentStyleObserver = null;
+  slot.commentStyleWindow?.clearInterval?.(slot.commentStyleTimer);
+  slot.commentStyleWindow = null;
+  slot.commentStyleTimer = 0;
 }

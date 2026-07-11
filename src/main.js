@@ -21,7 +21,18 @@ import {
   STORAGE_MODE,
   STYLE_ID,
 } from './constants.js';
-import { requestArchiveLike } from './archive-actions.js';
+import {
+  fetchArchiveRelation,
+  fetchCoinTodayExp,
+  fetchFavoriteFolders,
+  fetchOgvCoinInfo,
+  requestArchiveCoin,
+  requestArchiveLike,
+  requestArchiveTriple,
+  requestCreateFavoriteFolder,
+  requestFavoriteFolders,
+  requestOgvTriple,
+} from './archive-actions.js';
 import { disposeCommentInstance, mountComments } from './comments.js';
 import { createCommentsTabsUi } from './comments-tabs-ui.js';
 import {
@@ -606,11 +617,11 @@ import {
     window.open(href, '_blank', 'noopener,noreferrer');
   }
 
-  function openOriginalPlaybackPage(href, player) {
-    const nextHref = withPlaybackTime(href, getPlaybackTime(player));
-    console.debug('[bili-popup-player] open original page', { href, nextHref });
-    openOriginalPage(nextHref);
-    pausePlayer(player);
+  function setOriginalLink(ui, href) {
+    if (!ui?.openOriginal) return;
+    const value = String(href || '').trim();
+    ui.openOriginal.dataset.href = value;
+    ui.openOriginal.href = value || '#';
   }
 
   function withPlaybackTime(href, seconds) {
@@ -789,7 +800,7 @@ import {
   }
 
   function bindPlayableLink(link, card, meta) {
-    if (!card) return;
+    if (!card || isOwnUiScanTarget(link) || isOwnUiScanTarget(card)) return;
 
     const existing = state.cardEntries.find((entry) => entry.card === card || entry.link === link);
     if (existing) {
@@ -1246,6 +1257,7 @@ import {
     [...document.querySelectorAll(getVideoLinkSelector())]
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
+        if (isOwnUiScanTarget(link)) return;
         const meta = getVideoMetaFromLink(link);
         if (!meta || meta.bvid === getCurrentPageBvid()) return;
         bindLink(link, meta);
@@ -1253,6 +1265,7 @@ import {
     [...document.querySelectorAll(OGV_VIDEO_LINK_SELECTOR)]
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
+        if (isOwnUiScanTarget(link)) return;
         const meta = getOgvMetaFromLink(link);
         const key = meta?.epId ? `ep${meta.epId}` : meta?.seasonId ? `ss${meta.seasonId}` : '';
         if (!meta || (currentOgvKey && key === currentOgvKey)) return;
@@ -1260,6 +1273,7 @@ import {
       });
     [...document.querySelectorAll(LIVE_CARD_LINK_SELECTOR)]
       .forEach((link) => {
+        if (isOwnUiScanTarget(link)) return;
         const meta = getLiveMetaFromLink(link);
         const currentLive = getCurrentLiveMeta();
         if (!meta || (currentLive?.roomId && String(meta.roomId) === String(currentLive.roomId))) return;
@@ -1347,8 +1361,14 @@ import {
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
     if (!(target instanceof Element)) return false;
+    if (isOwnUiScanTarget(target)) return false;
     return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], [title], [aria-label]') ||
       target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, .bangumi-card, .season-item, .episode-item, .ep-list-item, .media-card, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bangumi"], [class*="season"], [class*="episode"], [class*="bili-dyn"]');
+  }
+
+  function isOwnUiScanTarget(element) {
+    if (!(element instanceof Element)) return false;
+    return Boolean(element.closest?.(`#${APP}-overlay, #${HOST_ID}`));
   }
 
   function isPlaybackPageWebFullscreen() {
@@ -1616,7 +1636,7 @@ import {
     const preserveRightList = Boolean(meta.fromHistory);
     const ogv = isOgvBootstrap(bootstrap);
     showHomeShell(bootstrap.title || meta.title || meta.bvid);
-    ui.openOriginal.dataset.href = meta.href || bootstrap.href;
+    setOriginalLink(ui, meta.href || bootstrap.href);
     ui.status.textContent = '播放器：继续播放';
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory(meta, bootstrap);
@@ -1649,7 +1669,7 @@ import {
     const preserveRightList = Boolean(meta.fromHistory);
     const preservePageParts = preserveRightList && isMetaInCurrentPageCards('home', meta);
     showHomeShell(meta.title || meta.bvid, { preserveScroll: Boolean(meta.fromPagePart || preserveRightList) });
-    ui.openOriginal.dataset.href = meta.href;
+    setOriginalLink(ui, meta.href);
     ui.status.textContent = state.home.player ? '播放页参数：解析中，准备 reload' : '播放页参数：解析中';
     if (ogv) {
       state.home.playlistCards = [];
@@ -1687,7 +1707,7 @@ import {
     setOgvListMode('home', ogv);
     syncPlaybackPageMeta('home', bootstrap);
     ui.title.textContent = bootstrap.title || ui.title.textContent;
-    ui.openOriginal.dataset.href = bootstrap.href;
+    setOriginalLink(ui, bootstrap.href);
     ui.status.textContent = ogv
       ? `OGV 参数：ep=${bootstrap.playerInfo.epId || '-'} aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`
       : `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
@@ -1718,7 +1738,7 @@ import {
   function prepareLiveHome(meta) {
     const ui = ensureHomeShell();
     showHomeShell(meta.title || `Bilibili 直播 ${meta.roomId}`);
-    ui.openOriginal.dataset.href = meta.href;
+    setOriginalLink(ui, meta.href);
     ui.status.textContent = state.home.player ? '直播参数：解析中，准备换源' : '直播参数：解析中';
     setOgvListMode('home', false);
     setLiveListMode('home', true);
@@ -1733,7 +1753,7 @@ import {
     const { ui } = context;
     state.home.bootstrap = bootstrap;
     ui.title.textContent = bootstrap.title || ui.title.textContent;
-    ui.openOriginal.dataset.href = bootstrap.href;
+    setOriginalLink(ui, bootstrap.href);
     ui.status.textContent = `直播参数：room=${bootstrap.playerInfo.roomId}`;
     setSelectedLiveKey('home', getPlayableKey(bootstrap.playerInfo));
     renderLiveList('home', '当前页面没有扫到直播卡片');
@@ -1765,7 +1785,6 @@ import {
       onHistoryNext: () => openPlaybackHistoryOffset(1),
       onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
       onModalResizeStart: startHomeModalResize,
-      onOpenOriginal: (href) => openOriginalPlaybackPage(href, state.home.player),
       onOpenPip: openCurrentHomeInPip,
       onPlayerControlClick: onHomePlayerControlClick,
       onResetSize: resetHomeModalSize,
@@ -1923,6 +1942,315 @@ import {
     if (!videoData) return;
     videoData.req_user ||= {};
     videoData.req_user.like = liked ? 1 : 0;
+    if (bootstrap.__biliPopupPlayerNanoActions) bootstrap.__biliPopupPlayerNanoActions.liked = Boolean(liked);
+  }
+
+  function getPlaybackActionState(bootstrap) {
+    if (!bootstrap) return null;
+    if (bootstrap.__biliPopupPlayerNanoActions) return bootstrap.__biliPopupPlayerNanoActions;
+    const videoData = bootstrap.initialState?.videoData || {};
+    const reqUser = videoData.req_user || {};
+    const ogv = isOgvBootstrap(bootstrap);
+    bootstrap.__biliPopupPlayerNanoActions = {
+      busy: false,
+      coin: Math.max(0, Number(reqUser.coin || 0)),
+      coinAlsoLike: true,
+      coinExp: 0,
+      coinExpLoading: false,
+      coinOpen: false,
+      coinOriginal: !ogv && Number(videoData.copyright) === 1,
+      coinSelected: 1,
+      favorite: isPositiveActionState(reqUser.favorite),
+      folderAdding: false,
+      folderDraftIds: [],
+      folderError: '',
+      folderLoading: false,
+      folderNewTitle: '',
+      folderOpen: false,
+      folderOriginalIds: [],
+      folders: null,
+      liked: isPositiveActionState(reqUser.like),
+      loaded: false,
+      loading: false,
+      ogv,
+    };
+    return bootstrap.__biliPopupPlayerNanoActions;
+  }
+
+  function getPlaybackActionView(bootstrap) {
+    const actionState = getPlaybackActionState(bootstrap);
+    if (!actionState) return null;
+    const coinLimit = actionState.coinOriginal ? 2 : 1;
+    return {
+      ...actionState,
+      coinRemaining: Math.max(0, coinLimit - Number(actionState.coin || 0)),
+      folderDirty: !areIdSetsEqual(actionState.folderOriginalIds, actionState.folderDraftIds),
+      folders: actionState.folders || [],
+      triple: Boolean(actionState.liked && Number(actionState.coin) > 0 && actionState.favorite),
+    };
+  }
+
+  function areIdSetsEqual(left = [], right = []) {
+    const leftIds = new Set(left.map(Number).filter(Boolean));
+    const rightIds = new Set(right.map(Number).filter(Boolean));
+    return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
+  }
+
+  async function ensurePlaybackActionState(kind, bootstrap) {
+    const actionState = getPlaybackActionState(bootstrap);
+    const aid = Number(bootstrap?.playerInfo?.aid);
+    if (!actionState || actionState.loaded || actionState.loading || !Number.isFinite(aid) || aid <= 0) return;
+    actionState.loading = true;
+    try {
+      const [payload, ogvCoinInfo] = await Promise.all([
+        fetchArchiveRelation(aid),
+        actionState.ogv
+          ? fetchOgvCoinInfo(bootstrap.playerInfo?.epId).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (state[kind]?.bootstrap !== bootstrap) return;
+      const relation = payload?.data || {};
+      actionState.liked = isPositiveActionState(relation.like);
+      actionState.coin = Math.max(0, Number(relation.coin || 0));
+      actionState.favorite = isPositiveActionState(relation.favorite);
+      if (ogvCoinInfo) actionState.coinOriginal = Number(ogvCoinInfo.is_original) === 1;
+      const videoData = bootstrap.initialState?.videoData;
+      if (videoData) {
+        videoData.req_user ||= {};
+        videoData.req_user.like = actionState.liked ? 1 : 0;
+        videoData.req_user.coin = actionState.coin;
+        videoData.req_user.favorite = actionState.favorite ? 1 : 0;
+      }
+      actionState.loaded = true;
+      actionState.folderError = '';
+    } catch (error) {
+      actionState.folderError = error?.message || '操作状态加载失败';
+      actionState.loaded = true;
+    } finally {
+      actionState.loading = false;
+      if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+    }
+  }
+
+  async function handlePlaybackAction(kind, action, payload = {}) {
+    const slot = state[kind];
+    const bootstrap = slot?.bootstrap;
+    const actionState = getPlaybackActionState(bootstrap);
+    if (!slot || !bootstrap || !actionState || isLiveBootstrap(bootstrap)) return;
+
+    if (action === 'toggle-folder') {
+      const ids = new Set(actionState.folderDraftIds);
+      if (payload.checked) ids.add(Number(payload.id));
+      else ids.delete(Number(payload.id));
+      actionState.folderDraftIds = [...ids].filter(Boolean);
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'set-folder-title') {
+      actionState.folderNewTitle = String(payload.value || '').slice(0, 20);
+      return;
+    }
+    if (action === 'start-create-folder') {
+      if ((actionState.folders?.length || 0) >= 100) {
+        announcePlaybackAction(kind, '收藏夹个数已达到上限', 'error');
+        return;
+      }
+      actionState.folderAdding = true;
+      actionState.folderNewTitle = '';
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'cancel-create-folder') {
+      actionState.folderAdding = false;
+      actionState.folderNewTitle = '';
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'close-favorite') {
+      actionState.folderOpen = false;
+      actionState.folderAdding = false;
+      actionState.folderError = '';
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'close-coin') {
+      actionState.coinOpen = false;
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'set-coin-count') {
+      actionState.coinSelected = Math.max(1, Math.min(Number(actionState.coinOriginal ? 2 : 1), Number(payload.value) || 1));
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'toggle-coin-like') {
+      actionState.coinAlsoLike = Boolean(payload.checked);
+      syncVideoIntro(kind);
+      return;
+    }
+    if (action === 'favorite') {
+      actionState.folderOpen = !actionState.folderOpen;
+      actionState.coinOpen = false;
+      actionState.folderAdding = false;
+      actionState.folderError = '';
+      syncVideoIntro(kind);
+      if (actionState.folderOpen) await loadFavoriteFolderState(kind, bootstrap, actionState);
+      return;
+    }
+    if (action === 'coin') {
+      const remaining = Math.max(0, (actionState.coinOriginal ? 2 : 1) - Number(actionState.coin || 0));
+      if (remaining <= 0) {
+        announcePlaybackAction(kind, '对本稿件的投币枚数已用完', 'neutral');
+        return;
+      }
+      actionState.folderOpen = false;
+      actionState.coinOpen = true;
+      actionState.coinSelected = remaining;
+      actionState.coinAlsoLike = true;
+      syncVideoIntro(kind);
+      void loadCoinExpState(kind, bootstrap, actionState);
+      return;
+    }
+    if (actionState.busy) return;
+
+    const aid = Number(bootstrap.playerInfo?.aid);
+    const bvid = bootstrap.playerInfo?.bvid || '';
+    actionState.busy = true;
+    actionState.folderError = '';
+    syncVideoIntro(kind);
+    try {
+      let message = '';
+      if (action === 'like') {
+        const next = !actionState.liked;
+        await requestArchiveLike(aid, next);
+        actionState.liked = next;
+        message = next ? '已点赞' : '已取消点赞';
+      } else if (action === 'confirm-coin') {
+        const remaining = Math.max(0, (actionState.coinOriginal ? 2 : 1) - Number(actionState.coin || 0));
+        const multiply = Math.max(1, Math.min(remaining, Number(actionState.coinSelected) || 1));
+        await requestArchiveCoin(aid, multiply, actionState.coinAlsoLike);
+        actionState.coin += multiply;
+        if (actionState.coinAlsoLike) actionState.liked = true;
+        actionState.coinOpen = false;
+        message = `成功投出 ${multiply} 枚硬币`;
+      } else if (action === 'save-favorite') {
+        await saveFavoriteFolderState(aid, actionState);
+        message = actionState.favorite ? '收藏夹已更新' : '已取消收藏';
+      } else if (action === 'create-folder') {
+        const result = await requestCreateFavoriteFolder(actionState.folderNewTitle);
+        const newId = Number(result?.data?.id || result?.data?.fid || 0);
+        const created = result?.data || {};
+        actionState.folderNewTitle = '';
+        actionState.folderAdding = false;
+        if (newId) actionState.folders = [...(actionState.folders || []), {
+          ...created,
+          id: newId,
+          fav_state: 0,
+          media_count: Number(created.media_count || 0),
+        }];
+        if (newId) actionState.folderDraftIds = [...new Set([...actionState.folderDraftIds, newId])];
+        message = '收藏夹已创建';
+      } else if (action === 'triple') {
+        if (actionState.liked && actionState.coin > 0 && actionState.favorite) {
+          message = '已经三连过了';
+        } else if (actionState.ogv) {
+          const result = await requestOgvTriple(bootstrap.playerInfo?.epId);
+          const triple = result?.data || {};
+          actionState.liked = isPositiveActionState(triple.like) || actionState.liked;
+          actionState.coin = Math.max(actionState.coin, Number(triple.coin_number || (isPositiveActionState(triple.coin) ? 1 : 0)));
+          actionState.favorite = isPositiveActionState(triple.favorite) || actionState.favorite;
+          actionState.folders = null;
+          message = '三连成功';
+        } else {
+          await requestArchiveTriple(aid, bvid);
+          actionState.liked = true;
+          actionState.coin = Math.max(1, actionState.coin);
+          actionState.favorite = true;
+          actionState.folders = null;
+          message = '三连成功';
+        }
+      }
+      syncBootstrapActionState(bootstrap, actionState);
+      syncPlayerExternalState(kind);
+      announcePlaybackAction(kind, message, 'success');
+    } catch (error) {
+      const message = error?.message || '操作失败';
+      actionState.folderError = message;
+      announcePlaybackAction(kind, message, 'error');
+    } finally {
+      actionState.busy = false;
+      if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+    }
+  }
+
+  async function loadFavoriteFolderState(kind, bootstrap, actionState) {
+    if (actionState.folders || actionState.folderLoading) return;
+    actionState.folderLoading = true;
+    syncVideoIntro(kind);
+    try {
+      const favoriteType = actionState.ogv ? 42 : 2;
+      const folders = await fetchFavoriteFolders(bootstrap.playerInfo?.aid, favoriteType);
+      if (state[kind]?.bootstrap !== bootstrap) return;
+      actionState.folders = [...folders].sort((left, right) => Number(right.fav_state || right.favState || 0) - Number(left.fav_state || left.favState || 0));
+      actionState.folderOriginalIds = folders.filter((folder) => folder.fav_state === 1 || folder.favState === 1).map((folder) => Number(folder.id));
+      actionState.folderDraftIds = [...actionState.folderOriginalIds];
+      actionState.favorite = actionState.folderOriginalIds.length > 0;
+      actionState.folderError = '';
+    } catch (error) {
+      actionState.folderError = error?.message || '收藏夹加载失败';
+      actionState.folders = [];
+    } finally {
+      actionState.folderLoading = false;
+      if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+    }
+  }
+
+  async function loadCoinExpState(kind, bootstrap, actionState) {
+    if (actionState.coinExpLoading) return;
+    actionState.coinExpLoading = true;
+    try {
+      actionState.coinExp = await fetchCoinTodayExp();
+    } catch {
+      actionState.coinExp = 0;
+    } finally {
+      actionState.coinExpLoading = false;
+      if (state[kind]?.bootstrap === bootstrap && actionState.coinOpen) syncVideoIntro(kind);
+    }
+  }
+
+  async function saveFavoriteFolderState(aid, actionState) {
+    const original = new Set(actionState.folderOriginalIds);
+    const draft = new Set(actionState.folderDraftIds);
+    const addIds = [...draft].filter((id) => !original.has(id));
+    const removeIds = [...original].filter((id) => !draft.has(id));
+    if (addIds.length || removeIds.length) await requestFavoriteFolders(aid, addIds, removeIds, actionState.ogv ? 42 : 2);
+    actionState.folderOriginalIds = [...draft];
+    actionState.favorite = draft.size > 0;
+    actionState.folders = (actionState.folders || []).map((folder) => ({
+      ...folder,
+      fav_state: draft.has(Number(folder.id)) ? 1 : 0,
+    }));
+    actionState.folderOpen = false;
+  }
+
+  function syncBootstrapActionState(bootstrap, actionState) {
+    const videoData = bootstrap?.initialState?.videoData;
+    if (!videoData) return;
+    videoData.req_user ||= {};
+    videoData.req_user.like = actionState.liked ? 1 : 0;
+    videoData.req_user.coin = actionState.coin;
+    videoData.req_user.favorite = actionState.favorite ? 1 : 0;
+  }
+
+  function announcePlaybackAction(kind, message, tone) {
+    if (!message) return;
+    showLikeBurst(kind, message, tone, { icon: false });
+    if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = message;
+    if (kind === 'pip') setPipStatus(message);
+  }
+
+  function isPositiveActionState(value) {
+    return value === true || value === 1 || value === '1';
   }
 
   function showLikeBurst(kind, message, tone = 'success', { icon = true } = {}) {
@@ -2006,8 +2334,11 @@ import {
       bootstrap: slot.bootstrap,
       followBusy: slot.followBusy,
       onFollow: (mid, follow) => handleFollowUp(kind, mid, follow),
+      actions: getPlaybackActionView(slot.bootstrap),
+      onAction: (action, payload) => void handlePlaybackAction(kind, action, payload),
     });
     void ensureOwnerProfile(kind, slot.bootstrap);
+    void ensurePlaybackActionState(kind, slot.bootstrap);
   }
 
   function getVideoIntroDocument(kind) {
@@ -4056,7 +4387,7 @@ import {
       const ui = state.home.ui;
       if (ui) {
         ui.title.textContent = bootstrap.title || meta.title || meta.bvid;
-        ui.openOriginal.dataset.href = bootstrap.href || meta.href;
+        setOriginalLink(ui, bootstrap.href || meta.href);
         ui.status.textContent = `播放器内部换源：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
       }
       updateDebug(buildHomePrimarySetting(bootstrap), bootstrap);
