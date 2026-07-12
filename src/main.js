@@ -622,6 +622,24 @@ import {
     const value = String(href || '').trim();
     ui.openOriginal.dataset.href = value;
     ui.openOriginal.href = value || '#';
+    if (ui.openOriginal.__biliPlaybackTimeBound) return;
+    ui.openOriginal.__biliPlaybackTimeBound = true;
+    const refreshHref = () => {
+      const originalHref = ui.openOriginal.dataset.href || '';
+      ui.openOriginal.href = withPlaybackTime(originalHref, getPlaybackTime(state.home.player)) || '#';
+    };
+    const pauseAfterActivation = () => {
+      refreshHref();
+      const player = state.home.player;
+      window.setTimeout(() => pausePlayer(player), 0);
+    };
+    ui.openOriginal.addEventListener('pointerdown', refreshHref);
+    ui.openOriginal.addEventListener('contextmenu', refreshHref);
+    ui.openOriginal.addEventListener('focus', refreshHref);
+    ui.openOriginal.addEventListener('click', pauseAfterActivation);
+    ui.openOriginal.addEventListener('auxclick', (event) => {
+      if (event.button === 1) pauseAfterActivation();
+    });
   }
 
   function withPlaybackTime(href, seconds) {

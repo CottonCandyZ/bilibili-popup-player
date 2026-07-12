@@ -494,15 +494,25 @@ export function installDocumentStyle(targetDocument = document) {
       }
 
       #${APP}-title {
+        width: fit-content;
+        max-width: 100%;
         min-width: 0;
         overflow: hidden;
-        display: flex;
+        display: inline-flex;
         align-items: center;
+        justify-self: start;
         gap: 5px;
         color: var(--${APP}-text);
         font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         text-decoration: none;
         white-space: nowrap;
+        transition: color 0.16s ease;
+      }
+
+      #${APP}-title:hover,
+      #${APP}-title:focus-visible {
+        color: var(--${APP}-brand);
+        outline: none;
       }
 
       .${APP}__header-title-text {
@@ -519,6 +529,12 @@ export function installDocumentStyle(targetDocument = document) {
         place-items: center;
         flex: 0 0 auto;
         color: var(--${APP}-text-subtle);
+        transition: color 0.16s ease;
+      }
+
+      #${APP}-title:hover .${APP}__header-title-external,
+      #${APP}-title:focus-visible .${APP}__header-title-external {
+        color: var(--${APP}-brand);
       }
 
       .${APP}__header-title-external svg {

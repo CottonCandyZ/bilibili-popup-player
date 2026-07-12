@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.25
+// @version      4.0.26
 // @description  B 站小窗播放合并版：支持首页、动态和播放页推荐视频，网页内弹窗/Chrome Document PiP 两种模式可切换。
 // @author       Codex & Cotton
 // @downloadURL  https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js
@@ -3178,15 +3178,25 @@
       }
 
       #${APP}-title {
+        width: fit-content;
+        max-width: 100%;
         min-width: 0;
         overflow: hidden;
-        display: flex;
+        display: inline-flex;
         align-items: center;
+        justify-self: start;
         gap: 5px;
         color: var(--${APP}-text);
         font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         text-decoration: none;
         white-space: nowrap;
+        transition: color 0.16s ease;
+      }
+
+      #${APP}-title:hover,
+      #${APP}-title:focus-visible {
+        color: var(--${APP}-brand);
+        outline: none;
       }
 
       .${APP}__header-title-text {
@@ -3203,6 +3213,12 @@
         place-items: center;
         flex: 0 0 auto;
         color: var(--${APP}-text-subtle);
+        transition: color 0.16s ease;
+      }
+
+      #${APP}-title:hover .${APP}__header-title-external,
+      #${APP}-title:focus-visible .${APP}__header-title-external {
+        color: var(--${APP}-brand);
       }
 
       .${APP}__header-title-external svg {
@@ -9404,6 +9420,24 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       const value = String(href || '').trim();
       ui.openOriginal.dataset.href = value;
       ui.openOriginal.href = value || '#';
+      if (ui.openOriginal.__biliPlaybackTimeBound) return;
+      ui.openOriginal.__biliPlaybackTimeBound = true;
+      const refreshHref = () => {
+        const originalHref = ui.openOriginal.dataset.href || '';
+        ui.openOriginal.href = withPlaybackTime(originalHref, getPlaybackTime(state.home.player)) || '#';
+      };
+      const pauseAfterActivation = () => {
+        refreshHref();
+        const player = state.home.player;
+        window.setTimeout(() => pausePlayer(player), 0);
+      };
+      ui.openOriginal.addEventListener('pointerdown', refreshHref);
+      ui.openOriginal.addEventListener('contextmenu', refreshHref);
+      ui.openOriginal.addEventListener('focus', refreshHref);
+      ui.openOriginal.addEventListener('click', pauseAfterActivation);
+      ui.openOriginal.addEventListener('auxclick', event => {
+        if (event.button === 1) pauseAfterActivation();
+      });
     }
     function withPlaybackTime(href, seconds) {
       if (!href) return '';
