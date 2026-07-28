@@ -7,7 +7,8 @@
     "check": "node --check src/main.js && node --check bilibili-popup-player-nano.user.js && node --check dist/bilibili-popup-player-nano.user.js",
     "dev": "node scripts/dev.mjs",
     "publish:pages": "pnpm build && node scripts/deploy-pages.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "test": "node --test test/*.test.js"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",

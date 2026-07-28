@@ -57,7 +57,7 @@ export async function resolveOgvPlaybackBootstrap(meta) {
     recommendationCards,
     playerInfo,
     href: buildOgvEpisodeHref(episode, playerInfo, meta.href),
-    requestPlayUrlInfo: (input = {}) => requestOgvPlayView(buildPlayViewRequest({
+    requestPlayUrlInfo: (input = {}) => requestOgvNanoPlayUrlInfo(buildPlayViewRequest({
       input,
       fallbackPlayerInfo: playerInfo,
     })),
@@ -125,6 +125,18 @@ async function fetchOgvSsrPlayback(href) {
 }
 
 async function requestOgvPlayView(request) {
+  const { payload, status } = await fetchOgvPlayViewResponse(request);
+  const normalized = normalizePlayViewResponse(payload, status);
+  if (!normalized) throw new Error('OGV playview returned invalid data');
+  return normalized;
+}
+
+async function requestOgvNanoPlayUrlInfo(request) {
+  const { payload, rawResult, status } = await fetchOgvPlayViewResponse(request);
+  return createNanoPlayUrlResponse(rawResult, payload, status);
+}
+
+async function fetchOgvPlayViewResponse(request) {
   const response = await fetch(buildPlayViewUrl(), {
     method: 'POST',
     credentials: 'include',
@@ -138,7 +150,13 @@ async function requestOgvPlayView(request) {
   if (!response.ok || payload?.code !== 0 || !payload?.data) {
     throw new Error(payload?.message || `OGV playview failed: ${response.status}`);
   }
-  return normalizePlayViewResponse(payload, response.status);
+  const rawResult = extractRawPlayViewResult(payload);
+  if (!rawResult) throw new Error('OGV playview returned invalid data');
+  return {
+    payload,
+    rawResult,
+    status: response.status,
+  };
 }
 
 function buildPlayViewUrl() {
@@ -205,9 +223,11 @@ function buildPlayViewRequest({ episode = null, season = null, input = {}, fallb
   };
 }
 
-function normalizePlayViewResponse(payload, fallbackStatus = 200) {
+export function normalizePlayViewResponse(payload, fallbackStatus = 200) {
   const data = payload?.data || payload;
-  const rawResult = data?.result || null;
+  // weslie SSR data is already wrapped in `data.result`, while the browser
+  // playview endpoint currently returns the raw result directly as `data`.
+  const rawResult = extractRawPlayViewResult(payload);
   if (!rawResult) return null;
   return {
     status: payload?.status || fallbackStatus,
@@ -217,6 +237,293 @@ function normalizePlayViewResponse(payload, fallbackStatus = 200) {
       result: parsePlayViewResult(rawResult),
     },
   };
+}
+
+function extractRawPlayViewResult(payload) {
+  const data = payload?.data || payload;
+  return data?.result || (isRawPlayViewResult(data) ? data : null);
+}
+
+function isRawPlayViewResult(value) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    (
+      value.video_info ||
+      value.play_video_type ||
+      value.arc ||
+      value.supplement
+    )
+  );
+}
+
+/**
+ * BigPlayer's OGV service is a request interceptor, but Nano's current
+ * reqHttpPlayUrlInfo hook consumes HttpPlayUrl's parsed response. Keep both
+ * contracts here so a prefetch miss cannot pass a nullable/weslie response
+ * straight into Nano's `raw`/`body` success path.
+ */
+export function createNanoPlayUrlResponse(raw, payload = null, status = 200) {
+  if (!isRawPlayViewResult(raw)) throw new Error('OGV playview result is empty');
+  const responsePayload = payload && typeof payload === 'object'
+    ? payload
+    : { code: 0, message: '0', data: raw };
+  const weslieResponse = normalizePlayViewResponse(responsePayload, status);
+  if (!weslieResponse) throw new Error('OGV playview response is invalid');
+  return {
+    // Newer Nano cores pass the BigPlayer response through HttpPlayUrl.parse.
+    status: weslieResponse.status,
+    data: weslieResponse.data,
+    // Older cores call the injected request function directly and consume the
+    // already parsed HttpPlayUrl response.
+    raw: responsePayload,
+    body: parseNanoPlayUrlBody(raw),
+    response: {
+      status,
+      data: responsePayload,
+    },
+    retries: 0,
+  };
+}
+
+function parseNanoPlayUrlBody(raw) {
+  const videoInfo = raw.video_info || {};
+  const parsedFragmentVideoInfoList = parseNanoFragmentVideoInfoList(raw);
+  const body = undefinedToNull({
+    format: videoInfo.format,
+    quality: videoInfo.quality,
+    timelength: videoInfo.timelength,
+    streamType: 'https',
+    acceptQuality: parseNanoAcceptQuality(videoInfo),
+    acceptDescription: videoInfo.accept_description,
+    mediaDataSource: parseNanoMediaDataSource(videoInfo),
+    supportFormats: parseNanoSupportFormats(videoInfo.support_formats),
+    clipInfoList: parseNanoClipInfoList(raw.video_extra?.clip_info),
+    isPreview: raw.play_video_type === 'preview',
+    abTestId: undefined,
+    dmOffset: 0,
+    session: undefined,
+    drmTechType: videoInfo.drm_tech_type,
+    lastPlayTime: toPositiveNumber(raw.watch_progress?.current_progress, 0),
+    recordInfo: raw.supplement?.record_number
+      ? {
+        record: raw.supplement.record_number.text || '',
+        recordIcon: raw.supplement.record_number.icon,
+      }
+      : { record: '' },
+    loudnessParams: parseNanoLoudnessParams(videoInfo),
+    viewInfo: parseNanoViewInfo(raw),
+    playViewBusinessInfo: parseNanoPlayViewBusinessInfo(raw),
+    lastPlayEpid: raw.supplement?.ogv_season_watch_progress?.last_ep_id,
+  });
+
+  parsedFragmentVideoInfoList.forEach((item) => {
+    Object.entries(body).forEach(([key, value]) => {
+      if (!(key in item)) item[key] = value;
+    });
+  });
+  const pre = parsedFragmentVideoInfoList.filter(
+    (item) => item.fragmentInfo?.fragment_position === 'PRE' && item.playStatus === true,
+  );
+  const post = parsedFragmentVideoInfoList.filter(
+    (item) => item.fragmentInfo?.fragment_position === 'POST' && item.playStatus === true,
+  );
+  body.parsedReportFragmentVideoInfoList = parsedFragmentVideoInfoList;
+  body.parsedFragmentVideoInfoList = [...pre, { ...body }, ...post];
+  return body;
+}
+
+function parseNanoMediaDataSource(videoInfo) {
+  if (!videoInfo) return {};
+  if (videoInfo.dash) {
+    return {
+      type: 'dash',
+      duration: videoInfo.timelength || 0,
+      url: {
+        ...videoInfo.dash,
+        video: parseNanoDashSegments(videoInfo.dash.video, videoInfo.drm_tech_type),
+        audio: parseNanoDashSegments(videoInfo.dash.audio, videoInfo.drm_tech_type),
+      },
+    };
+  }
+  const durl = Array.isArray(videoInfo.durl) ? videoInfo.durl : [];
+  if (String(videoInfo.format || '').includes('mp4')) {
+    return {
+      type: 'mp4',
+      duration: durl[0]?.length,
+      url: durl[0]?.url,
+      backupURL: durl[0]?.backup_url,
+    };
+  }
+  return {
+    type: 'flv',
+    segments: durl.map((item) => ({
+      url: item.url,
+      duration: item.length,
+      filesize: item.size,
+      backupURL: item.backup_url,
+    })),
+    duration: durl.reduce((total, item) => total + (item.length || 0), 0),
+  };
+}
+
+function parseNanoDashSegments(items = [], drmTechType) {
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => {
+    const segment = {
+      ...item,
+      id: item.id,
+      baseUrl: forceHttps(item.base_url || item.baseUrl),
+      codecid: item.codecid || 7,
+      codecs: item.codecs,
+      bilidrm_uri: item.bilidrm_uri || '',
+      backupUrl: (item.backup_url || item.backupUrl || []).map(forceHttps),
+      bandwidth: item.bandwidth,
+    };
+    if (drmTechType === 3) {
+      segment.ContentProtection = {
+        schemeIdUri: 'urn:uuid:e2719d58-a985-b3c9-781a-b030af78d30e',
+        value: 'ClearKey1.0',
+      };
+    } else if (drmTechType === 2 && item.widevine_pssh) {
+      segment.ContentProtection = {
+        schemeIdUri: 'urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed',
+        pssh: {
+          __prefix: 'cenc',
+          __text: item.widevine_pssh,
+        },
+      };
+    }
+    return segment;
+  });
+}
+
+function parseNanoAcceptQuality(videoInfo) {
+  const qualities = videoInfo.accept_quality ||
+    videoInfo.support_formats?.map((item) => item.quality) ||
+    [];
+  return qualities.map(normalizeNanoQuality);
+}
+
+function normalizeNanoQuality(value) {
+  return ({
+    1: 16,
+    2: 64,
+    3: 80,
+    4: 112,
+    48: 64,
+  })[value] || Number(value);
+}
+
+function parseNanoSupportFormats(formats = []) {
+  if (!Array.isArray(formats)) return [];
+  return formats.map((item) => ({
+    displayDesc: item.display_desc,
+    superscript: item.superscript,
+    needLogin: Boolean(item.need_login),
+    format: item.format,
+    description: item.description,
+    quality: item.quality,
+    newDescription: item.new_description,
+    codecs: item.codecs,
+    has_preview: Boolean(item.has_preview),
+    needVip: Boolean(item.need_vip),
+  }));
+}
+
+function parseNanoClipInfoList(clipInfos = []) {
+  if (!Array.isArray(clipInfos)) return [];
+  return clipInfos.map((item) => ({
+    clipType: item.clip_type === 1
+      ? 'CLIP_TYPE_OP'
+      : item.clip_type === 2
+        ? 'CLIP_TYPE_ED'
+        : 'NT_UNKNOWN',
+    start: item.start,
+    end: item.end,
+  })).filter((item) => item.clipType !== 'NT_UNKNOWN');
+}
+
+function parseNanoPlayViewBusinessInfo(raw) {
+  const progress = raw.supplement?.ogv_season_watch_progress || {};
+  return {
+    episodeInfo: {
+      aid: raw.arc?.aid,
+      cid: raw.arc?.cid,
+      ep_id: raw.supplement?.ogv_episode_info?.episode_id,
+    },
+    seasonInfo: {
+      season_id: raw.supplement?.ogv_season_info?.season_id || 0,
+      season_type: raw.supplement?.ogv_season_info?.season_type || 0,
+    },
+    userStatus: {
+      watch_progress: {
+        lastEpId: progress.last_ep_id || 0,
+        lastEpIndex: progress.last_ep_index_title || 0,
+        lastTime: toPositiveNumber(progress.last_ep_progress, 0),
+        currentWatchProgress: toPositiveNumber(raw.watch_progress?.current_progress, 0),
+      },
+      vip_info: raw.user_status?.vip_info,
+      pay_info: {
+        pay_check: raw.play_video_type === 'whole' &&
+          Boolean(raw.video_info?.dash?.video?.some((item) => Number(item?.id) >= 112)),
+      },
+      is_login: Boolean(raw.user_status?.is_login),
+    },
+  };
+}
+
+function parseNanoViewInfo(raw) {
+  const viewInfo = parseViewInfo(raw);
+  if (!viewInfo) return null;
+  return {
+    qnTrialInfo: viewInfo.qn_trial_info || null,
+    aiRepairQnTrialInfo: viewInfo.ai_repair_qn_trial_info || null,
+  };
+}
+
+function parseNanoFragmentVideoInfoList(raw) {
+  if (!Array.isArray(raw.fragments)) return [];
+  return raw.fragments.map((fragment) => {
+    const videoInfo = fragment.video_info;
+    const item = {
+      fragmentInfo: fragment.fragment_info,
+      playStatus: fragment.playable,
+    };
+    if (!videoInfo) return undefinedToNull(item);
+    return undefinedToNull({
+      ...item,
+      timelength: videoInfo.timelength,
+      acceptQuality: parseNanoAcceptQuality(videoInfo),
+      acceptDescription: videoInfo.accept_description,
+      mediaDataSource: parseNanoMediaDataSource(videoInfo),
+      loudnessParams: parseNanoLoudnessParams(videoInfo),
+    });
+  });
+}
+
+function parseNanoLoudnessParams(videoInfo) {
+  const volume = videoInfo?.volume;
+  const multiScene = volume?.multi_scene_args;
+  if (!volume?.measured_i || !multiScene) return null;
+  const measuredI = Number(volume.measured_i);
+  const undersizedTargetI = Number(multiScene.undersized_target_i);
+  if (measuredI < undersizedTargetI) return null;
+  return {
+    measuredI: volume.measured_i,
+    targetI: volume.target_i,
+    measuredTp: volume.measured_tp,
+    targetTp: volume.target_tp,
+    multiSceneArgs: {
+      highDynamicTargetI: Number(multiScene.high_dynamic_target_i),
+      normalTargetI: Number(multiScene.normal_target_i),
+      undersizedTargetI,
+    },
+  };
+}
+
+function forceHttps(value) {
+  return typeof value === 'string' ? value.replace(/^http:\/\//, 'https://') : value;
 }
 
 function parsePlayViewResult(raw) {
