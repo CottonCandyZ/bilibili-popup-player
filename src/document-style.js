@@ -6,6 +6,7 @@ import {
   SETTINGS_CLASS,
 } from './constants.js';
 import { getPlayerThemeVariableCss } from './player-theme.js';
+import { getModernPlayerCss } from './ui-theme.js';
 
 export function installDocumentStyle(targetDocument = document) {
   if (targetDocument.getElementById(DOCUMENT_STYLE_ID)) return;
@@ -143,30 +144,10 @@ export function installDocumentStyle(targetDocument = document) {
         background: rgba(15, 18, 24, 0.68);
       }
 
-      body.${APP}--modal-open > bili-photoswipe,
-      body.${APP}--modal-open > bili-modal,
-      body.${APP}--modal-open > .pswp,
-      body.${APP}--modal-open > .bili-modal,
-      body.${APP}--modal-open > .bili-photoswipe,
-      body.${APP}--modal-open > [class*="pswp"],
-      body.${APP}--modal-open > [class*="photoswipe"],
-      body.${APP}--modal-open > [class*="photo-swipe"],
-      body.${APP}--modal-open > [class*="image-preview"],
-      body.${APP}--modal-open > [class*="picture-preview"],
-      body.${APP}--modal-open > [class*="preview"][class*="modal"],
-      body.${APP}--modal-open > [class*="preview"][class*="popup"],
-      #${APP}-overlay bili-photoswipe,
-      #${APP}-overlay bili-modal,
-      #${APP}-overlay .pswp,
-      #${APP}-overlay .bili-modal,
-      #${APP}-overlay .bili-photoswipe,
-      #${APP}-overlay [class*="pswp"],
-      #${APP}-overlay [class*="photoswipe"],
-      #${APP}-overlay [class*="photo-swipe"],
-      #${APP}-overlay [class*="image-preview"],
-      #${APP}-overlay [class*="picture-preview"],
-      #${APP}-overlay [class*="preview"][class*="modal"],
-      #${APP}-overlay [class*="preview"][class*="popup"] {
+      /* Only position the preview root. Matching every pswp-prefixed class
+         also stretches its images and controls across the entire viewport. */
+      body.${APP}--modal-open > :is(bili-photoswipe, bili-modal, .pswp, .bili-modal, .bili-photoswipe),
+      #${APP}-overlay :is(bili-photoswipe, bili-modal, .pswp, .bili-modal, .bili-photoswipe) {
         position: fixed !important;
         inset: 0 !important;
         z-index: 2147483647 !important;
@@ -204,7 +185,8 @@ export function installDocumentStyle(targetDocument = document) {
         box-shadow: none;
       }
 
-      #${APP}-overlay.${APP}--fullscreen .${APP}__modal-resize-handle {
+      #${APP}-overlay.${APP}--fullscreen .${APP}__modal-resize-handle,
+      #${APP}-overlay.${APP}--fullscreen .${APP}__resize-hint {
         display: none;
       }
 
@@ -621,21 +603,41 @@ export function installDocumentStyle(targetDocument = document) {
         height: 28px;
         padding: 0;
         border: 0;
-        border-radius: 0 0 8px 0;
+        border-radius: 0 0 12px 0;
         color: var(--${APP}-text-muted);
-        background:
-          linear-gradient(135deg, transparent 0 52%, currentColor 52% 57%, transparent 57%),
-          linear-gradient(135deg, transparent 0 68%, currentColor 68% 73%, transparent 73%);
+        background: transparent;
         cursor: nwse-resize;
-        opacity: 0.72;
+        box-shadow: none;
       }
 
-      .${APP}__modal-resize-handle:hover,
-      .${APP}__modal-resize-handle:focus-visible,
-      #${APP}-overlay.${APP}--modal-resizing .${APP}__modal-resize-handle {
-        color: var(--${APP}-brand);
-        opacity: 1;
-        outline: none;
+      .${APP}__modal-resize-handle:focus-visible {
+        outline: 2px solid var(--${APP}-text-muted);
+        outline-offset: -3px;
+      }
+
+      .${APP}__resize-hint {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        z-index: 41;
+        max-width: calc(100% - 32px);
+        padding: 8px 12px;
+        border-radius: 8px;
+        color: #fff;
+        background: #202124ed;
+        box-shadow: 0 3px 12px #0002;
+        font: 12px/1.5 var(--${APP}-font);
+        pointer-events: none;
+        animation: ${APP}-resize-hint 4s ease both;
+      }
+
+      @keyframes ${APP}-resize-hint {
+        0%, 100% { opacity: 0; transform: translateY(4px); }
+        8%, 88% { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .${APP}__resize-hint { animation: none !important; }
       }
 
       #${APP}-content {
@@ -999,74 +1001,6 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         padding: 0;
         overflow: hidden;
         border-left: 0;
-      }
-
-      .${APP}__comments-tabs {
-        flex: 0 0 auto;
-        display: flex;
-        align-items: flex-end;
-        gap: 4px;
-        box-sizing: border-box;
-        min-height: 42px;
-        margin: 0;
-        padding: 6px 18px 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        background: var(--bg1, #fff);
-        overflow: visible;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__comments-tabs {
-        grid-row: 1;
-        margin: 0;
-        padding: 6px 0 0;
-      }
-
-      .${APP}__comments-tab {
-        box-sizing: border-box;
-        height: 36px;
-        padding: 0 4px;
-        display: inline-flex;
-        align-items: center;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--text2, #61666d);
-        background: transparent;
-        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-      }
-
-      .${APP}__comments-tab[hidden] {
-        display: none !important;
-      }
-
-      .${APP}__comments-tab:hover,
-      .${APP}__comments-tab:focus-visible,
-      .${APP}__comments-tab.${APP}--active {
-        color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-
-      .${APP}__comments-tab.${APP}--active {
-        border-bottom-color: var(--brand_pink, #fb7299);
-      }
-
-      .${APP}__comments-panel[hidden] {
-        display: none !important;
-      }
-
-      .${APP}__comments-panel:not([hidden]) {
-        min-width: 0;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: visible;
-      }
-
-      #${APP}-overlay.${APP}--comments-right .${APP}__comments-panel:not([hidden]) {
-        grid-row: 2;
-        height: 100%;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
       }
 
       #${APP}-comments-mount {
@@ -2072,18 +2006,6 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         -webkit-box-orient: vertical;
       }
 
-      .${APP}__playlist-last-played {
-        flex: 0 0 auto;
-        height: 18px;
-        display: inline-flex;
-        align-items: center;
-        padding: 0 5px;
-        border-radius: 3px;
-        color: var(--brand_blue, #00aeec);
-        background: color-mix(in srgb, var(--brand_blue, #00aeec) 12%, transparent);
-        font: 500 11px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
       .${APP}__playlist-subtitle,
       .${APP}__playlist-stats,
       .${APP}__playlist-empty {
@@ -2179,27 +2101,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
         display: none !important;
       }
 
-      @media (max-width: 900px) {
-        #${APP}-overlay.${APP}--comments-right #${APP}-content {
-          display: block;
-          overflow-x: hidden;
-          overflow-y: auto;
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-comments-resizer {
-          display: none;
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-player-wrap {
-          height: calc(min(960px, calc(100vh - clamp(96px, 12vh, 220px))) - 46px);
-        }
-
-        #${APP}-overlay.${APP}--comments-right #${APP}-comments {
-          height: auto;
-          overflow: visible;
-          border-left: 0;
-        }
-      }
 `;
+  style.textContent += getModernPlayerCss();
   targetDocument.head.appendChild(style);
 }

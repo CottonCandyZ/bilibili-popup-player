@@ -23,7 +23,7 @@ export const COVER_HOST_SELECTOR = [
   '[class*="thumbnail"]',
 ].join(',');
 
-const CARD_ROOT_SELECTORS = [
+const CARD_ROOT_SELECTOR = [
   '.bili-dyn-card-video',
   '.bili-dyn-content__orig__major.suit-video-card',
   '.suit-video-card',
@@ -59,6 +59,9 @@ const CARD_ROOT_SELECTORS = [
   '.video-page-operator-card-small',
   '.card-box',
   '.recommended-card',
+].join(',');
+
+const FALLBACK_CARD_ROOT_SELECTOR = [
   '[class*="video-card"]',
   '[class*="video-page-card"]',
   '[class*="history"]',
@@ -72,7 +75,24 @@ const CARD_ROOT_SELECTORS = [
   '[class*="dyn-card-video"]',
   '[class*="bili-dyn-card"]',
   '[class*="bili-dyn-item"]',
+].join(',');
+
+const CARD_TITLE_SELECTORS = [
+  '.bili-video-card__info--tit',
+  '.video-page-card-small-title',
+  '.bili-dyn-card-video__title, [class*="dyn-card-video__title"]',
+  '.history-card__title',
+  '.bili-history-card__title',
+  '.bili-dyn-live-users__item__title',
+  '.info-title',
+  '.title',
 ];
+
+const NON_TITLE_SELECTOR = [
+  '[role="tooltip"]', 'button', '[role="button"]',
+  '[class*="watch-later"]', '[class*="watchLater"]', '[class*="tooltip"]',
+  '.bili-video-card__stats', '.bili-video-card__no-interest', '.no-interest-title', '.no-interest-desc', '.v-inline-player',
+].join(',');
 
 export const PLAYBACK_VIDEO_LINK_SELECTOR = [
   '.video-page-card-small a[href*="/video/BV"]',
@@ -88,19 +108,12 @@ export const OGV_VIDEO_LINK_SELECTOR = [
   'a[href*="/bangumi/play/ep"]',
 ].join(',');
 
-export const DYNAMIC_VIDEO_LINK_SELECTOR = [
-  'a.bili-dyn-card-video[href*="/video/BV"]',
-  '.suit-video-card a[href*="/video/BV"]',
-  '.bili-dyn-content__orig__major a[href*="/video/BV"]',
-  '[class*="dyn-card-video"][href*="/video/BV"]',
-].join(',');
-
 export function normalizeVideoHref(rawHref, baseUrl = location.href) {
   if (!rawHref) return '';
   try {
     const url = new URL(rawHref, baseUrl);
-    if (!url.hostname.endsWith('bilibili.com')) return '';
-    const match = url.href.match(BV_RE);
+    if (!isBilibiliUrl(url)) return '';
+    const match = url.pathname.match(BV_RE);
     if (match) {
       const canonical = new URL(`/video/${match[1]}/`, 'https://www.bilibili.com');
       canonical.search = url.search;
@@ -133,33 +146,21 @@ export function normalizeResourceUrl(rawUrl, baseUrl = location.href) {
 
 export function getVideoMetaFromLink(link, baseUrl = location.href) {
   const href = normalizeVideoHref(link.getAttribute('href') || link.href, baseUrl);
-  const match = href?.match(BV_RE);
+  const match = href ? new URL(href).pathname.match(BV_RE) : null;
   if (!match) return null;
-  const title = getDynamicCardTitle(link) ||
-    link.getAttribute('title') ||
-    link.getAttribute('aria-label') ||
-    link.querySelector('img')?.getAttribute('alt') ||
-    link.textContent ||
-    'Bilibili 视频';
-  return { bvid: match[1], href, title: cleanVideoTitle(title) };
+  return { bvid: match[1], href, title: getCardTitle(getCardRoot(link), link) };
 }
 
 export function getOgvMetaFromLink(link, baseUrl = location.href) {
   const href = normalizeOgvHref(link.getAttribute('href') || link.href, baseUrl);
   const parsed = parseOgvHref(href, baseUrl);
   if (!parsed) return null;
-  const title = getDynamicCardTitle(link) ||
-    link.getAttribute('title') ||
-    link.getAttribute('aria-label') ||
-    link.querySelector('img')?.getAttribute('alt') ||
-    link.textContent ||
-    'Bilibili 番剧';
   return {
     kind: 'ogv',
     seasonId: parsed.prefix === 'ss' ? parsed.id : '',
     epId: parsed.prefix === 'ep' ? parsed.id : '',
     href,
-    title: cleanVideoTitle(title),
+    title: getCardTitle(getCardRoot(link), link, 'Bilibili 番剧'),
   };
 }
 
@@ -210,11 +211,50 @@ export function isDynamicPage() {
 }
 
 export function getCardRoot(link) {
-  for (const selector of CARD_ROOT_SELECTORS) {
-    const candidate = link.closest(selector);
-    if (candidate && countDistinctBvids(candidate) <= 1) return candidate;
+  // BEM children such as bili-video-card__image--link match the broad fallback
+  // selectors too. Keep looking for a complete card, but never cross into a
+  // container holding different videos or episodes.
+  let fallback = null;
+  for (let candidate = link; candidate && candidate !== link.ownerDocument.body; candidate = candidate.parentElement) {
+    if (countDistinctPlayables(candidate) > 1) break;
+    if (candidate.matches(CARD_ROOT_SELECTOR)) return candidate;
+    if (!fallback && candidate.matches(FALLBACK_CARD_ROOT_SELECTOR)) fallback = candidate;
   }
-  return getFallbackCardRoot(link);
+  return fallback || getFallbackCardRoot(link);
+}
+
+export function getCardTitle(root, link, fallback = 'Bilibili 视频') {
+  for (const selector of CARD_TITLE_SELECTORS) {
+    const elements = [...(root?.querySelectorAll(selector) || [])];
+    if (root?.matches(selector)) elements.unshift(root);
+    for (const element of elements) {
+      if (element.closest(NON_TITLE_SELECTOR)) continue;
+      const title = [element.getAttribute('title'), element.textContent].find(isUsefulCardTitle);
+      if (title) return cleanCardTitle(title);
+    }
+  }
+  const key = getLinkPlaybackKey(link);
+  const links = [link, ...(root?.querySelectorAll('a[href]') || [])];
+  for (const candidate of links) {
+    if (!key || candidate.closest(NON_TITLE_SELECTOR) || getLinkPlaybackKey(candidate) !== key ||
+        isCoverLink(candidate) || candidate.querySelector(COVER_HOST_SELECTOR)) continue;
+    const title = [candidate.getAttribute('title'), candidate.getAttribute('aria-label'), candidate.textContent].find(isUsefulCardTitle);
+    if (title) return cleanCardTitle(title);
+  }
+  // A cover's raw text includes hidden tooltips, counts and hover-preview UI.
+  // Only explicit metadata is safe if the card's title has not mounted yet.
+  const title = [link.getAttribute('title'), link.getAttribute('aria-label'),
+    root?.querySelector('img')?.getAttribute('alt'), fallback].find(isUsefulCardTitle);
+  return cleanCardTitle(title) || 'Bilibili 视频';
+}
+
+function cleanCardTitle(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isUsefulCardTitle(value) {
+  const title = cleanCardTitle(value);
+  return Boolean(title && !/^(?:不感兴趣|撤销|添加至稍后再看|稍后再看|已加稍后再看|已添加至稍后再看|取消稍后再看)$/.test(title) && !title.includes('将减少此类内容推荐'));
 }
 
 export function isCoverLink(link) {
@@ -229,23 +269,38 @@ export function isCoverLink(link) {
 function getFallbackCardRoot(link) {
   const parent = link.parentElement;
   if (!parent) return link;
-  return countDistinctBvids(parent) > 1 ? link : parent;
+  return countDistinctPlayables(parent) > 1 ? link : parent;
 }
 
-function countDistinctBvids(root) {
-  return new Set(
-    [...(root.querySelectorAll?.('a[href*="/video/BV"]') || [])]
-      .map((link) => normalizeVideoHref(link.getAttribute('href') || link.href).match(BV_RE)?.[1])
-      .filter(Boolean),
-  ).size;
+export function getLinkPlaybackKey(link, baseUrl = location.href) {
+  try {
+    const url = new URL(link.getAttribute('href') || link.href, baseUrl);
+    if (!isBilibiliUrl(url)) return '';
+    const bv = url.pathname.match(BV_RE)?.[1];
+    if (bv) return `${bv}:p${Math.max(1, Number(url.searchParams.get('p')) || 1)}`;
+    const ogv = url.pathname.match(OGV_RE);
+    if (ogv) return `${ogv[1]}${ogv[2]}`;
+    if (url.hostname === 'live.bilibili.com') return `live:${url.pathname.match(/^\/(\d+)/)?.[1] || ''}`;
+  } catch { /* Not a playable URL. */ }
+  return '';
+}
+
+function countDistinctPlayables(root) {
+  const links = [...root.querySelectorAll('a[href]')];
+  if (root.matches('a[href]')) links.push(root);
+  return new Set(links.map(link => getLinkPlaybackKey(link)).filter(Boolean)).size;
+}
+
+function isBilibiliUrl(url) {
+  return /^(?:http|https):$/.test(url.protocol) && (url.hostname === 'bilibili.com' || url.hostname.endsWith('.bilibili.com'));
 }
 
 function parseOgvHref(rawHref, baseUrl = location.href) {
   if (!rawHref) return null;
   try {
     const url = new URL(rawHref, baseUrl);
-    if (!url.hostname.endsWith('bilibili.com')) return null;
-    const match = url.href.match(OGV_RE);
+    if (!isBilibiliUrl(url)) return null;
+    const match = url.pathname.match(OGV_RE);
     if (!match) return null;
     return {
       url,
@@ -261,9 +316,4 @@ function cleanVideoTitle(value) {
   const title = String(value || '').replace(/\s+/g, ' ').trim().replace(/^(?:\d{1,2}:)?\d{1,2}:\d{2}\s+/, '');
   if (!title || title === '不感兴趣') return 'Bilibili 视频';
   return title;
-}
-
-function getDynamicCardTitle(link) {
-  const title = link.querySelector?.('.bili-dyn-card-video__title, [class*="dyn-card-video__title"]')?.textContent;
-  return title ? String(title).trim() : '';
 }

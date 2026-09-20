@@ -1,404 +1,254 @@
-import { render } from 'solid-js/web';
-import { APP } from './constants.js';
-import {
-  arrowUpIconMarkup,
-  createAutoPlayIcon,
-  createCloseIcon,
-  createExternalLinkIcon,
-  createFitLayoutIcon,
-  createGamepadIcon,
-  createHistoryBackIcon,
-  createHistoryForwardIcon,
-  createMaximizeIcon,
-  createPictureInPictureIcon,
-  createResetSizeIcon,
-} from './icons.js';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Dialog } from '@base-ui/react/dialog';
+import { Button } from '@base-ui/react/button';
+import { Collapsible } from '@base-ui/react/collapsible';
+import { APP, SETTINGS_CLASS as S, STORAGE_RESIZE_HINT_SEEN } from './constants.js';
+import { getStorageItem, setStorageItem } from './storage.js';
+import { DomSlot, Icon, mountReact } from './ui-runtime.jsx';
+import { SettingsControl } from './settings-ui.jsx';
+import { installOverlayScrollbars } from './overlay-scrollbars.js';
+import { copyPlaybackLink } from './share-link.js';
+import { onPlayerShellKeyDown } from './media-shortcuts.js';
+import { installPlayerControls } from './player-controls.js';
 
-export function mountHomePlayerPage({
-  targetDocument = document,
-  createCommentsTabs,
-  onBackToTop,
-  onBackdropClose,
-  onClose,
-  onFitLayout,
-  onFullscreen,
-  onHistoryNext,
-  onHistoryPrevious,
-  onOpenPip,
-  onPlayerControlClick,
-  supportsPip = true,
-  onResetSize,
-  onToggleAutoPlay,
-  onModalResizeStart,
-  onResizeStart,
-}) {
+export function mountHomePlayerPage(props) {
+  const targetDocument = props.targetDocument || document;
   const mount = targetDocument.createElement('div');
+  mount.dataset.biliPopupUi = 'home';
   const refs = {};
-  const setRef = (key) => (element) => {
-    refs[key] = element;
+  const refCallbacks = new Map();
+  const setRef = (key) => {
+    if (!refCallbacks.has(key)) refCallbacks.set(key, (element) => { refs[key] = element; });
+    return refCallbacks.get(key);
   };
-  const commentsTabs = createCommentsTabs(targetDocument, 'home');
-
+  const commentsTabs = props.createCommentsTabs(targetDocument, 'home');
+  // Resolve the portal target before mounting. An initially empty ref lets Base
+  // UI fall back outside the dialog, where browser fullscreen covers the menu.
+  const menuContainer = targetDocument.createElement('div');
+  menuContainer.style.display = 'contents';
   targetDocument.body.appendChild(mount);
-  const disposeSolid = render(() => (
-    <HomePlayerPage
-      commentsTabs={commentsTabs}
-      refs={setRef}
-      onBackToTop={onBackToTop}
-      onBackdropClose={onBackdropClose}
-      onClose={onClose}
-      onFitLayout={onFitLayout}
-      onFullscreen={onFullscreen}
-      onHistoryNext={onHistoryNext}
-      onHistoryPrevious={onHistoryPrevious}
-      onOpenPip={onOpenPip}
-      onPlayerControlClick={onPlayerControlClick}
-      supportsPip={supportsPip}
-      onResetSize={onResetSize}
-      onToggleAutoPlay={onToggleAutoPlay}
-      onModalResizeStart={onModalResizeStart}
-      onResizeStart={onResizeStart}
-      targetDocument={targetDocument}
-    />
-  ), mount);
-
+  const presentation = { open: false, minimized: false, resetSizeDisabled: true };
+  const page = () => <HomePlayerPage {...props} {...presentation} container={mount} menuContainer={menuContainer} commentsTabs={commentsTabs} refs={setRef} />;
+  const view = mountReact(mount, page());
+  for (const name of ['commentsPanel', 'commentsMount', 'videoIntro', ...['pages', 'playlist', 'live', 'recommend'].flatMap(key => [key + 'Panel', key + 'List', key + 'Empty'])]) {
+    refs[name] = targetDocument.getElementById(`${APP}-${name.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())}`);
+  }
   return {
-    ...refs,
-    commentsTabs,
-    mount,
-    dispose: () => {
-      disposeSolid();
-      mount.remove();
+    ...refs, commentsTabs, mount,
+    setOpen(open) { presentation.open = open; view.render(page()); },
+    setMinimized(minimized) { presentation.minimized = minimized; view.render(page()); },
+    setResetSizeDisabled(disabled) {
+      if (presentation.resetSizeDisabled === disabled) return;
+      presentation.resetSizeDisabled = disabled;
+      view.render(page());
     },
+    dispose() { commentsTabs.dispose?.(); view.dispose(); mount.remove(); },
   };
 }
 
-export function mountPipPlayerPage({
-  targetDocument,
-  createCommentsTabs,
-}) {
+export function mountPipPlayerPage({ targetDocument, createCommentsTabs, settings }) {
+  targetDocument.defaultView.__biliPopupReactUi?.dispose();
   const mount = targetDocument.createElement('div');
+  mount.dataset.biliPopupUi = 'pip';
   const commentsTabs = createCommentsTabs(targetDocument, 'pip');
-
   targetDocument.body.appendChild(mount);
-  const disposeSolid = render(() => (
-    <PipPlayerPage
-      commentsTabs={commentsTabs}
-      targetDocument={targetDocument}
-    />
-  ), mount);
+  const view = mountReact(mount, <PipPlayerPage commentsTabs={commentsTabs} settings={settings} targetDocument={targetDocument} />);
+  const ui = { mount, dispose() { commentsTabs.dispose?.(); view.dispose(); mount.remove(); } };
+  targetDocument.defaultView.__biliPopupReactUi = ui;
+  settings.sync();
+  return ui;
+}
 
-  return {
-    mount,
-    dispose: () => {
-      disposeSolid();
-      mount.remove();
-    },
-  };
+function ToolButton({ icon, label, buttonRef, onClick, className = '', ...props }) {
+  return <Button className={`${APP}__header-button ${className}`} title={label} aria-label={label} ref={buttonRef} onClick={onClick} {...props}><Icon name={icon} size={19} /></Button>;
+}
+
+function CopyLinkButton({ targetDocument }) {
+  const [result, setResult] = useState('');
+  const timer = useRef();
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return <ToolButton icon={result === '已复制' ? 'check' : 'copy'} label={result || '复制视频链接'} className={`${APP}__copy-link`} onClick={async () => {
+    const source = targetDocument.getElementById(`${APP}-title`);
+    try { await copyPlaybackLink(source?.dataset.href, targetDocument); setResult('已复制'); }
+    catch { setResult('复制失败，请重试'); }
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setResult(''), 1800);
+  }} />;
 }
 
 function HomePlayerPage(props) {
-  let backdropPointer = '0';
-  const backToTopIcon = props.targetDocument.createElement('template');
-  backToTopIcon.innerHTML = arrowUpIconMarkup();
-
-  return (
-    <div
-      id={`${APP}-overlay`}
-      ref={props.refs('overlay')}
-      role="dialog"
-      aria-modal="true"
-      data-backdrop-pointer="0"
-      onPointerDown={(event) => {
-        backdropPointer = event.target === event.currentTarget ? '1' : '0';
-        event.currentTarget.dataset.backdropPointer = backdropPointer;
-      }}
-      onPointerUp={(event) => {
-        const startedOnBackdrop = backdropPointer === '1';
-        backdropPointer = '0';
-        event.currentTarget.dataset.backdropPointer = '0';
-        if (startedOnBackdrop && event.target === event.currentTarget) props.onBackdropClose?.();
-      }}
-      onPointerCancel={(event) => {
-        backdropPointer = '0';
-        event.currentTarget.dataset.backdropPointer = '0';
-      }}
-    >
-      <section id={`${APP}-dialog`} ref={props.refs('dialog')} tabIndex={-1}>
-        <header id={`${APP}-header`}>
-          <div class={`${APP}__header-history`}>
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="上一次播放"
-              aria-label="上一次播放"
-              ref={props.refs('historyPrevious')}
-              onClick={() => props.onHistoryPrevious?.()}
-            >
-              {createHistoryBackIcon()}
-            </button>
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="下一次播放"
-              aria-label="下一次播放"
-              ref={props.refs('historyNext')}
-              onClick={() => props.onHistoryNext?.()}
-            >
-              {createHistoryForwardIcon()}
-            </button>
+  useOverlayScrollbars(props.container.ownerDocument, `${APP}-dialog`, props.open && !props.minimized);
+  const pointerOnBackdrop = useRef(false);
+  const scrollPlayer = useScrollMiniPlayer(props.container.ownerDocument, 'home', props.open && !props.minimized, props.onFrameResize);
+  const controls = usePlayerControls(props.container.ownerDocument, `${APP}-player-wrap`, props.open, props.minimized || scrollPlayer.floating);
+  const sidebarControls = props.commentsTabs.querySelector(`#${APP}-sidebar-window-controls`);
+  const [present, setPresent] = useState(props.open);
+  const [showResizeHint, setShowResizeHint] = useState(false);
+  useEffect(() => {
+    if (!props.open || props.minimized) { setShowResizeHint(false); return; }
+    if (getStorageItem(STORAGE_RESIZE_HINT_SEEN) === '1') return;
+    setStorageItem(STORAGE_RESIZE_HINT_SEEN, '1');
+    setShowResizeHint(true);
+    const timer = setTimeout(() => setShowResizeHint(false), 4000);
+    return () => clearTimeout(timer);
+  }, [props.open, props.minimized]);
+  useEffect(() => {
+    const ownerWindow = props.container.ownerDocument.defaultView;
+    // Cancel an interrupted press, without suppressing the next genuine click.
+    const onBlur = () => { pointerOnBackdrop.current = false; };
+    ownerWindow.addEventListener('blur', onBlur);
+    return () => ownerWindow.removeEventListener('blur', onBlur);
+  }, [props.container]);
+  useEffect(() => {
+    if (props.open) { setPresent(true); return; }
+    const timer = setTimeout(() => setPresent(false), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220);
+    return () => clearTimeout(timer);
+  }, [props.open]);
+  return <Dialog.Root open={props.open} modal={props.minimized ? false : 'trap-focus'} disablePointerDismissal onOpenChange={(open, details) => {
+    // Escape also cancels the playback countdown; the adapter handles it.
+    if (details.reason === 'escape-key') return;
+    if (!open) props.onClose?.();
+  }}>
+    {sidebarControls && createPortal(<>
+      <ToolButton icon="down" label="收起到右下角" className={`${APP}__minimize-button`} onClick={props.onMinimize} />
+      <Dialog.Close className={`${APP}__header-button ${APP}__header-button--close`} title="关闭播放器" aria-label="关闭播放器"><Icon name="close" size={17} /></Dialog.Close>
+    </>, sidebarControls)}
+    <Dialog.Portal container={props.container} keepMounted>
+      <div id={`${APP}-overlay`} ref={props.refs('overlay')} hidden={!props.open && !present} data-open={props.open}
+        onPointerDownCapture={(event) => {
+          pointerOnBackdrop.current = event.target === event.currentTarget;
+        }}
+        onPointerUp={(event) => {
+          if (pointerOnBackdrop.current && event.target === event.currentTarget) props.onBackdropClose?.();
+          pointerOnBackdrop.current = false;
+        }}
+        onPointerCancel={() => { pointerOnBackdrop.current = false; }}>
+        <Dialog.Popup id={`${APP}-dialog`} ref={props.refs('dialog')} initialFocus={false} finalFocus={false} aria-label={props.minimized ? '迷你播放器' : '小窗播放器'} onKeyDown={onPlayerShellKeyDown}>
+          <div id={`${APP}-content`} ref={props.refs('content')}>
+            <div id={`${APP}-player-slot`} ref={props.refs('playerSlot')}>
+            <div id={`${APP}-player-wrap`} ref={props.refs('playerWrap')} data-scroll-floating={scrollPlayer.floating} data-controls-visible={controls.visible}>
+              <div id={`${APP}-player`} ref={props.refs('playerRoot')} />
+          <header id={`${APP}-header`}>
+            <div className={`${APP}__header-history`}>
+              <ToolButton icon="back" label="上一次播放" buttonRef={props.refs('historyPrevious')} onClick={props.onHistoryPrevious} />
+              <ToolButton icon="next" label="下一次播放" buttonRef={props.refs('historyNext')} onClick={props.onHistoryNext} />
+            </div>
+            <div className={`${APP}__header-link`}><a id={`${APP}-title`} ref={props.refs('openOriginal')} href="#" target="_blank" rel="noopener noreferrer" title="在新标签页打开原页面">
+              <span className={`${APP}__header-title-text`} ref={props.refs('title')} />
+              <span className={`${APP}__header-title-external`}><Icon name="external" size={16} /></span>
+            </a>
+            <CopyLinkButton targetDocument={props.container.ownerDocument} />
+            </div>
+            <div id={`${APP}-status`} ref={props.refs('status')} role="status" />
+            <div className={`${APP}__header-actions`}>
+              <span className={`${APP}__auto-play-hint`} ref={props.refs('autoPlayHint')} role="status" aria-live="polite" />
+              <ToolButton icon="autoplay" label="自动联播 · J / L 切换视频" buttonRef={props.refs('autoPlayNext')} onClick={props.onToggleAutoPlay} />
+              {props.supportsPip && <ToolButton icon="pip" label="切换到独立小窗" buttonRef={props.refs('openPip')} onClick={props.onOpenPip} />}
+              <ToolButton icon="expand" label="网页内全屏" buttonRef={props.refs('fullscreen')} onClick={props.onFullscreen} />
+              <SettingsControl settings={props.settings} container={props.menuContainer} variant="player">
+                <Button className={`${S}__action`} onClick={props.onFitLayout}><span>自动适配布局</span><Icon name="fit" size={17} /></Button>
+                <Button className={`${S}__action`} disabled={props.resetSizeDisabled} ref={props.refs('resetSize')} onClick={props.onResetSize}><span>重置窗口尺寸</span><Icon name="reset" size={17} /></Button>
+                <Collapsible.Root className={`${S}__shortcuts ${APP}__gamepad-indicator`} ref={props.refs('gamepadIndicator')}>
+                  <Collapsible.Trigger className={`${S}__action`}><span>手柄快捷键</span><Icon name="down" size={17} /></Collapsible.Trigger>
+                  <Collapsible.Panel className={`${S}__shortcut-panel`}>
+                    <div className={`${S}__shortcut-content`}>
+                    <p className={`${APP}__gamepad-disabled-hint`}>手柄控制已关闭</p>
+                    <p className={`${APP}__gamepad-disconnected-hint`}>连接手柄后按任意键</p>
+                    <dl>{[['A', '暂停 / 播放'], ['X / B', '调整进度'], ['Y', '系统全屏'], ['Menu', '网页全屏'], ['LB / RB', '切换分区'], ['LT / RT', '上一集 / 下一集'], ['摇杆', '滚动列表']].map(([key, action]) => <div key={key}><dt>{action}</dt><dd><kbd>{key}</kbd></dd></div>)}</dl>
+                    </div>
+                  </Collapsible.Panel>
+                </Collapsible.Root>
+              </SettingsControl>
+              <ToolButton icon={props.minimized || scrollPlayer.floating ? 'expand' : 'down'} label={scrollPlayer.floating ? '回到视频' : props.minimized ? '还原播放器' : '收起到右下角'} className={`${APP}__minimize-button`} buttonRef={props.refs('minimize')} onClick={scrollPlayer.floating ? scrollPlayer.restore : props.onMinimize} />
+              <Dialog.Close className={`${APP}__header-button ${APP}__header-button--close`} title="关闭播放器" aria-label="关闭播放器" ref={props.refs('close')}><Icon name="close" size={19} /></Dialog.Close>
+            </div>
+          </header>
+            </div>
+            </div>
+            <div id={`${APP}-comments-resizer`} ref={props.refs('commentsResizer')} tabIndex={0} role="separator" aria-orientation="vertical" aria-label="调整评论区宽度" onPointerDown={props.onResizeStart} />
+            <section id={`${APP}-comments`} ref={props.refs('comments')} aria-label="播放队列和评论"><DomSlot element={props.commentsTabs} /></section>
           </div>
-          <a
-            id={`${APP}-title`}
-            ref={(element) => {
-              props.refs('openOriginal')(element);
-            }}
-            href="#"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="在新标签页打开原页面"
-          >
-            <span class={`${APP}__header-title-text`} ref={props.refs('title')} />
-            <span class={`${APP}__header-title-external`} aria-hidden="true">
-              {createExternalLinkIcon()}
-            </span>
-          </a>
-          <div id={`${APP}-status`} ref={props.refs('status')} />
-          <div class={`${APP}__header-actions`}>
-            <span
-              class={`${APP}__auto-play-hint`}
-              ref={props.refs('autoPlayHint')}
-              role="status"
-              aria-live="polite"
-            />
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="自动联播。按 J / L 手动切换"
-              aria-label="自动联播。按 J / L 手动切换"
-              ref={props.refs('autoPlayNext')}
-              onClick={() => props.onToggleAutoPlay?.()}
-            >
-              {createAutoPlayIcon()}
-            </button>
-            {props.supportsPip && (
-              <button
-                type="button"
-                class={`${APP}__header-button`}
-                title="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
-                aria-label="在 Document PiP 打开。建议保持 PiP 窗口常开，后续切视频会更快；关闭后再打开会重新初始化。"
-                ref={props.refs('openPip')}
-                onClick={() => props.onOpenPip?.()}
-              >
-                {createPictureInPictureIcon()}
-              </button>
-            )}
-            <button
-              type="button"
-              class={`${APP}__header-button`}
-              title="网页内全屏"
-              aria-label="网页内全屏"
-              ref={props.refs('fullscreen')}
-              onClick={() => props.onFullscreen?.()}
-            >
-              {createMaximizeIcon()}
-            </button>
-            <details class={`${APP}__header-more`}>
-              <summary
-                class={`${APP}__header-button ${APP}__header-more-toggle`}
-                title="更多操作"
-                aria-label="更多操作"
-                aria-haspopup="menu"
-                role="button"
-              >
-                <span aria-hidden="true" />
-              </summary>
-              <div class={`${APP}__header-menu`} role="menu">
-                <div class={`${APP}__header-menu-label`}>窗口布局</div>
-                <button
-                  type="button"
-                  class={`${APP}__header-menu-item`}
-                  role="menuitem"
-                  onClick={(event) => {
-                    event.currentTarget.closest('details')?.removeAttribute('open');
-                    props.onFitLayout?.();
-                  }}
-                >
-                  {createFitLayoutIcon()}
-                  <span>自动适配布局</span>
-                </button>
-                <button
-                  type="button"
-                  class={`${APP}__header-menu-item`}
-                  role="menuitem"
-                  ref={props.refs('resetSize')}
-                  disabled
-                  onClick={(event) => {
-                    event.currentTarget.closest('details')?.removeAttribute('open');
-                    props.onResetSize?.();
-                  }}
-                >
-                  {createResetSizeIcon()}
-                  <span>重置窗口尺寸</span>
-                </button>
-                <div class={`${APP}__header-menu-label`}>控制器</div>
-                <span
-                  class={`${APP}__header-menu-status ${APP}__gamepad-indicator`}
-                  ref={props.refs('gamepadIndicator')}
-                  title="手柄未连接"
-                  aria-label="手柄未连接"
-                  tabIndex={0}
-                >
-                  {createGamepadIcon()}
-                  <span class={`${APP}__gamepad-status-text`}>手柄状态与快捷键</span>
-                  <span class={`${APP}__gamepad-popover`} role="tooltip">
-                    <span class={`${APP}__gamepad-disabled-hint`}>手柄控制已禁用</span>
-                    <span class={`${APP}__gamepad-disconnected-hint`}>手柄未连接</span>
-                    <span class={`${APP}__gamepad-disconnected-hint`}>连接后按任意键确认</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>A 暂停/播放</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>X / B 控制进度</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>Y 视频全屏</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>Menu 网页内全屏</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>LB / RB 循环切换标签</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>LT / RT 上一个/下一个</span>
-                    <span class={`${APP}__gamepad-connected-hint`}>摇杆上下 滚动列表</span>
-                  </span>
-                </span>
-              </div>
-            </details>
-            <button
-              type="button"
-              class={`${APP}__header-button ${APP}__header-button--close`}
-              title="关闭"
-              aria-label="关闭首页播放器"
-              ref={props.refs('close')}
-              onClick={() => props.onClose?.()}
-            >
-              {createCloseIcon()}
-            </button>
-          </div>
-        </header>
-        <div id={`${APP}-content`} ref={props.refs('content')}>
-          <div id={`${APP}-player-wrap`} ref={props.refs('playerWrap')}>
-            <div
-              id={`${APP}-player`}
-              ref={props.refs('playerRoot')}
-            />
-          </div>
-          <div
-            id={`${APP}-comments-resizer`}
-            ref={props.refs('commentsResizer')}
-            tabIndex={0}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整评论区宽度"
-            onPointerDown={(event) => props.onResizeStart?.(event)}
-          />
-          <section id={`${APP}-comments`} ref={props.refs('comments')}>
-            {props.commentsTabs}
-            <div id={`${APP}-comments-panel`} class={`${APP}__comments-panel`} ref={props.refs('commentsPanel')}>
-              <div id={`${APP}-video-intro`} ref={props.refs('videoIntro')} />
-              <div id={`${APP}-comments-mount`} ref={props.refs('commentsMount')} />
-            </div>
-            <div id={`${APP}-pages-panel`} class={`${APP}__comments-panel`} ref={props.refs('pagesPanel')}>
-              <div id={`${APP}-pages-list`} class={`${APP}__playlist`} ref={props.refs('pagesList')} />
-              <div id={`${APP}-pages-empty`} class={`${APP}__playlist-empty`} ref={props.refs('pagesEmpty')}>
-                合集加载中...
-              </div>
-            </div>
-            <div id={`${APP}-playlist-panel`} class={`${APP}__comments-panel`} ref={props.refs('playlistPanel')}>
-              <div id={`${APP}-playlist-list`} class={`${APP}__playlist`} ref={props.refs('playlistList')} />
-              <div id={`${APP}-playlist-empty`} class={`${APP}__playlist-empty`} ref={props.refs('playlistEmpty')}>
-                播放列表加载中...
-              </div>
-            </div>
-            <div id={`${APP}-live-panel`} class={`${APP}__comments-panel`} ref={props.refs('livePanel')}>
-              <div id={`${APP}-live-list`} class={`${APP}__playlist`} ref={props.refs('liveList')} />
-              <div id={`${APP}-live-empty`} class={`${APP}__playlist-empty`} ref={props.refs('liveEmpty')}>
-                直播列表加载中...
-              </div>
-            </div>
-            <div id={`${APP}-recommend-panel`} class={`${APP}__comments-panel`} ref={props.refs('recommendPanel')}>
-              <div id={`${APP}-recommend-list`} class={`${APP}__playlist`} ref={props.refs('recommendList')} />
-              <div id={`${APP}-recommend-empty`} class={`${APP}__playlist-empty`} ref={props.refs('recommendEmpty')}>
-                相关推荐加载中...
-              </div>
-            </div>
-          </section>
-        </div>
-        <button
-          type="button"
-          class={`${APP}__back-to-top`}
-          title="回到顶部"
-          aria-label="回到顶部"
-          ref={props.refs('backToTop')}
-          onClick={() => props.onBackToTop?.()}
-        >
-          {backToTopIcon.content.firstElementChild}
-        </button>
-        <button
-          type="button"
-          class={`${APP}__modal-resize-handle`}
-          title="调整窗口尺寸"
-          aria-label="调整窗口尺寸"
-          ref={props.refs('modalResizeHandle')}
-          onPointerDown={(event) => props.onModalResizeStart?.(event)}
-        />
-      </section>
-    </div>
-  );
+          <DomSlot element={props.menuContainer} />
+          <Button className={`${APP}__back-to-top`} title="回到顶部" aria-label="回到顶部" ref={props.refs('backToTop')} onClick={props.onBackToTop}><Icon name="arrowUp" /></Button>
+          <Button className={`${APP}__modal-resize-handle`} aria-label="调整窗口尺寸" ref={props.refs('modalResizeHandle')} onPointerDown={(event) => { setShowResizeHint(false); props.onModalResizeStart?.(event); }} />
+          {showResizeHint && <div className={`${APP}__resize-hint`} role="status">拖动窗口右下角，可调整大小</div>}
+        </Dialog.Popup>
+      </div>
+    </Dialog.Portal>
+  </Dialog.Root>;
 }
 
-function PipPlayerPage(props) {
-  const backToTopIcon = props.targetDocument.createElement('template');
-  backToTopIcon.innerHTML = arrowUpIconMarkup();
-
-  return (
-    <div id="shell">
-      <main id="layout">
-        <div id="stage">
-          <div id="bilibili-player" />
-        </div>
-        <div
-          id="comments-resizer"
-          tabIndex={0}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整评论区宽度"
-        />
-        <section id="comments">
-          {props.commentsTabs}
-          <div id="comments-panel" class={`${APP}__comments-panel`}>
-            <div id="video-intro" />
-            <div id="comments-mount">评论加载中...</div>
-          </div>
-          <div id="pages-panel" class={`${APP}__comments-panel`}>
-            <div id="pages-list" class={`${APP}__playlist`} />
-            <div id="pages-empty" class={`${APP}__playlist-empty`}>合集加载中...</div>
-          </div>
-          <div id="playlist-panel" class={`${APP}__comments-panel`}>
-            <div id="playlist-list" class={`${APP}__playlist`} />
-            <div id="playlist-empty" class={`${APP}__playlist-empty`}>播放列表加载中...</div>
-          </div>
-          <div id="live-panel" class={`${APP}__comments-panel`}>
-            <div id="live-list" class={`${APP}__playlist`} />
-            <div id="live-empty" class={`${APP}__playlist-empty`}>直播列表加载中...</div>
-          </div>
-          <div id="recommend-panel" class={`${APP}__comments-panel`}>
-            <div id="recommend-list" class={`${APP}__playlist`} />
-            <div id="recommend-empty" class={`${APP}__playlist-empty`}>相关推荐加载中...</div>
-          </div>
-        </section>
-      </main>
-      <button
-        type="button"
-        id="back-to-top"
-        class={`${APP}__back-to-top`}
-        title="回到顶部"
-        aria-label="回到顶部"
-      >
-        {backToTopIcon.content.firstElementChild}
-      </button>
+function PipPlayerPage({ commentsTabs, settings, targetDocument }) {
+  useOverlayScrollbars(targetDocument, 'shell', true);
+  const scrollPlayer = useScrollMiniPlayer(targetDocument, 'pip', true);
+  const controls = usePlayerControls(targetDocument, 'stage', true, scrollPlayer.floating);
+  return <div id="shell" onKeyDown={onPlayerShellKeyDown}><main id="layout">
+    <div id="stage-slot">
+    <div id="stage" data-scroll-floating={scrollPlayer.floating} data-controls-visible={controls.visible}>
+      <div id="bilibili-player" />
+      <div className={`${APP}__pip-tools`}>{scrollPlayer.floating && <ToolButton icon="expand" label="回到视频" onClick={scrollPlayer.restore} />}<SettingsControl settings={settings} container={targetDocument.body} variant="player" /></div>
     </div>
-  );
+    </div>
+    <div id="comments-resizer" tabIndex={0} role="separator" aria-orientation="vertical" aria-label="调整评论区宽度" />
+    <section id="comments" aria-label="播放队列和评论"><DomSlot element={commentsTabs} /></section>
+  </main><Button id="back-to-top" className={`${APP}__back-to-top`} title="回到顶部" aria-label="回到顶部"><Icon name="arrowUp" /></Button></div>;
+}
+
+function useOverlayScrollbars(targetDocument, rootId, enabled) {
+  useEffect(() => {
+    const root = targetDocument.getElementById(rootId);
+    if (enabled && root) return installOverlayScrollbars(root);
+  }, [targetDocument, rootId, enabled]);
+}
+
+// Keep the same player node mounted; the slot preserves the document height
+// while the video floats, so entering/leaving mini mode cannot move comments.
+function useScrollMiniPlayer(targetDocument, kind, enabled, onResize) {
+  const [floating, setFloating] = useState(false);
+  const contentId = kind === 'home' ? `${APP}-content` : 'layout';
+  const slotId = kind === 'home' ? `${APP}-player-slot` : 'stage-slot';
+  useEffect(() => {
+    if (!enabled) { setFloating(false); return; }
+    const ownerWindow = targetDocument.defaultView;
+    const content = targetDocument.getElementById(contentId);
+    const slot = targetDocument.getElementById(slotId);
+    const layoutRoot = kind === 'home' ? targetDocument.getElementById(`${APP}-overlay`) : targetDocument.body;
+    if (!content || !slot) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const bounds = content.getBoundingClientRect(), video = slot.getBoundingClientRect();
+      const bottomLayout = ownerWindow.getComputedStyle(content).display !== 'grid';
+      const fullscreen = targetDocument.fullscreenElement;
+      const shellFullscreen = kind === 'home' && fullscreen?.id === `${APP}-dialog`;
+      setFloating(bottomLayout && (!fullscreen || shellFullscreen) && video.height > 0 && video.bottom <= Math.max(0, bounds.top) + .5);
+    };
+    const schedule = () => { if (!frame) frame = ownerWindow.requestAnimationFrame(update); };
+    const resize = new ownerWindow.ResizeObserver(schedule);
+    resize.observe(content); resize.observe(slot);
+    const layout = new ownerWindow.MutationObserver(schedule);
+    layout.observe(layoutRoot, { attributes: true, attributeFilter: ['class'] });
+    content.addEventListener('scroll', schedule, { passive: true });
+    targetDocument.addEventListener('fullscreenchange', schedule);
+    schedule();
+    return () => {
+      ownerWindow.cancelAnimationFrame(frame);
+      resize.disconnect(); layout.disconnect();
+      content.removeEventListener('scroll', schedule);
+      targetDocument.removeEventListener('fullscreenchange', schedule);
+    };
+  }, [targetDocument, kind, enabled, contentId, slotId]);
+  useEffect(() => { onResize?.(); }, [floating, onResize]);
+  return { floating, restore() { targetDocument.getElementById(contentId)?.scrollTo({ top: 0, behavior: 'instant' }); } };
+}
+
+function usePlayerControls(targetDocument, frameId, open, minimized = false) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const frame = targetDocument.getElementById(frameId);
+    if (open && frame) return installPlayerControls(frame, setVisible);
+    setVisible(false);
+  }, [targetDocument, frameId, open, minimized]);
+  return { visible };
 }

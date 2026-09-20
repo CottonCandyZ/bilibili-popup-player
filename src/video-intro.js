@@ -33,7 +33,16 @@ export function renderVideoIntro({
     avatar.src = info.owner.face;
     avatar.alt = '';
     avatar.loading = 'lazy';
-    up.appendChild(avatar);
+    if (info.owner.href) {
+      const link = targetDocument.createElement('a');
+      link.className = `${APP}__video-intro-avatar-link`;
+      link.href = info.owner.href;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.setAttribute('aria-label', info.owner.mid ? `打开 ${info.owner.name || 'UP 主'} 的空间` : info.owner.name || '番剧详情');
+      link.appendChild(avatar);
+      up.appendChild(link);
+    } else up.appendChild(avatar);
   }
 
   const main = targetDocument.createElement('div');
@@ -93,7 +102,7 @@ export function renderVideoIntro({
     });
   }
 
-  if (actions) body.appendChild(renderPlaybackActions(targetDocument, actions, onAction));
+  if (actions) body.appendChild(renderPlaybackActions(targetDocument, actions, onAction, mount));
   up.appendChild(main);
 
   if (info.owner.mid) {
@@ -147,7 +156,7 @@ export function renderVideoIntro({
   }
 }
 
-function renderPlaybackActions(targetDocument, actions, onAction) {
+function renderPlaybackActions(targetDocument, actions, onAction, mount) {
   const section = targetDocument.createElement('div');
   section.className = `${APP}__video-actions`;
 
@@ -183,13 +192,13 @@ function renderPlaybackActions(targetDocument, actions, onAction) {
   row.append(like, coin, favorite);
   section.appendChild(row);
 
-  if (actions.coinOpen) mountCoinDialog(targetDocument, actions, onAction);
-  else if (actions.folderOpen) mountFavoriteDialog(targetDocument, actions, onAction);
+  if (actions.coinOpen) mountCoinDialog(targetDocument, actions, onAction, mount);
+  else if (actions.folderOpen) mountFavoriteDialog(targetDocument, actions, onAction, mount);
 
   return section;
 }
 
-function mountCoinDialog(targetDocument, actions, onAction) {
+function mountCoinDialog(targetDocument, actions, onAction, mount) {
   const mask = createDialogMask(targetDocument, `${APP}__coin-dialog`, 'close-coin', actions, onAction);
   const panel = targetDocument.createElement('div');
   panel.className = `${APP}__coin-panel`;
@@ -240,7 +249,7 @@ function mountCoinDialog(targetDocument, actions, onAction) {
     : '今日投币+50经验成就 get√ 赞！';
   bottom.append(submit, tips);
   panel.appendChild(bottom);
-  finishDialogMount(targetDocument, mask, panel, 'close-coin', actions, onAction);
+  finishDialogMount(targetDocument, mask, panel, 'close-coin', actions, onAction, mount);
 }
 
 function createCoinChoice(targetDocument, value, selected, onAction) {
@@ -265,7 +274,7 @@ function createCoinChoice(targetDocument, value, selected, onAction) {
   return choice;
 }
 
-function mountFavoriteDialog(targetDocument, actions, onAction) {
+function mountFavoriteDialog(targetDocument, actions, onAction, mount) {
   const mask = createDialogMask(targetDocument, `${APP}__favorite-dialog`, 'close-favorite', actions, onAction);
   const panel = targetDocument.createElement('div');
   panel.className = `${APP}__favorite-panel`;
@@ -348,7 +357,7 @@ function mountFavoriteDialog(targetDocument, actions, onAction) {
   submit.addEventListener('click', () => onAction?.('save-favorite'));
   footer.appendChild(submit);
   panel.appendChild(footer);
-  finishDialogMount(targetDocument, mask, panel, 'close-favorite', actions, onAction);
+  finishDialogMount(targetDocument, mask, panel, 'close-favorite', actions, onAction, mount);
 }
 
 function createFavoriteNewFolder(targetDocument, actions, onAction) {
@@ -432,14 +441,19 @@ function createDialogMessage(targetDocument, message, error = false) {
   return node;
 }
 
-function finishDialogMount(targetDocument, mask, panel, closeAction, actions, onAction) {
+function finishDialogMount(targetDocument, mask, panel, closeAction, actions, onAction, mount) {
   mask.appendChild(panel);
   const closeOnEscape = (event) => {
-    if (event.key === 'Escape' && !actions.busy) onAction?.(closeAction);
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!actions.busy) onAction?.(closeAction);
   };
-  targetDocument.addEventListener('keydown', closeOnEscape);
-  mask.__biliCleanup = () => targetDocument.removeEventListener('keydown', closeOnEscape);
-  targetDocument.body.appendChild(mask);
+  targetDocument.addEventListener('keydown', closeOnEscape, true);
+  mask.__biliCleanup = () => targetDocument.removeEventListener('keydown', closeOnEscape, true);
+  // Keep dialogs in the same theme and fullscreen/focus scope as their player.
+  const container = mount?.closest(`#${APP}-dialog`) || mount?.closest('[data-bili-popup-accent]') || targetDocument.body;
+  container.appendChild(mask);
   targetDocument.defaultView?.requestAnimationFrame?.(() => {
     const input = panel.querySelector(`.${APP}__favorite-create input`);
     if (input) input.focus();

@@ -1,5 +1,6 @@
 {
   "name": "bilibili-popup-player-nano",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,19 +9,27 @@
     "dev": "node scripts/dev.mjs",
     "publish:pages": "pnpm build && node scripts/deploy-pages.mjs",
     "release": "node scripts/release.mjs",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
+    "@babel/preset-react": "^7.28.5",
+    "@playwright/test": "^1.58.2",
     "@rollup/plugin-babel": "^7.0.0",
+    "@rollup/plugin-commonjs": "^29.0.0",
     "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-replace": "^6.0.3",
     "@rollup/plugin-terser": "^0.4.4",
-    "babel-preset-solid": "^1.9.12",
     "rollup": "^4.40.2",
     "wrangler": "^4.50.0"
   },
   "packageManager": "pnpm@10.17.0+sha512.fce8a3dd29a4ed2ec566fb53efbb04d8c44a0f05bc6f24a73046910fb9c3ce7afa35a0980500668fa3573345bd644644fa98338fa168235c80f4aa17aa17fbef",
   "dependencies": {
-    "solid-js": "^1.9.13"
+    "@base-ui/react": "^1.8.0",
+    "lucide": "^1.47.0",
+    "lucide-react": "^1.47.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }

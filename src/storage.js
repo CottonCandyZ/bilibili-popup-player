@@ -1,4 +1,4 @@
-function getGmValue(key, fallback = null) {
+function getGmValue(key, fallback) {
   if (typeof GM_getValue !== 'function') return fallback;
   try {
     return GM_getValue(key, fallback);

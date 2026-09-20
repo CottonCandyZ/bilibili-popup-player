@@ -6,6 +6,7 @@ export const BUTTON_CLASS = `${APP}__button`;
 export const BADGE_CLASS = `${APP}__badge`;
 export const SETTINGS_CLASS = `${APP}__settings`;
 export const STORAGE_MODE = `${APP}:mode`;
+export const STORAGE_ENABLED = `${APP}:enabled`;
 export const STORAGE_DIRECT_CLICK = `${APP}:direct-click`;
 export const STORAGE_COMMENT_LAYOUT = `${APP}:comment-layout`;
 export const STORAGE_COMMENT_WIDTH = `${APP}:comment-width`;
@@ -15,12 +16,18 @@ export const STORAGE_PIP_COMMENT_LAYOUT = `${APP}:pip-comment-layout`;
 export const STORAGE_PIP_COMMENT_WIDTH = `${APP}:pip-comment-width`;
 export const STORAGE_LAST_PLAYED = `${APP}:last-played`;
 export const STORAGE_MODAL_SIZE = `${APP}:modal-size`;
+export const STORAGE_HOME_FULLSCREEN = `${APP}:home-fullscreen`;
+export const STORAGE_RESIZE_HINT_SEEN = `${APP}:resize-hint-seen`;
 export const STORAGE_AUTO_PLAY_NEXT = `${APP}:auto-play-next`;
 export const STORAGE_AUTO_PLAY_COUNTDOWN = `${APP}:auto-play-countdown`;
 export const STORAGE_GAMEPAD_CONTROLS = `${APP}:gamepad-controls`;
+export const STORAGE_ACCENT_THEME = `${APP}:accent-theme`;
 export const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|bangumi\/play\/(?:ss|ep)|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/|t\.bilibili\.com\/)/;
 export const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
 export const OGV_RE = /\/bangumi\/play\/(ss|ep)(\d+)/;
+// UGC player 4.10.3, served by the native playback page on 2026-09-20.
+// Keep OGV's existing fallback separate while validating this runtime for UGC.
+export const UGC_CORE_SCRIPT = 'https://s1.hdslb.com/bfs/static/player/main/core.06f1e939.js';
 export const CORE_FALLBACK = 'https://s1.hdslb.com/bfs/static/player/main/core.6dcbfdb4.js';
 export const COMMENT_FALLBACK = 'https://s1.hdslb.com/bfs/seed/jinkela/commentpc/bili-comments.js';
 export const THEME_BASE = 'https://s1.hdslb.com/bfs/seed/jinkela/short/bili-theme';

@@ -1,4 +1,4 @@
-import { BV_RE, COMMENT_FALLBACK, CORE_FALLBACK } from './constants.js';
+import { BV_RE, COMMENT_FALLBACK, UGC_CORE_SCRIPT } from './constants.js';
 import {
   normalizeResourceUrl,
   normalizeVideoHref,
@@ -45,7 +45,7 @@ async function resolvePlaybackBootstrapFromApis(meta) {
 
     return {
       title: vd.title || meta.title,
-      coreScript: CORE_FALLBACK,
+      coreScript: UGC_CORE_SCRIPT,
       commentScript: COMMENT_FALLBACK,
       stylesheets: [],
       initialState,

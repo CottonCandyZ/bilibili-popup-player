@@ -2,6 +2,7 @@ import { APP } from './constants.js';
 import { externalLinkIconMarkup } from './icons.js';
 import { getPlayerThemeVariableCss } from './player-theme.js';
 import { escapeHtml } from './text.js';
+import { getModernPlayerCss } from './ui-theme.js';
 
 export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, commentLayoutClass }) {
   return `<!doctype html>
@@ -380,65 +381,6 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         background: transparent !important;
         outline: none !important;
         opacity: 1 !important;
-      }
-      .${APP}__comments-tabs {
-        flex: 0 0 auto;
-        display: flex;
-        align-items: flex-end;
-        gap: 4px;
-        box-sizing: border-box;
-        min-height: 42px;
-        margin: 0;
-        padding: 6px 18px 0;
-        border-bottom: 1px solid var(--line_regular, #e3e5e7);
-        background: var(--bg1, #fff);
-        overflow: visible;
-      }
-      body.comments-right .${APP}__comments-tabs {
-        grid-row: 1;
-        margin: 0;
-        padding: 6px 0 0;
-      }
-      .${APP}__comments-tab {
-        box-sizing: border-box;
-        height: 36px;
-        padding: 0 4px;
-        display: inline-flex;
-        align-items: center;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        color: var(--text2, #61666d);
-        background: transparent;
-        font: 600 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-      }
-      .${APP}__comments-tab[hidden] {
-        display: none !important;
-      }
-      .${APP}__comments-tab:hover,
-      .${APP}__comments-tab:focus-visible,
-      .${APP}__comments-tab.${APP}--active {
-        color: var(--brand_pink, #fb7299);
-        outline: none;
-      }
-      .${APP}__comments-tab.${APP}--active {
-        border-bottom-color: var(--brand_pink, #fb7299);
-      }
-      .${APP}__comments-panel[hidden] {
-        display: none !important;
-      }
-      .${APP}__comments-panel:not([hidden]) {
-        min-width: 0;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: visible;
-      }
-      body.comments-right .${APP}__comments-panel:not([hidden]) {
-        grid-row: 2;
-        height: 100%;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
       }
       #comments-mount {
         box-sizing: border-box;
@@ -1118,6 +1060,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       .${APP}__bottom-fixed-hidden {
         display: none !important;
       }
+      ${getModernPlayerCss()}
     </style>
   </head>
   <body class="${commentLayoutClass}"></body>

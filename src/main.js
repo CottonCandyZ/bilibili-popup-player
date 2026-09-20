@@ -10,6 +10,7 @@ import {
   STORAGE_COMMENT_WIDTH,
   STORAGE_HOME_COMMENT_LAYOUT,
   STORAGE_HOME_COMMENT_WIDTH,
+  STORAGE_HOME_FULLSCREEN,
   STORAGE_PIP_COMMENT_LAYOUT,
   STORAGE_PIP_COMMENT_WIDTH,
   STORAGE_AUTO_PLAY_COUNTDOWN,
@@ -19,6 +20,8 @@ import {
   STORAGE_LAST_PLAYED,
   STORAGE_MODAL_SIZE,
   STORAGE_MODE,
+  STORAGE_ENABLED,
+  STORAGE_ACCENT_THEME,
   STYLE_ID,
 } from './constants.js';
 import {
@@ -34,6 +37,7 @@ import {
   requestOgvTriple,
 } from './archive-actions.js';
 import { disposeCommentInstance, mountComments } from './comments.js';
+import { handleCommentImageShortcut } from './comment-images.js';
 import { createCommentsTabsUi } from './comments-tabs-ui.js';
 import {
   createHomeFeedSession,
@@ -41,6 +45,7 @@ import {
   isHomeFeedPage,
 } from './home-feed.js';
 import {
+  createExternalLinkIcon,
   createMaximizeIcon,
   createMinimizeIcon,
   createPictureInPictureIcon,
@@ -76,8 +81,14 @@ import {
 import { getPlayerExternalState, getPlayerViewInfo } from './player-view-info.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
-import { loadScriptOnce } from './script-loader.js';
-import { createSettingsUi } from './settings-ui.js';
+import { loadScriptOnce, waitForHostScript } from './script-loader.js';
+import { CARD_ACTION_SELECTOR, findCardAnchor, getVisibleCardRect, isCardExposedAt, isControlAreaExposed, pointInRect } from './card-targets.js';
+import { getOverlayCss } from './ui-theme.js';
+import { createSettingsUi } from './settings-ui.jsx';
+import { applyAccentTheme, normalizeAccentTheme } from './accent-theme.js';
+import { animatePlayerLayout, capturePlayerLayout } from './layout-motion.js';
+import { installVideoGestures } from './video-gestures.js';
+import { isMediaShortcut, isShortcutInput } from './media-shortcuts.js';
 import { getStorageItem, removeStorageItem, setStorageItem } from './storage.js';
 import {
   ensureBiliThemeStylesheets,
@@ -91,14 +102,12 @@ import {
   requestFollowUp,
 } from './video-intro.js';
 import {
-  COVER_HOST_SELECTOR,
-  DYNAMIC_VIDEO_LINK_SELECTOR,
   OGV_VIDEO_LINK_SELECTOR,
-  PLAYBACK_VIDEO_LINK_SELECTOR,
   getCardRoot,
   getCurrentPageBvid,
   getCurrentPageOgvKey,
   getCurrentPageOgvMeta,
+  getLinkPlaybackKey,
   getOgvMetaFromLink,
   getVideoMetaFromLink,
   isDynamicPage,
@@ -115,6 +124,7 @@ import {
 
   function bootstrap() {
   const pageWindow = typeof unsafeWindow === 'object' && unsafeWindow ? unsafeWindow : window;
+  pageWindow.__biliPopupPlayerNano?.destroy?.();
   const COMMENT_WIDTH_DEFAULT = 420;
   const COMMENT_WIDTH_MIN = 300;
   const COMMENT_WIDTH_MAX = 720;
@@ -127,7 +137,6 @@ import {
   const MODAL_BLOCK_MARGIN_MIN = 96;
   const MODAL_BLOCK_MARGIN_MAX = 220;
   const MODAL_BLOCK_MARGIN_RATIO = 0.12;
-  const MODAL_HEADER_HEIGHT = 46;
   const MODAL_COMMENTS_RESIZER_WIDTH = 8;
   const URL_PARAM_PLAY = 'bpn_play';
   const URL_PARAM_BVID = 'bpn_bvid';
@@ -138,10 +147,8 @@ import {
   const GAMEPAD_REPEAT_INTERVAL_MS = 180;
   const GAMEPAD_STICK_DEADZONE = 0.28;
   const GAMEPAD_SCROLL_SPEED = 14;
-  const PLAYER_CHROME_HEIGHT = 48;
-  const PLAYER_CHROME_HEIGHT_WIDE = 56;
-  const PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT = 1680;
   const PLAYBACK_HISTORY_LIMIT = 20;
+  // Probe the API, not the user agent: Firefox and Chromium can both expose it.
   const supportsDocumentPip = () => typeof window.documentPictureInPicture?.requestWindow === 'function';
 
   const initialLastPlayed = (() => {
@@ -170,6 +177,12 @@ import {
   })();
 
   const state = {
+    enabled: getStorageItem(STORAGE_ENABLED) !== '0',
+    accentTheme: normalizeAccentTheme(getStorageItem(STORAGE_ACCENT_THEME)),
+    themeStyle: getThemeStyle(),
+    destroyed: false,
+    routeHref: location.href,
+    routeTimer: 0,
     observer: null,
     scanTimer: 0,
     scanWarmupTimer: 0,
@@ -230,6 +243,11 @@ import {
       button: null,
     },
     home: {
+      minimized: false,
+      fullscreen: getStorageItem(STORAGE_HOME_FULLSCREEN) === '1',
+      savedPageOverflow: null,
+      layoutAnimation: null,
+      playTimer: 0,
       overlay: null,
       ui: null,
       player: null,
@@ -320,8 +338,10 @@ import {
     syncCardButtons,
     syncCommentLayout,
     supportsPip: supportsDocumentPip,
+    onEnabledChange: setEnabled,
     onAutoPlayCountdownChange,
     onGamepadControlsChange,
+    onAccentThemeChange: syncAccentTheme,
   });
   const commentsTabsUi = createCommentsTabsUi({
     state,
@@ -352,9 +372,11 @@ import {
     syncTabs: syncCommentsTabs,
   } = commentsTabsUi;
   let rendererOrchestrator = null;
+  let replayingCardLink = false;
 
   pageWindow.__biliPopupPlayerNano = {
     scan,
+    setEnabled,
     close: closeHome,
     destroy,
     getState: () => state,
@@ -364,23 +386,112 @@ import {
   ensureControlOverlay();
   ensureDocumentStyle();
   ensureSettings();
-  scan();
-  document.addEventListener('mousemove', onDocumentMouseMove, true);
-  document.addEventListener('mouseleave', onDocumentMouseLeave, true);
-  document.addEventListener('click', onDirectCoverClick, true);
-  document.addEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
-  window.addEventListener('scroll', scheduleViewportSync, true);
-  window.addEventListener('resize', scheduleViewportSync, true);
-  window.addEventListener('gamepadconnected', onGamepadConnectionChanged);
-  window.addEventListener('gamepaddisconnected', onGamepadConnectionChanged);
-  state.observer = new MutationObserver(onDomMutated);
-  state.observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['href', 'title', 'aria-label', 'class', 'style'],
-  });
-  startScanWarmup();
+  if (state.enabled) startPageEnhancements();
+
+  function startPageEnhancements() {
+    if (!state.enabled || state.destroyed || state.observer) return;
+    document.addEventListener('mousemove', onDocumentMouseMove, true);
+    document.addEventListener('mouseleave', onDocumentMouseLeave, true);
+    document.addEventListener('focusin', scheduleViewportSync, true);
+    document.addEventListener('focusout', scheduleViewportSync, true);
+    document.addEventListener('click', onDirectCoverClick, true);
+    document.addEventListener('transitionend', scheduleViewportSync, true);
+    document.addEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
+    window.addEventListener('scroll', scheduleViewportSync, true);
+    window.addEventListener('resize', scheduleViewportSync, true);
+    window.addEventListener('popstate', onRouteChanged);
+    window.addEventListener('hashchange', onRouteChanged);
+    window.addEventListener('gamepadconnected', onGamepadConnectionChanged);
+    window.addEventListener('gamepaddisconnected', onGamepadConnectionChanged);
+    state.observer = new MutationObserver(onDomMutated);
+    state.observer.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ['href', 'title', 'aria-label', 'class', 'style', 'hidden', 'inert', 'src', 'data-src'],
+    });
+    // SPA navigation can change history without mutating the card subtree.
+    state.routeTimer = window.setInterval(onRouteChanged, 600);
+    scan();
+    startScanWarmup();
+  }
+
+  function stopPageEnhancements() {
+    state.observer?.disconnect();
+    state.observer = null;
+    clearTimeout(state.scanTimer);
+    clearInterval(state.routeTimer);
+    state.scanTimer = state.routeTimer = 0;
+    stopScanWarmup();
+    if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
+    state.viewportFrame = 0;
+    document.removeEventListener('mousemove', onDocumentMouseMove, true);
+    document.removeEventListener('mouseleave', onDocumentMouseLeave, true);
+    document.removeEventListener('focusin', scheduleViewportSync, true);
+    document.removeEventListener('focusout', scheduleViewportSync, true);
+    document.removeEventListener('click', onDirectCoverClick, true);
+    document.removeEventListener('transitionend', scheduleViewportSync, true);
+    document.removeEventListener('fullscreenchange', scheduleSettingsVisibilitySync, true);
+    window.removeEventListener('scroll', scheduleViewportSync, true);
+    window.removeEventListener('resize', scheduleViewportSync, true);
+    window.removeEventListener('popstate', onRouteChanged);
+    window.removeEventListener('hashchange', onRouteChanged);
+    window.removeEventListener('gamepadconnected', onGamepadConnectionChanged);
+    window.removeEventListener('gamepaddisconnected', onGamepadConnectionChanged);
+    state.cardEntries.forEach(removeCardEntry);
+    state.cardEntries = [];
+    state.pointer = null;
+    removeLivePageButton();
+    removePlaybackPagePipButton();
+    state.shadowHost?.classList.remove(APP + '--playback-web-fullscreen');
+  }
+
+  function onRouteChanged() {
+    if (state.themeStyle !== getThemeStyle()) {
+      state.themeStyle = getThemeStyle();
+      syncAccentTheme();
+      settingsUi.sync();
+      if (state.pip.win && !state.pip.win.closed) {
+        const doc = state.pip.win.document;
+        doc.body.classList.toggle('night-mode', state.themeStyle === 'dark');
+        doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+          if (link.href.includes(`/bili-theme/${state.themeStyle === 'dark' ? 'light' : 'dark'}.css`)) link.remove();
+        });
+        ensureBiliThemeStylesheets(doc);
+      }
+    }
+    if (!state.enabled || state.routeHref === location.href) return;
+    state.routeHref = location.href;
+    scheduleScan();
+  }
+
+  function setEnabled(value) {
+    if (state.destroyed || state.enabled === Boolean(value)) return;
+    state.enabled = Boolean(value);
+    setStorageItem(STORAGE_ENABLED, state.enabled ? '1' : '0');
+    if (state.enabled) {
+      startPageEnhancements();
+    } else {
+      stopPageEnhancements();
+      state.switchToken += 1;
+      state.dynamicLivePortal.requestId += 1;
+      state.dynamicLivePortal.loading = false;
+      closeHome();
+      disposeHomePlayer();
+      disposePipPlayer();
+      disposeHomeComments();
+      disposePipComments();
+      commentsTabsUi.dispose();
+      state.home.ui?.videoGestures?.dispose();
+      state.home.ui?.dispose();
+      state.home.ui = null;
+      state.home.overlay = null;
+      state.pip.win?.__biliPopupReactUi?.dispose();
+      if (state.pip.win && !state.pip.win.closed) state.pip.win.close();
+      state.pip.win = null;
+      stopGamepadControls();
+      setExternalPlayerFeaturesBlocked(false);
+    }
+    settingsUi.sync();
+  }
 
   function ensureShadowUi() {
     if (state.shadowRoot) return;
@@ -399,193 +510,18 @@ import {
     const root = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = `
-      .${APP}__overlay {
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-      }
-
-      .${BUTTON_CLASS} {
-        position: absolute !important;
-        z-index: 20;
-        right: auto;
-        bottom: auto;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 72px;
-        height: 28px;
-        padding: 0 10px;
-        border: 1px solid var(--${APP}-settings-border);
-        border-radius: 6px;
-        color: var(--${APP}-settings-text);
-        background: var(--${APP}-settings-bg-hover);
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
-        opacity: 0.96;
-        pointer-events: auto;
-        transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
-      }
-
-      .${BUTTON_CLASS}:hover,
-      .${BUTTON_CLASS}:focus-visible {
-        color: #fff;
-        border-color: var(--${APP}-settings-brand);
-        background: var(--${APP}-settings-brand);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-        opacity: 1;
-        outline: none;
-      }
-
-      .${BADGE_CLASS} {
-        position: absolute !important;
-        z-index: 21;
-        display: none;
-        align-items: center;
-        height: 24px;
-        padding: 0 8px;
-        border: 1px solid var(--${APP}-settings-border);
-        border-radius: 6px;
-        color: var(--${APP}-settings-subtle);
-        background: var(--${APP}-settings-bg);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        pointer-events: none;
-      }
-
-      .${BADGE_CLASS}.${APP}--active {
-        display: inline-flex;
-      }
-
-      .${BADGE_CLASS}.${APP}--playing {
-        color: #fff;
-        border-color: var(--${APP}-settings-brand);
-        background: var(--${APP}-settings-brand);
-      }
-
-      :host {
-        --${APP}-settings-bg: var(--bg1, #fff);
-        --${APP}-settings-bg-hover: var(--bg2, #f6f7f8);
-        --${APP}-settings-text: var(--text1, #18191c);
-        --${APP}-settings-subtle: var(--text2, #61666d);
-        --${APP}-settings-muted: var(--text3, #9499a0);
-        --${APP}-settings-border: var(--line_regular, #e3e5e7);
-        --${APP}-settings-brand: var(--brand_pink, #fb7299);
-        --${APP}-settings-shadow: rgba(0, 0, 0, 0.18);
-      }
-
-      :host(.${APP}--playback-web-fullscreen) {
-        display: none;
-      }
-
-      .${SETTINGS_CLASS} {
-        position: fixed;
-        right: 16px;
-        bottom: 96px;
-        z-index: 2147482999;
-        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        pointer-events: auto;
-      }
-
-      .${SETTINGS_CLASS}__button {
-        width: 52px;
-        height: 52px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--${APP}-settings-border);
-        border-radius: 10px;
-        color: var(--${APP}-settings-subtle);
-        background: var(--${APP}-settings-bg);
-        box-shadow: 0 2px 8px var(--${APP}-settings-shadow);
-        cursor: pointer;
-      }
-
-      .${SETTINGS_CLASS}__button svg {
-        width: 22px;
-        height: 22px;
-        display: block;
-        stroke: currentColor;
-      }
-
-      .${SETTINGS_CLASS}__button:hover,
-      .${SETTINGS_CLASS}__button:focus-visible,
-      .${SETTINGS_CLASS}.${APP}--open .${SETTINGS_CLASS}__button {
-        color: #fff;
-        border-color: var(--${APP}-settings-brand);
-        background: var(--${APP}-settings-brand);
-        outline: none;
-      }
-
-      .${SETTINGS_CLASS}__menu {
-        position: absolute;
-        right: 0;
-        bottom: 60px;
-        width: 184px;
-        padding: 8px;
-        display: none;
-        border: 1px solid var(--${APP}-settings-border);
-        border-radius: 8px;
-        color: var(--${APP}-settings-text);
-        background: var(--${APP}-settings-bg);
-        box-shadow: 0 10px 32px var(--${APP}-settings-shadow);
-      }
-
-      .${SETTINGS_CLASS}.${APP}--open .${SETTINGS_CLASS}__menu {
-        display: block;
-      }
-
-      .${SETTINGS_CLASS}__label {
-        margin: 4px 6px 6px;
-        color: var(--${APP}-settings-muted);
-        font-size: 12px;
-      }
-
-      .${SETTINGS_CLASS}__hint {
-        margin: 4px 6px 8px;
-        color: var(--${APP}-settings-muted);
-        font-size: 12px;
-        line-height: 1.45;
-      }
-
-      .${SETTINGS_CLASS}__hint[hidden] {
-        display: none;
-      }
-
-      .${SETTINGS_CLASS}__option {
-        width: 100%;
-        height: 32px;
-        margin: 2px 0;
-        padding: 0 10px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border: 0;
-        border-radius: 6px;
-        color: var(--${APP}-settings-text);
-        background: transparent;
-        cursor: pointer;
-        text-align: left;
-      }
-
-      .${SETTINGS_CLASS}__option:hover,
-      .${SETTINGS_CLASS}__option:focus-visible,
-      .${SETTINGS_CLASS}__option.${APP}--active {
-        color: var(--${APP}-settings-brand);
-        background: var(--${APP}-settings-bg-hover);
-        outline: none;
-      }
-
-      .${SETTINGS_CLASS}__option:disabled {
-        color: var(--${APP}-settings-muted);
-        cursor: default;
-        background: transparent;
-      }
-    `;
+    style.textContent = getOverlayCss();
     root.append(style);
     state.shadowHost = host;
     state.shadowRoot = root;
+    applyAccentTheme(host, state.accentTheme);
+  }
+
+  function syncAccentTheme() {
+    applyAccentTheme(state.shadowHost, state.accentTheme);
+    applyAccentTheme(state.home.ui?.mount, state.accentTheme);
+    if (state.pip.win && !state.pip.win.closed) applyAccentTheme(state.pip.win.document.body, state.accentTheme);
+    state.cardEntries.forEach(entry => applyAccentTheme(entry.controlHost, state.accentTheme));
   }
 
   function ensureControlOverlay() {
@@ -597,9 +533,9 @@ import {
     overlay.className = `${APP}__control-overlay`;
     overlay.style.position = 'fixed';
     overlay.style.inset = '0';
-    overlay.style.zIndex = '2147480999';
+    overlay.style.zIndex = '1';
     overlay.style.pointerEvents = 'none';
-    document.documentElement.appendChild(overlay);
+    state.shadowRoot.appendChild(overlay);
     state.overlay = overlay;
     return overlay;
   }
@@ -612,8 +548,34 @@ import {
     settingsUi.ensure();
   }
 
-  function openOriginalPage(href) {
+  function openOriginalPage(href, entry) {
     if (!href) return;
+    if (isPlaybackPage() || isOgvPage()) {
+      if (isHomeShellOpen()) closeHome();
+      const key = getLinkPlaybackKey(entry.link);
+      const link = [...entry.card.querySelectorAll('.info a[href]')]
+        .find(candidate => key && getLinkPlaybackKey(candidate) === key) || entry.link;
+      if (!link?.isConnected || !link.matches('a[href]')) {
+        location.assign(href);
+        return;
+      }
+      // Let the site's existing recommendation handler replace its player.
+      // Replaying the link must not re-enter our cover-to-popup interceptor.
+      // Its actual switch handler sits on the title/image child; clicking only
+      // the anchor can update the address without changing the playing video.
+      const clickTarget = link.querySelector('.title, img') || link;
+      const target = link.getAttribute('target');
+      replayingCardLink = true;
+      try {
+        if (target && target !== '_self') link.target = '_self';
+        clickTarget.click();
+      } finally {
+        replayingCardLink = false;
+        if (target === null) link.removeAttribute('target');
+        else link.setAttribute('target', target);
+      }
+      return;
+    }
     window.open(href, '_blank', 'noopener,noreferrer');
   }
 
@@ -725,7 +687,7 @@ import {
   }
 
   function pauseExternalPlaybackPagePlayer() {
-    if (!isPlaybackPage() && !isLivePage()) return false;
+    if (!isPlaybackPage() && !isOgvPage() && !isLivePage()) return false;
     state.externalPlaybackResume ||= captureExternalPlaybackResume();
     if (isLivePage()) return pauseLivePagePlayer();
     return pausePlaybackPagePlayer();
@@ -818,81 +780,102 @@ import {
   }
 
   function bindPlayableLink(link, card, meta) {
-    if (!card || isOwnUiScanTarget(link) || isOwnUiScanTarget(card)) return;
-
-    const existing = state.cardEntries.find((entry) => entry.card === card || entry.link === link);
+    if (!state.enabled || !card || isOwnUiScanTarget(link) || isOwnUiScanTarget(card)) return;
+    const anchor = findCardAnchor(link, card, meta);
+    if (!anchor) return;
+    const existing = state.cardEntries.find(entry => entry.card === card || entry.anchor === anchor);
     if (existing) {
-      upgradeCardEntry(existing, link, card, meta);
+      Object.assign(existing, { card, link, anchor, meta, seen: true });
+      syncCardControlHost(existing);
+      setCardDataset(existing.button, meta);
+      setCardDataset(existing.badge, meta);
+      syncCardButton(existing.button);
       return;
     }
-
     const button = document.createElement('button');
     button.type = 'button';
     button.className = BUTTON_CLASS;
-    setCardDataset(button, meta);
-    syncCardButton(button);
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      state.lastFocus = button;
-      state.lastButton = button;
-      if (state.directClick) {
-        openOriginalPage(button.dataset.href);
-        return;
-      }
-      openByMode(getMetaFromCardDataset(button));
-    });
-
     const badge = document.createElement('div');
     badge.className = BADGE_CLASS;
+    const entry = { card, anchor, host: anchor, link, button, badge, meta, overlayMode: true, seen: true };
+    setCardDataset(button, meta);
     setCardDataset(badge, meta);
-
-    const overlayMode = shouldUseCardOverlayFor(link, card, meta);
-    const host = overlayMode ? state.overlay : getCardControlHost(link, card);
-    if (!overlayMode) ensureCardHost(host);
-    host.append(button, badge);
-    state.cardEntries.push({ card, host, link, button, badge, meta, overlayMode });
-    positionCardEntry(state.cardEntries[state.cardEntries.length - 1]);
-    syncVideoBadge(badge);
+    syncCardButton(button);
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!state.enabled || !entry.link.isConnected || !entry.anchor.isConnected) return;
+      // The site may recycle a card between the last scan and this click.
+      const current = isLiveMeta(entry.meta) ? getLiveMetaFromLink(entry.link) || entry.meta
+        : isOgvMeta(entry.meta) ? getOgvMetaFromLink(entry.link) : getVideoMetaFromLink(entry.link);
+      if (!current) return;
+      const rect = getVisibleCardRect(entry.anchor);
+      if (!rect || !isControlAreaExposed(entry, button.getBoundingClientRect(), state.shadowRoot)) return;
+      state.lastFocus = entry.link;
+      state.lastButton = button;
+      if (state.directClick) openOriginalPage(current.href, entry);
+      else openByMode(current);
+    });
+    syncCardControlHost(entry);
+    state.cardEntries.push(entry);
   }
 
-  function upgradeCardEntry(entry, link, card, meta) {
-    const isLive = isLiveMeta(meta);
-    const currentIsCover = !isLive && isCoverLink(entry.link);
-    const nextIsCover = !isLive && isCoverLink(link);
-    if (entry.link === link || currentIsCover || !nextIsCover) {
-      entry.meta = meta;
-      setCardDataset(entry.button, meta);
-      setCardDataset(entry.badge, meta);
-      syncCardButton(entry.button);
-      syncVideoBadge(entry.badge);
-      positionCardEntry(entry);
+  function syncCardControlHost(entry) {
+    // Keep hover ancestry inside site popovers so moving onto our button does
+    // not dismiss the history/favorites panel underneath it.
+    const parent = entry.card.closest('[class*="popover"], [class*="popper"]') ? entry.card : null;
+    if (parent === entry.localParent && entry.controlHost?.isConnected) return;
+    if (!parent && !entry.controlHost && entry.button.parentNode === state.overlay) return;
+    removeCardControlHost(entry);
+    if (!parent) {
+      state.overlay.append(entry.button, entry.badge);
       return;
     }
+    entry.localParent = parent;
+    if (getComputedStyle(parent).position === 'static') {
+      entry.savedPosition = parent.style.position;
+      parent.style.position = 'relative';
+    }
+    const host = document.createElement('span');
+    host.dataset.biliPopupUi = 'card-controls';
+    host.style.cssText = 'position:absolute;inset:0;display:block;pointer-events:none;z-index:3;';
+    const root = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = getOverlayCss();
+    root.append(style, entry.button, entry.badge);
+    parent.appendChild(host);
+    entry.controlHost = host;
+    applyAccentTheme(host, state.accentTheme);
+  }
 
-    const overlayMode = shouldUseCardOverlayFor(link, card, meta);
-    const host = overlayMode ? state.overlay : getCardControlHost(link, card);
-    if (!overlayMode) ensureCardHost(host);
-    host.append(entry.button, entry.badge);
-    entry.card = card;
-    entry.host = host;
-    entry.link = link;
-    entry.meta = meta;
-    entry.overlayMode = overlayMode;
-    setCardDataset(entry.button, meta);
-    setCardDataset(entry.badge, meta);
-    syncCardButton(entry.button);
-    syncVideoBadge(entry.badge);
-    positionCardEntry(entry);
+  function removeCardControlHost(entry) {
+    entry.controlHost?.remove();
+    if (entry.savedPosition !== undefined && entry.localParent?.style.position === 'relative') entry.localParent.style.position = entry.savedPosition;
+    entry.controlHost = null;
+    entry.localParent = null;
+    delete entry.savedPosition;
+  }
+
+  function removeCardEntry(entry) {
+    removeCardControlHost(entry);
+    entry.button.remove();
+    entry.badge.remove();
   }
 
   function syncCardButtons() {
     state.cardEntries.forEach((entry) => syncCardButton(entry.button));
+    syncPlaybackPagePipButton();
   }
 
   function syncCardButton(button) {
     const title = button.dataset.title || 'Bilibili 视频';
-    button.textContent = state.directClick ? '跳转' : '小窗播放';
+    const action = state.directClick ? 'open' : 'play';
+    if (button.dataset.action !== action) {
+      button.dataset.action = action;
+      const label = document.createElement('span');
+      label.textContent = state.directClick ? '跳转' : '小窗播放';
+      button.replaceChildren(...(state.directClick ? [createExternalLinkIcon(), label] : [label]));
+    }
     button.setAttribute('aria-label', state.directClick ? `跳转：${title}` : `小窗播放：${title}`);
     button.title = state.directClick ? '跳转到播放页' : '小窗播放';
   }
@@ -958,10 +941,9 @@ import {
   }
 
   function syncOverlayPositions() {
-    state.cardEntries = state.cardEntries.filter((entry) => {
-      if (!entry.card.isConnected || !entry.link.isConnected) {
-        entry.button.remove();
-        entry.badge.remove();
+    state.cardEntries = state.cardEntries.filter(entry => {
+      if (!entry.card.isConnected || !entry.link.isConnected || !entry.anchor.isConnected) {
+        removeCardEntry(entry);
         return false;
       }
       return true;
@@ -969,61 +951,65 @@ import {
   }
 
   function positionCardEntry(entry) {
-    const hostRect = entry.overlayMode ? getCardControlRect(entry) : entry.host.getBoundingClientRect();
-    const cardRect = getCardRect(entry);
-    const visible = hostRect.width > 36 && hostRect.height > 28 && hostRect.bottom > 0 && hostRect.right > 0 && hostRect.top < innerHeight && hostRect.left < innerWidth;
-    const buttonVisible = visible && shouldShowCardButton(entry, cardRect);
-    entry.button.style.display = buttonVisible ? 'inline-flex' : 'none';
-    entry.badge.style.display = visible && entry.badge.classList.contains(`${APP}--active`) ? 'inline-flex' : 'none';
-    if (!entry.overlayMode || !visible) return;
-    entry.button.style.left = `${Math.max(0, Math.round(hostRect.right - 80))}px`;
-    entry.button.style.top = `${Math.max(0, Math.round(hostRect.bottom - 36))}px`;
-    entry.badge.style.left = `${Math.max(0, Math.round(hostRect.left + 8))}px`;
-    entry.badge.style.top = `${Math.max(0, Math.round(hostRect.top + 8))}px`;
+    const visibility = getCardEntryVisibility(entry);
+    entry.button.style.display = visibility.button ? 'inline-flex' : 'none';
+    entry.badge.style.display = visibility.badge ? 'inline-flex' : 'none';
   }
 
-  function getCardControlRect(entry) {
-    const coverLink = getCardCoverLink(entry.link, entry.card);
-    const target = coverLink || entry.link;
-    const host = getCardControlHost(target, entry.card);
-    return (host || target).getBoundingClientRect();
+  function getCardEntryVisibility(entry) {
+    const result = { button: false, badge: false };
+    if (!state.enabled || (isHomeShellOpen() && !state.home.minimized) || document.fullscreenElement) return result;
+    const bounds = entry.anchor.getBoundingClientRect();
+    const focused = document.activeElement;
+    const focus = (entry.card.contains(focused) && focused?.matches(':focus-visible')) || entry.button.matches(':focus-visible');
+    const touch = window.matchMedia('(hover: none)').matches;
+    if (!pointInRect(state.pointer, entry.card.getBoundingClientRect()) && !focus && !touch && !entry.badge.classList.contains(APP + '--active')) return result;
+    const visible = getVisibleCardRect(entry.anchor);
+    if (!visible || visible.width < 90 || visible.height < 42) return result;
+    // Keep the control tied to the actual cover; do not move it onto a clipped edge.
+    const buttonStyle = getComputedStyle(entry.button);
+    const buttonWidth = parseFloat(buttonStyle.width), buttonHeight = parseFloat(buttonStyle.height);
+    const control = { left: bounds.right - 8 - buttonWidth, top: bounds.bottom - 8 - buttonHeight, right: bounds.right - 8, bottom: bounds.bottom - 8 };
+    const inside = control.left >= visible.left && control.top >= visible.top && control.right <= visible.right && control.bottom <= visible.bottom;
+    const pointerExposed = pointInRect(state.pointer, entry.card.getBoundingClientRect()) && isCardExposedAt(entry, state.pointer.x, state.pointer.y, state.shadowRoot);
+    if (inside && (pointerExposed || focus || touch) && isControlAreaExposed(entry, control, state.shadowRoot)) {
+      positionCardControl(entry, entry.button, control.left, control.top);
+      result.button = true;
+    }
+    const badgeRect = { left: bounds.left + 8, top: bounds.top + 8, right: bounds.left + 80, bottom: bounds.top + 32 };
+    if (entry.badge.classList.contains(APP + '--active') && badgeRect.left >= visible.left && badgeRect.top >= visible.top && badgeRect.right <= visible.right && badgeRect.bottom <= visible.bottom && isControlAreaExposed(entry, badgeRect, state.shadowRoot)) {
+      positionCardControl(entry, entry.badge, badgeRect.left, badgeRect.top);
+      result.badge = true;
+    }
+    return result;
   }
 
-  function shouldUseCardOverlayFor(link, card, meta = null) {
-    if (isLiveMeta(meta)) return true;
-    if (isPlaybackPage() || isOgvPage() || isSpacePage() || isDynamicPage()) return true;
-    if (card?.tagName === 'A') return false;
-    const host = getCardControlHost(link, card);
-    return host?.tagName === 'A' && !(host.parentElement && card?.contains?.(host.parentElement));
-  }
-
-  function getCardRect(entry) {
-    const cardRect = entry.card.getBoundingClientRect();
-    const linkRect = entry.link.getBoundingClientRect();
-    const cardLooksTooBroad = cardRect.width > innerWidth * 0.72 && linkRect.width < cardRect.width * 0.45;
-    return cardLooksTooBroad ? linkRect : cardRect;
-  }
-
-  function shouldShowCardButton(entry, rect) {
-    if (entry.button.matches(':hover, :focus-visible')) return true;
-    const pointer = state.pointer;
-    if (!pointer) return false;
-    return pointer.x >= rect.left && pointer.x <= rect.right && pointer.y >= rect.top && pointer.y <= rect.bottom;
+  function positionCardControl(entry, element, left, top) {
+    const host = entry.controlHost;
+    if (host) {
+      const bounds = host.getBoundingClientRect();
+      left = (left - bounds.left) / (bounds.width / host.offsetWidth || 1);
+      top = (top - bounds.top) / (bounds.height / host.offsetHeight || 1);
+    }
+    element.style.left = Math.round(left) + 'px';
+    element.style.top = Math.round(top) + 'px';
   }
 
   function onDocumentMouseMove(event) {
     state.pointer = { x: event.clientX, y: event.clientY };
-    syncOverlayPositions();
-    state.cardEntries.forEach(positionCardEntry);
+    scheduleViewportSync();
   }
 
-  function onDocumentMouseLeave() {
+  function onDocumentMouseLeave(event) {
+    // Captured mouseleave events also fire when a child layer disappears.
+    // Only leaving the document invalidates the last pointer position.
+    if (event.target !== document && event.target !== document.documentElement) return;
     state.pointer = null;
-    syncOverlayPositions();
-    state.cardEntries.forEach(positionCardEntry);
+    scheduleViewportSync();
   }
 
   function scheduleViewportSync() {
+    if (!state.enabled || state.destroyed) return;
     if (state.viewportFrame) return;
     state.viewportFrame = requestAnimationFrame(() => {
       state.viewportFrame = 0;
@@ -1055,38 +1041,14 @@ import {
   }
 
   function syncSettingsVisibility() {
+    settingsUi.sync();
     const hidden = isPlaybackPageWebFullscreen() || isLivePageWebFullscreen();
     state.shadowHost?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
     state.overlay?.classList.toggle(`${APP}--playback-web-fullscreen`, hidden);
   }
 
-  function ensureCardHost(card) {
-    const style = getComputedStyle(card);
-    if (style.position === 'static') card.style.position = 'relative';
-    if (style.display === 'inline') card.style.display = 'inline-block';
-  }
-
-  function getCardControlHost(link, card) {
-    const coverLink = getCardCoverLink(link, card) || link;
-    const host = coverLink.matches?.(COVER_HOST_SELECTOR)
-      ? coverLink
-      : coverLink.closest?.(COVER_HOST_SELECTOR);
-    if (!host || !card.contains(host)) return link.parentElement && card.contains(link.parentElement) ? link.parentElement : link;
-    if (host.tagName !== 'A' || host === card) return host;
-    const parent = host.parentElement;
-    return parent && card.contains(parent) ? parent : host;
-  }
-
-  function getCardCoverLink(link, card) {
-    if (isCoverLink(link)) return link;
-    const bvid = getVideoMetaFromLink(link)?.bvid;
-    if (!bvid) return null;
-    return [...(card.querySelectorAll?.('a[href*="/video/BV"]') || [])]
-      .find((candidate) => getVideoMetaFromLink(candidate)?.bvid === bvid && isCoverLink(candidate)) || null;
-  }
-
   function syncLivePageButton() {
-    if (!supportsDocumentPip() || !isLivePage()) {
+    if (!state.enabled || !supportsDocumentPip() || !isLivePage()) {
       removeLivePageButton();
       return;
     }
@@ -1110,7 +1072,6 @@ import {
         state.lastButton = button;
         const nextMeta = getCurrentLiveMeta();
         if (nextMeta) {
-          pauseLivePagePlayer();
           openWithRenderer(pipRenderer, { ...nextMeta, fromLivePageButton: true });
         }
       });
@@ -1121,13 +1082,14 @@ import {
     button.dataset.roomId = meta.roomId;
     button.dataset.href = meta.href;
     button.dataset.title = meta.title;
-    button.title = `Document PiP：${meta.title}`;
+    button.title = `画中画播放当前直播：${meta.title}`;
     button.setAttribute('aria-label', button.title);
+    button.style.display = isHomeShellOpen() ? 'none' : '';
     if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
   }
 
   function syncPlaybackPagePipButton() {
-    if (!supportsDocumentPip() || (!isPlaybackPage() && !isOgvPage())) {
+    if (!state.enabled || (!isPlaybackPage() && !isOgvPage())) {
       removePlaybackPagePipButton();
       return;
     }
@@ -1151,8 +1113,7 @@ import {
         state.lastButton = button;
         const nextMeta = getCurrentPlaybackPageMeta();
         if (nextMeta) {
-          pausePlaybackPagePlayer();
-          openWithRenderer(pipRenderer, nextMeta);
+          openWithRenderer(supportsDocumentPip() ? pipRenderer : homeRenderer, nextMeta);
         }
       });
       state.playback.button = button;
@@ -1165,8 +1126,9 @@ import {
     button.dataset.epId = meta.epId || '';
     button.dataset.href = meta.href;
     button.dataset.title = meta.title;
-    button.title = `Document PiP：${meta.title}`;
+    button.title = `${supportsDocumentPip() ? '画中画' : '网页小窗'}播放当前视频：${meta.title}`;
     button.setAttribute('aria-label', button.title);
+    button.style.display = isHomeShellOpen() ? 'none' : '';
     if (!button.firstElementChild || button.textContent) button.replaceChildren(createPictureInPictureIcon());
   }
 
@@ -1187,8 +1149,8 @@ import {
     if (!bvid) return null;
     const href = location.href;
     const title = cleanCurrentPageTitle(
-      document.querySelector('meta[property="og:title"]')?.getAttribute('content') ||
       document.querySelector('h1[title]')?.getAttribute('title') ||
+      document.querySelector('meta[property="og:title"]')?.getAttribute('content') ||
       document.querySelector('h1')?.textContent ||
       document.title ||
       bvid,
@@ -1270,9 +1232,11 @@ import {
   }
 
   function scan() {
+    if (!state.enabled || state.destroyed) return;
     ensureControlOverlay();
+    state.cardEntries.forEach(entry => { entry.seen = false; });
     const currentOgvKey = getCurrentPageOgvKey();
-    [...document.querySelectorAll(getVideoLinkSelector())]
+    [...document.querySelectorAll('a[href*="/video/BV"]')]
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
         if (isOwnUiScanTarget(link)) return;
@@ -1298,6 +1262,7 @@ import {
         bindLiveLink(link, meta);
       });
     syncDynamicPortalLiveCards();
+    state.cardEntries = state.cardEntries.filter(entry => { if (entry.seen) return true; removeCardEntry(entry); return false; });
     ensureSettings();
     syncLivePageButton();
     syncPlaybackPagePipButton();
@@ -1335,6 +1300,7 @@ import {
   }
 
   function bindDynamicPortalLiveCards(cards) {
+    if (!state.enabled) return;
     if (!cards?.length) return;
     const currentLive = getCurrentLiveMeta();
     const used = new Set();
@@ -1359,6 +1325,12 @@ import {
   }
 
   function onDomMutated(mutations) {
+    if (!state.enabled) return;
+    const external = mutations.filter(mutation => !isOwnUiScanTarget(mutation.target));
+    if (!external.length) return;
+    mutations = external;
+    onRouteChanged();
+    scheduleViewportSync();
     if (mutations.some(shouldSyncSettingsVisibilityMutation)) scheduleSettingsVisibilitySync();
     if (state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`)) scheduleHomeBottomFixedWrapperSync();
     if (mutations.some(shouldRescanMutation)) scheduleScan();
@@ -1375,18 +1347,19 @@ import {
   }
 
   function shouldRescanMutation(mutation) {
+    if (isOwnUiScanTarget(mutation.target)) return false;
     if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
     if (!(target instanceof Element)) return false;
-    if (isOwnUiScanTarget(target)) return false;
-    return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], [title], [aria-label]') ||
+    return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], img, picture, [title], [aria-label]') ||
+      target.closest?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"]') ||
       target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, .bangumi-card, .season-item, .episode-item, .ep-list-item, .media-card, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bangumi"], [class*="season"], [class*="episode"], [class*="bili-dyn"]');
   }
 
   function isOwnUiScanTarget(element) {
     if (!(element instanceof Element)) return false;
-    return Boolean(element.closest?.(`#${APP}-overlay, #${HOST_ID}`));
+    return Boolean(element.getRootNode() === state.shadowRoot || element.closest?.(`#${APP}-overlay, #${HOST_ID}, [data-bili-popup-ui]`));
   }
 
   function isPlaybackPageWebFullscreen() {
@@ -1447,6 +1420,7 @@ import {
   }
 
   function scheduleScan() {
+    if (!state.enabled || state.destroyed) return;
     if (state.scanTimer) return;
     state.scanTimer = window.setTimeout(() => {
       state.scanTimer = 0;
@@ -1469,65 +1443,26 @@ import {
     state.scanWarmupTimer = 0;
   }
 
-  function getVideoLinkSelector() {
-    if (isDynamicPage()) return DYNAMIC_VIDEO_LINK_SELECTOR;
-    if (!isPlaybackPage()) return 'a[href*="/video/BV"]';
-    return PLAYBACK_VIDEO_LINK_SELECTOR;
-  }
-
   function onDirectCoverClick(event) {
-    if (!state.directClick || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (event.target.closest?.(`.${BUTTON_CLASS}, .${SETTINGS_CLASS}, #${APP}-overlay`)) return;
-
-    const liveEntry = getDirectLiveCardEntry(event.target);
-    if (liveEntry) {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      state.lastFocus = liveEntry.card || liveEntry.link;
-      state.lastButton = null;
-      openByMode(liveEntry.meta);
-      return;
-    }
-
-    const link = event.target.closest?.('a[href*="/video/BV"]');
-    if (link && isCoverLink(link)) {
-      const meta = getVideoMetaFromLink(link);
-      if (!meta || meta.bvid === getCurrentPageBvid()) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      state.lastFocus = link;
-      state.lastButton = null;
-      openByMode(meta);
-      return;
-    }
-
-    const ogvLink = event.target.closest?.(OGV_VIDEO_LINK_SELECTOR);
-    if (!ogvLink || !isCoverLink(ogvLink)) return;
-
-    const ogvMeta = getOgvMetaFromLink(ogvLink);
-    const ogvKey = ogvMeta?.epId ? `ep${ogvMeta.epId}` : ogvMeta?.seasonId ? `ss${ogvMeta.seasonId}` : '';
-    if (!ogvMeta || (getCurrentPageOgvKey() && ogvKey === getCurrentPageOgvKey())) return;
-
+    if (replayingCardLink || !state.enabled || !state.directClick || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = event.target;
+    if (!(target instanceof Element) || isOwnUiScanTarget(target)) return;
+    if (target.closest(CARD_ACTION_SELECTOR)) return;
+    const entry = state.cardEntries.find(item => item.anchor.contains(target));
+    if (!entry || !findCardAnchor(entry.link, entry.card, entry.meta)) return;
+    const meta = isLiveMeta(entry.meta) ? getLiveMetaFromLink(entry.link) || entry.meta
+      : isOgvMeta(entry.meta) ? getOgvMetaFromLink(entry.link) : getVideoMetaFromLink(entry.link);
+    if (!meta) return;
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
-    state.lastFocus = ogvLink;
+    state.lastFocus = entry.link;
     state.lastButton = null;
-    openByMode(ogvMeta);
-  }
-
-  function getDirectLiveCardEntry(target) {
-    if (!(target instanceof Element)) return null;
-    return state.cardEntries.find((entry) => {
-      if (!isLiveMeta(entry.meta) || !entry.card?.isConnected || !entry.link?.isConnected) return false;
-      return entry.card.contains(target) || entry.link.contains(target);
-    }) || null;
+    openByMode(meta);
   }
 
   function openByMode(meta) {
+    if (!state.enabled || state.destroyed || !meta) return;
     if (state.mode === 'pip' && !supportsDocumentPip()) {
       state.mode = 'home';
       setStorageItem(STORAGE_MODE, 'home');
@@ -1542,6 +1477,7 @@ import {
   }
 
   function openWithRenderer(renderer, meta) {
+    if (!state.enabled || state.destroyed || !meta) return;
     pauseExternalPlaybackPagePlayer();
     return rendererOrchestrator.openWithRenderer(renderer, meta);
   }
@@ -1551,7 +1487,7 @@ import {
   }
 
   function startPlaybackFromUrlParams() {
-    if (state.paramStartDone) return;
+    if (!state.enabled || state.paramStartDone) return;
     const meta = getPlaybackMetaFromUrlParams();
     if (!meta) return;
     state.paramStartDone = true;
@@ -1688,7 +1624,7 @@ import {
     const preservePageParts = preserveRightList && isMetaInCurrentPageCards('home', meta);
     showHomeShell(meta.title || meta.bvid, { preserveScroll: Boolean(meta.fromPagePart || preserveRightList) });
     setOriginalLink(ui, meta.href);
-    ui.status.textContent = state.home.player ? '播放页参数：解析中，准备 reload' : '播放页参数：解析中';
+    ui.status.textContent = state.home.player ? '正在切换视频…' : '正在准备播放…';
     if (ogv) {
       state.home.playlistCards = [];
       state.home.liveCards = [];
@@ -1726,9 +1662,7 @@ import {
     syncPlaybackPageMeta('home', bootstrap);
     ui.title.textContent = bootstrap.title || ui.title.textContent;
     setOriginalLink(ui, bootstrap.href);
-    ui.status.textContent = ogv
-      ? `OGV 参数：ep=${bootstrap.playerInfo.epId || '-'} aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`
-      : `播放页参数：aid=${bootstrap.playerInfo.aid} cid=${bootstrap.playerInfo.cid}`;
+    ui.status.textContent = '准备就绪';
     if (ogv) {
       state.home.playlistCards = [];
       renderPageParts('home', bootstrap);
@@ -1794,15 +1728,18 @@ import {
     if (state.home.ui && state.home.overlay?.isConnected) return state.home.ui;
 
     state.home.ui = mountHomePlayerPage({
+      settings: settingsUi,
       createCommentsTabs,
       onBackToTop: scrollHomeCommentsToTop,
       onBackdropClose: closeHome,
       onClose: closeHome,
       onFitLayout: fitHomeLayout,
-      onFullscreen: () => setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`)),
+      onFrameResize: syncHomeSize,
+      onFullscreen: toggleHomeViewportFullscreen,
       onHistoryNext: () => openPlaybackHistoryOffset(1),
       onHistoryPrevious: () => openPlaybackHistoryOffset(-1),
       onModalResizeStart: startHomeModalResize,
+      onMinimize: () => setHomeMinimized(!state.home.minimized),
       onOpenPip: openCurrentHomeInPip,
       onPlayerControlClick: onHomePlayerControlClick,
       onResetSize: resetHomeModalSize,
@@ -1811,6 +1748,8 @@ import {
       supportsPip: supportsDocumentPip(),
     });
     state.home.overlay = state.home.ui.overlay;
+    applyAccentTheme(state.home.ui.mount, state.accentTheme);
+    state.home.ui.dialog.addEventListener('fullscreenchange', onHomeSystemFullscreenChange);
     attachHomePlayerControlCapture(state.home.ui);
     attachHomeBackToTopSync();
     attachHomePlaylistAutoRefresh();
@@ -1821,32 +1760,109 @@ import {
 
   function showHomeShell(title, { preserveScroll = false } = {}) {
     const ui = state.home.ui;
+    ui.setMinimized(state.home.minimized);
+    state.home.overlay.classList.toggle(`${APP}--minimized`, state.home.minimized);
+    state.home.overlay.classList.toggle(`${APP}--fullscreen`, state.home.fullscreen && !state.home.minimized);
+    ui.setOpen(true);
     state.home.overlay.classList.remove(`${APP}--hidden`);
     state.home.overlay.removeAttribute('aria-hidden');
     ensureBiliThemeStylesheets(document);
-    document.body.classList.add(`${APP}--modal-open`);
-    setExternalPlayerFeaturesBlocked(true);
+    document.body.classList.toggle(`${APP}--modal-open`, !state.home.minimized);
+    setExternalPlayerFeaturesBlocked(!state.home.minimized);
     setHomePlayerFeatureBlocked(false);
     ui.title.textContent = title;
     syncPlaybackHistoryButtons();
     if (!preserveScroll) ui.content.scrollTop = 0;
     syncHomeCommentLayout();
     syncCommentsTabs('home');
-    document.documentElement.style.overflow = 'hidden';
+    if (!state.home.minimized) lockHomePageScroll();
     document.addEventListener('keydown', onKeydown, true);
+    document.addEventListener('keyup', onHomeShortcutKeyup, true);
     ui.dialog?.focus?.({ preventScroll: true });
     syncHomeSize();
     syncHomeModalSizeButton();
+    syncHomeFullscreenButton();
     syncAutoPlayNextButton();
     syncGamepadIndicator();
     if (state.home.player) startAutoPlayCountdownMonitor('home');
     startGamepadControls();
     schedulePlaylistAutoRefreshCheck('home');
+    scheduleViewportSync();
+  }
+
+  function lockHomePageScroll() {
+    if (state.home.savedPageOverflow === null) state.home.savedPageOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+  }
+
+  function unlockHomePageScroll() {
+    if (state.home.savedPageOverflow === null) return;
+    document.documentElement.style.overflow = state.home.savedPageOverflow;
+    state.home.savedPageOverflow = null;
+  }
+
+  function setHomeMinimized(minimized) {
+    const home = state.home;
+    if (!home.ui || !isHomeShellOpen() || home.minimized === Boolean(minimized)) return;
+    if (minimized && isHomeSystemFullscreen()) {
+      const token = state.switchToken;
+      void document.exitFullscreen().then(() => {
+        if (token === state.switchToken) setHomeMinimized(true);
+      }).catch(() => {});
+      return;
+    }
+    const from = capturePlayerLayout(home.ui.dialog, home.ui.playerSlot);
+    cancelHomeLayoutAnimation();
+    home.minimized = Boolean(minimized);
+    home.overlay.classList.toggle(`${APP}--fullscreen`, home.fullscreen && !home.minimized);
+    home.overlay.classList.toggle(`${APP}--minimized`, home.minimized);
+    home.ui.setMinimized(home.minimized);
+    // Restore to the video, even if the lower pane was scrolled before collapse.
+    // The comments remain below the first-screen slot, outside the animated box.
+    home.ui.content.scrollTop = 0;
+    document.body.classList.toggle(`${APP}--modal-open`, !home.minimized);
+    state.shadowHost.style.zIndex = home.minimized ? '2147483101' : '2147482999';
+    setExternalPlayerFeaturesBlocked(!home.minimized);
+    if (home.minimized) unlockHomePageScroll();
+    else lockHomePageScroll();
+    syncHomeFullscreenButton();
+    syncHomeSize();
+    scheduleViewportSync();
+    animateHomeLayout(from, { hideComments: true, opacity: .85 });
+    if (!home.minimized) home.ui.dialog.focus({ preventScroll: true });
+  }
+
+  function cancelHomeLayoutAnimation() {
+    const home = state.home;
+    const animation = home.layoutAnimation;
+    home.layoutAnimation = null;
+    animation?.cancel();
+    home.overlay?.removeAttribute('data-layout-animating');
+    home.overlay?.removeAttribute('data-layout-hide-comments');
+  }
+
+  function animateHomeLayout(from, { hideComments = false, opacity = 1 } = {}) {
+    const home = state.home;
+    const animation = animatePlayerLayout(home.ui.dialog, home.ui.playerSlot, from, { opacity });
+    if (!animation) return;
+    home.overlay.dataset.layoutAnimating = 'true';
+    if (hideComments) home.overlay.dataset.layoutHideComments = 'true';
+    home.layoutAnimation = animation;
+    const finish = () => {
+      if (home.layoutAnimation !== animation) return;
+      home.layoutAnimation = null;
+      home.overlay?.removeAttribute('data-layout-animating');
+      home.overlay?.removeAttribute('data-layout-hide-comments');
+      syncHomeSize();
+    };
+    animation.finished.then(finish, finish);
   }
 
   function onCommentsTabChange(kind, tab) {
     syncPlayerHandoffAvailability(kind);
     if (tab === 'playlist') schedulePlaylistAutoRefreshCheck(kind);
+    if (kind === 'home') syncHomeBackToTopButton();
+    else syncPipBackToTopButton(state.pip.win);
   }
 
   function openCurrentHomeInPip() {
@@ -1895,31 +1911,122 @@ import {
   }
 
   function onHomePlayerControlClick(event) {
+    if (event.type === 'pointerdown' || event.type === 'keydown') cancelHomeDelayedPlay();
+    onEmbeddedPlayerControl(event, 'home');
+  }
+
+  function onEmbeddedPlayerControl(event, kind) {
     const target = event.target;
-    const control = target?.closest?.(
-      '.bpx-player-ctrl-web, .bpx-player-ctrl-web-enter, .bpx-player-ctrl-web-leave, .bilibili-player-video-btn-web-fullscreen',
-    );
-    if (!control || !state.home.ui?.playerRoot?.contains(control)) return;
+    const root = kind === 'home' ? state.home.ui?.playerRoot : state.pip.win?.document.getElementById('bilibili-player');
+    const control = target?.closest?.('.bpx-player-ctrl-prev, .bpx-player-ctrl-next, .bpx-player-ctrl-wide, .bpx-player-ctrl-web, .bpx-player-ctrl-full, .bilibili-player-video-btn-web-fullscreen, .bilibili-player-video-btn-fullscreen');
+    if (!control || !root?.contains(control)) return;
+    const navigation = control.matches('.bpx-player-ctrl-prev, .bpx-player-ctrl-next');
+    const wide = control.matches('.bpx-player-ctrl-wide');
+    const full = control.matches('.bpx-player-ctrl-full, .bilibili-player-video-btn-fullscreen');
+    if (!wide && !navigation && kind !== 'home') return;
+    if (event.type.startsWith('key') && !['Enter', ' '].includes(event.key)) return;
+    if (event.type === 'pointerdown' && event.button !== 0) return;
+    if (navigation) {
+      event.stopImmediatePropagation();
+      if (event.type === 'pointerdown') return;
+      event.preventDefault();
+      if (event.type === 'keyup' || event.repeat) return;
+      const direction = control.matches('.bpx-player-ctrl-prev') ? -1 : 1;
+      if (playAdjacentFromActiveTab(kind, direction, { preferPageTree: true })) showSwitchBurst(kind, direction);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
-    if (event.type === 'click' && control.__biliPopupPlayerNanoWebFullscreenPointer) {
-      control.__biliPopupPlayerNanoWebFullscreenPointer = false;
-      return;
-    }
-    if (event.type === 'pointerdown') {
-      if (event.button != null && event.button !== 0) return;
-      control.__biliPopupPlayerNanoWebFullscreenPointer = true;
-    }
-    setHomeFullscreen(!state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+    // Changing layout on pointerdown moves the control before pointerup. The
+    // browser then retargets click to the video and toggles playback instead.
+    if (event.type === 'pointerdown' || event.type === 'keyup' || event.repeat) return;
+    if (wide) togglePlayerOnly(kind);
+    else if (full) void toggleHomeSystemFullscreen();
+    else toggleHomeViewportFullscreen();
   }
 
   function attachHomePlayerControlCapture(ui) {
+    attachPlayerWheelCapture(ui?.playerWrap);
     const root = ui?.playerRoot;
     if (!root || root.__biliPopupPlayerNanoControlCaptureBound) return;
     root.__biliPopupPlayerNanoControlCaptureBound = true;
     root.addEventListener('pointerdown', onHomePlayerControlClick, true);
     root.addEventListener('click', onHomePlayerControlClick, true);
+    root.addEventListener('keydown', onHomePlayerControlClick, true);
+    root.addEventListener('keyup', onHomePlayerControlClick, true);
+    ui.videoGestures = installVideoGestures(ui.playerWrap, {
+      getPlayback: () => isHomeShellOpen() ? { player: state.home.player, root, key: state.switchToken } : null,
+      onDoubleClick: () => { void toggleHomeSystemFullscreen(); },
+    });
+  }
+
+  function attachPlayerWheelCapture(frame) {
+    if (!frame || frame.__biliPopupPlayerNanoWheelCaptureBound) return;
+    frame.__biliPopupPlayerNanoWheelCaptureBound = true;
+    const shell = frame.closest(`#${APP}-dialog, #shell`);
+    // Capture above the native player, including its volume control and any
+    // capture listeners. Leave the default action intact so content still scrolls.
+    for (const type of ['wheel', 'mousewheel', 'DOMMouseScroll']) {
+      frame.addEventListener(type, onEmbeddedPlayerWheel, { capture: true, passive: true });
+      // Nano also handles volume on document mousewheel/DOMMouseScroll. Comments
+      // and lists bypass the frame, so stop their bubbling at the shell boundary
+      // after their own handlers have run. This also covers shadow-root comments.
+      shell?.addEventListener(type, onPlayerShellWheel, { passive: true });
+    }
+  }
+
+  function onPlayerShellWheel(event) {
+    event.stopPropagation();
+  }
+
+  function onEmbeddedPlayerWheel(event) {
+    event.stopImmediatePropagation();
+  }
+
+  function syncEmbeddedLayoutControl(kind) {
+    const root = kind === 'home' ? state.home.ui?.playerRoot : state.pip.win?.document.getElementById('bilibili-player');
+    if (!root) return;
+    const control = root?.querySelector('.bpx-player-ctrl-wide');
+    control?.setAttribute('aria-label', getCommentLayout(kind) === 'right' ? '宽屏' : '恢复侧栏');
+    if (kind === 'home') {
+      root.dataset.shellFullscreen = String(isHomeViewportFilled());
+      root.querySelector('.bpx-player-ctrl-web')?.setAttribute('aria-label', getHomeWebFullscreenLabel());
+      root.querySelector('.bpx-player-ctrl-full')?.setAttribute('aria-label', isHomeSystemFullscreen() ? '退出系统全屏' : '系统全屏');
+    }
+    // Nano derives these hover labels from its internal Web mode, which we keep
+    // enabled for layout. Observe only its tooltip area to present shell state.
+    const tooltips = root.querySelector('.bpx-player-tooltip-area');
+    if (tooltips && root.__biliPopupTooltipArea !== tooltips) {
+      root.__biliPopupTooltipObserver?.disconnect();
+      root.__biliPopupTooltipArea = tooltips;
+      root.__biliPopupTooltipObserver = new root.ownerDocument.defaultView.MutationObserver(() => syncEmbeddedControlTooltips(kind, root));
+      root.__biliPopupTooltipObserver.observe(tooltips, { childList: true, subtree: true, characterData: true });
+    }
+    syncEmbeddedControlTooltips(kind, root);
+  }
+
+  function getHomeWebFullscreenLabel() {
+    return isHomeSystemFullscreen() ? '退出系统全屏' : isHomeViewportFilled() ? '退出网页全屏' : '网页全屏';
+  }
+
+  function syncEmbeddedControlTooltips(kind, root) {
+    const labels = { widescreen: getCommentLayout(kind) === 'right' ? '宽屏模式' : '恢复侧栏' };
+    if (kind === 'home') Object.assign(labels, {
+      webscreen: getHomeWebFullscreenLabel(),
+      fullscreen: isHomeSystemFullscreen() ? '退出系统全屏 (f)' : '进入系统全屏 (f)',
+    });
+    for (const [name, label] of Object.entries(labels)) {
+      const title = root.querySelector(`.bpx-player-tooltip-item[data-name="ctrl:${name}"] .bpx-player-tooltip-title`);
+      if (title && title.textContent !== label) title.textContent = label;
+    }
+  }
+
+  function disconnectEmbeddedControlTooltips(root) {
+    root?.__biliPopupTooltipObserver?.disconnect();
+    if (!root) return;
+    delete root.__biliPopupTooltipArea;
+    delete root.__biliPopupTooltipObserver;
   }
 
   async function likeCurrentPlayback(kind) {
@@ -2495,12 +2602,61 @@ import {
   }
 
   function setHomeFullscreen(active) {
-    if (!state.home.overlay) return;
-    state.home.overlay.classList.toggle(`${APP}--fullscreen`, Boolean(active));
+    const home = state.home;
+    if (!home.overlay) return;
+    // Collapsing and closing only change presentation, never the user's choice.
+    home.fullscreen = Boolean(active);
+    setStorageItem(STORAGE_HOME_FULLSCREEN, home.fullscreen ? '1' : '0');
+    if (active && home.minimized) {
+      setHomeMinimized(false);
+      syncHomePlayerOnlyControl();
+      return;
+    }
+    // Capture the current rendered box before cancelling, so repeated toggles
+    // reverse smoothly from the visible size rather than jumping to an endpoint.
+    const from = capturePlayerLayout(home.ui.dialog, home.ui.playerSlot);
+    cancelHomeLayoutAnimation();
+    home.overlay.classList.toggle(`${APP}--fullscreen`, home.fullscreen && !home.minimized);
     syncHomeFullscreenButton();
     syncHomePlayerOnlyControl();
     syncHomeModalSizeButton();
     syncHomeSize();
+    if (!home.minimized && isHomeShellOpen()) animateHomeLayout(from);
+  }
+
+  function isHomeSystemFullscreen() {
+    return Boolean(state.home.ui?.dialog && document.fullscreenElement === state.home.ui.dialog);
+  }
+
+  function isHomeViewportFilled() {
+    return isHomeSystemFullscreen() || Boolean(state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+  }
+
+  function toggleHomeViewportFullscreen() {
+    if (isHomeSystemFullscreen()) void toggleHomeSystemFullscreen();
+    else setHomeFullscreen(!state.home.fullscreen);
+  }
+
+  async function toggleHomeSystemFullscreen() {
+    const home = state.home;
+    if (!isHomeShellOpen() || !home.ui?.dialog?.requestFullscreen) return;
+    try {
+      if (isHomeSystemFullscreen()) await document.exitFullscreen();
+      else {
+        if (home.minimized) setHomeMinimized(false);
+        cancelHomeLayoutAnimation();
+        // Include our toolbar and either comment layout in the browser's top layer.
+        await home.ui.dialog.requestFullscreen();
+      }
+    } catch (error) {
+      home.ui.status.textContent = `无法切换系统全屏：${error?.message || '浏览器未允许此操作'}`;
+    }
+  }
+
+  function onHomeSystemFullscreenChange() {
+    syncHomeFullscreenButton();
+    syncHomeSize();
+    scheduleViewportSync();
   }
 
   function buildHomePrimarySetting(bootstrap) {
@@ -2526,7 +2682,7 @@ import {
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
-      screenKind: getScreenKind(runtime, 'home'),
+      screenKind: getScreenKind(runtime),
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
     };
@@ -2626,9 +2782,17 @@ import {
       mount: state.home.ui?.commentsMount,
       targetDocument: document,
       getCtor: () => pageWindow.BiliComments,
-      beforeLoad: () => ensureBiliThemeStylesheets(document),
+      beforeLoad: async () => {
+        ensureBiliThemeStylesheets(document);
+        // OGV's Next.js page queues its own comment bundle with lazyOnload.
+        // Reuse that scheduled script, even when hydration has not inserted it.
+        if (isOgvPage() && document.getElementById('__NEXT_DATA__') && !pageWindow.BiliComments) {
+          await waitForHostScript(document, bootstrap.commentScript);
+        }
+      },
       getPlayer: () => state.home.player,
       getScrollContainer: getHomeCommentInstanceScrollContainer,
+      getLayout: () => getCommentLayout('home'),
       isActive: () => token === state.switchToken && state.home.ui && !state.home.overlay?.classList.contains(`${APP}--hidden`),
     }, bootstrap, token);
     scheduleHomeBottomFixedWrapperSync();
@@ -2650,7 +2814,7 @@ import {
   rendererOrchestrator = createRendererOrchestrator({
     getActiveRenderer,
     nextToken: () => ++state.switchToken,
-    isCurrentToken: (token) => token === state.switchToken,
+    isCurrentToken: (token) => state.enabled && !state.destroyed && token === state.switchToken,
     resolveBootstrap,
     saveLastPlayed,
     recordPlaybackHistory,
@@ -2693,7 +2857,7 @@ import {
     }
   }
 
-  async function preparePip(meta) {
+  async function preparePip(meta, token) {
     if (!supportsDocumentPip()) {
       setLastButtonStatus('不支持 PiP');
       return null;
@@ -2714,6 +2878,7 @@ import {
         setLastButtonStatus('PiP 被拒绝');
         return null;
       }
+      if (!state.enabled || state.destroyed || token !== state.switchToken) { pipWindow.close(); return null; }
       state.pip.win = pipWindow;
     }
     attachPipWindowCloseSync(pipWindow);
@@ -2804,6 +2969,7 @@ import {
     }));
 
     mountPipPlayerPage({
+      settings: settingsUi,
       targetDocument: pipWindow.document,
       createCommentsTabs,
     });
@@ -2981,11 +3147,12 @@ import {
         commentLayoutClass: getCommentLayout('pip') === 'right' ? 'comments-right' : 'comments-bottom',
       }));
       mountPipPlayerPage({
+        settings: settingsUi,
         targetDocument: pipWindow.document,
         createCommentsTabs,
       });
-      const stage = pipWindow.document.getElementById('stage');
-      if (stage) stage.innerHTML = getLivePlayerShellMarkup();
+      const playerRoot = pipWindow.document.getElementById('bilibili-player');
+      if (playerRoot) playerRoot.innerHTML = getLivePlayerShellMarkup();
       attachPipKeyboardShortcuts(pipWindow);
       attachPipCommentsTabs(pipWindow);
       setOgvListMode('pip', false);
@@ -3018,6 +3185,7 @@ import {
     const playerRoot = targetWindow.document.getElementById('live-player');
     if (!playerRoot) throw new Error('live-player container not found');
 
+    attachPlayerWheelCapture(targetWindow.document.getElementById('stage'));
     const player = new targetWindow.Player(playerRoot, buildLivePipPlayerOptions(targetWindow, bootstrap));
     targetWindow.EmbedPlayer = { instance: player };
     targetWindow.__PLAYER_GLOBAL_INSTANCE__ = player;
@@ -3043,6 +3211,7 @@ import {
       stopPipLivePlayerOnlyControlObserver();
       if (state.pip.player) disposePipPlayer();
       if (state.pip.win === targetWindow) state.pip.win = null;
+      settingsUi.sync();
     });
   }
 
@@ -3139,22 +3308,29 @@ import {
     targetWindow.addEventListener('pagehide', () => {
       if (state.pip.switchingWindow) return;
       targetWindow.__biliPopupPlayerNanoClosed = true;
+      commentsTabsUi.dispose('pip');
+      targetWindow.__biliPopupReactUi?.dispose();
+      delete targetWindow.__biliPopupReactUi;
       if (state.pip.win === targetWindow) state.pip.win = null;
+      settingsUi.sync();
       if (!isHomeShellOpen()) restoreExternalPlaybackPagePlayer();
     }, { capture: true });
   }
 
   function isHomeShellOpen() {
-    return Boolean(state.home.overlay && !state.home.overlay.classList.contains(`${APP}--hidden`));
+    return Boolean(state.home.overlay && !state.home.overlay.hidden && !state.home.overlay.classList.contains(`${APP}--hidden`));
   }
 
   function attachPipKeyboardShortcuts(targetWindow) {
     if (!targetWindow || targetWindow.closed || targetWindow.__biliPopupPlayerNanoKeydownBound) return;
     const handler = (event) => onPipKeydown(event);
+    const keyup = (event) => handleCommentImageShortcut(event, targetWindow.document);
     targetWindow.__biliPopupPlayerNanoKeydownBound = true;
     targetWindow.document.addEventListener('keydown', handler, true);
+    targetWindow.document.addEventListener('keyup', keyup, true);
     targetWindow.addEventListener('pagehide', () => {
       targetWindow.document?.removeEventListener?.('keydown', handler, true);
+      targetWindow.document?.removeEventListener?.('keyup', keyup, true);
       if (state.pip.keydownHandler === handler) state.pip.keydownHandler = null;
       delete targetWindow.__biliPopupPlayerNanoKeydownBound;
     }, { once: true });
@@ -3281,7 +3457,7 @@ import {
       if (state.pip.player === player) unbindPipPlayerHandoff();
       if (state.pip.player === player) unbindPipPlayerEnded();
       try {
-        player.disconnect?.();
+        if (state.pip.player === player) player.disconnect?.();
       } catch {
         // Ignore cleanup failures.
       }
@@ -3316,7 +3492,7 @@ import {
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
-      screenKind: getScreenKind(targetWindow.nano, 'pip'),
+      screenKind: getScreenKind(targetWindow.nano),
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
     };
@@ -3334,6 +3510,7 @@ import {
       getCtor: () => targetWindow.BiliComments,
       getPlayer: () => state.pip.player,
       getScrollContainer: () => getPipCommentInstanceScrollContainer(targetWindow),
+      getLayout: () => getCommentLayout('pip'),
       isActive: () => token === state.switchToken && !targetWindow.closed,
     }, bootstrap, token);
     attachPipCommentScrollSync(targetWindow);
@@ -3353,7 +3530,7 @@ import {
   }
 
   function getCommentLayout(kind) {
-    return kind === 'pip' ? state.pipCommentLayout : state.homeCommentLayout;
+    return kind === 'pip' ? state.pipCommentLayout : window.innerWidth <= 900 ? 'bottom' : state.homeCommentLayout;
   }
 
   function getCommentWidth(kind) {
@@ -3375,6 +3552,15 @@ import {
 
   function setCommentLayout(kind, value) {
     const next = value === 'right' ? 'right' : 'bottom';
+    if ((kind === 'pip' ? state.pipCommentLayout : state.homeCommentLayout) === next) return;
+    const doc = kind === 'home' ? document : state.pip.win?.document;
+    const shell = kind === 'home' ? state.home.ui?.dialog : doc?.getElementById('shell');
+    const slot = kind === 'home' ? state.home.ui?.playerSlot : doc?.getElementById('stage-slot');
+    const frame = kind === 'home' ? state.home.ui?.playerWrap : doc?.getElementById('stage');
+    const from = shell && slot && frame?.dataset.scrollFloating !== 'true' &&
+      (kind === 'pip' || (isHomeShellOpen() && !state.home.minimized)) ? capturePlayerLayout(shell, slot) : null;
+    if (kind === 'home') cancelHomeLayoutAnimation();
+    else cancelPipLayoutAnimation();
     if (kind === 'pip') {
       if (state.pipCommentLayout === next) return;
       state.pipCommentLayout = next;
@@ -3383,10 +3569,34 @@ import {
       state.homeCommentLayout = next;
     }
     setStorageItem(getCommentLayoutStorageKey(kind), next);
+    const scrollContainer = kind === 'home' ? state.home.ui?.content : doc?.getElementById('layout');
+    if (scrollContainer) scrollContainer.scrollTop = 0;
     syncCommentLayout(kind);
     if (kind === 'pip') syncPipLivePlayerOnlyControl(state.pip.win);
     else syncHomePlayerOnlyControl();
-    remountCommentsForLayout(kind);
+    if (kind === 'pip') remountCommentsForLayout(kind);
+    if (!from) return;
+    if (kind === 'home') animateHomeLayout(from);
+    else {
+      const animation = animatePlayerLayout(shell, slot, from);
+      if (!animation) return;
+      state.pip.layoutAnimation = animation;
+      doc.body.dataset.layoutAnimating = 'true';
+      const finish = () => {
+        if (state.pip.layoutAnimation !== animation) return;
+        state.pip.layoutAnimation = null;
+        delete doc.body.dataset.layoutAnimating;
+        if (!state.pip.win?.closed) syncPipSize(state.pip.win);
+      };
+      animation.finished.then(finish, finish);
+    }
+  }
+
+  function cancelPipLayoutAnimation() {
+    const animation = state.pip.layoutAnimation;
+    state.pip.layoutAnimation = null;
+    animation?.cancel();
+    state.pip.win?.document?.body?.removeAttribute('data-layout-animating');
   }
 
   function syncCommentLayout(kind) {
@@ -3404,14 +3614,6 @@ import {
     if (active) scope.ogvListMode = false;
     if (active) scope.activeCommentsTab = 'live';
     else if (scope.activeCommentsTab === 'live') scope.activeCommentsTab = 'comments';
-    const doc = kind === 'pip' ? state.pip.win?.document : document;
-    const root = kind === 'pip' ? doc?.getElementById('comments') : state.home.ui?.comments;
-    root?.querySelectorAll?.(`.${APP}__comments-tab`)?.forEach((button) => {
-      button.hidden = active
-        ? button.dataset.tab !== 'live'
-        : (button.dataset.tab === 'pages' && !scope.pageCards?.length) ||
-          button.dataset.tab === 'live';
-    });
     if (kind === 'home') syncAutoPlayNextButton();
     syncCommentsTabs(kind);
   }
@@ -3488,7 +3690,7 @@ import {
       syncHomeBackToTopButton();
       scheduleHomeBottomFixedWrapperSync();
     }, { passive: true });
-    [ui.commentsPanel, ui.pagesPanel, ui.playlistPanel, ui.recommendPanel].forEach((panel) => {
+    [ui.commentsPanel, ui.pagesList, ui.playlistList, ui.recommendList, ui.liveList].forEach((panel) => {
       panel?.addEventListener('scroll', () => {
         syncHomeBackToTopButton();
         scheduleHomeBottomFixedWrapperSync();
@@ -3503,7 +3705,7 @@ import {
     if (!ui?.content || !ui.playlistPanel) return;
     [
       ui.content,
-      ui.playlistPanel,
+      ui.playlistList,
     ].forEach((container) => {
       if (!container || container.__biliPopupPlayerNanoPlaylistRefreshBound) return;
       container.__biliPopupPlayerNanoPlaylistRefreshBound = true;
@@ -3515,7 +3717,7 @@ import {
     if (!targetWindow || targetWindow.closed) return;
     const doc = targetWindow.document;
     const layout = doc?.getElementById('layout');
-    const playlistPanel = doc?.getElementById('playlist-panel');
+    const playlistPanel = doc?.getElementById('playlist-list');
     [
       layout,
       playlistPanel,
@@ -3600,14 +3802,15 @@ import {
     if (kind === 'home') {
       const ui = state.home.ui;
       if (!ui) return null;
-      return getCommentLayout('home') === 'right' ? ui.playlistPanel : ui.content;
+      return ui.playlistList;
     }
     const doc = state.pip.win && !state.pip.win.closed ? state.pip.win.document : null;
     if (!doc) return null;
-    return getCommentLayout('pip') === 'right' ? doc.getElementById('playlist-panel') : doc.getElementById('layout');
+    return doc.getElementById('playlist-list');
   }
 
   function isPlaylistAutoRefreshActive(kind) {
+    if (!getPlaylistScrollContainer(kind)?.getClientRects().length) return false;
     if (kind === 'home') {
       return Boolean(
         state.home.ui &&
@@ -3648,7 +3851,7 @@ import {
     button.__biliPopupPlayerNanoScrollBound = true;
     button.addEventListener('click', () => scrollPipCommentsToTop(targetWindow));
     layout.addEventListener('scroll', () => syncPipBackToTopButton(targetWindow), { passive: true });
-    comments.addEventListener('scroll', () => syncPipBackToTopButton(targetWindow), { passive: true });
+    comments.addEventListener('scroll', () => syncPipBackToTopButton(targetWindow), { passive: true, capture: true });
     syncPipBackToTopButton(targetWindow);
   }
 
@@ -3739,6 +3942,7 @@ import {
     const ui = state.home.ui;
     if (!ui?.overlay) return;
     ui.overlay.classList.toggle(`${APP}--comments-right`, getCommentLayout('home') === 'right');
+    syncCommentsTabs('home');
     syncCommentWidth('home');
     syncHomeBackToTopButton();
     scheduleHomeBottomFixedWrapperSync();
@@ -3746,21 +3950,13 @@ import {
 
   function getHomeCommentsScrollContainer() {
     if (getCommentLayout('home') !== 'right') return state.home.ui?.content;
-    return getHomeActiveCommentsPanel();
+    const key = state.home.activeCommentsTab || 'comments';
+    return state.home.ui?.[key === 'comments' ? 'commentsPanel' : `${key}List`];
   }
 
   function getHomeCommentInstanceScrollContainer() {
     if (getCommentLayout('home') !== 'right') return state.home.ui?.content;
     return state.home.ui?.commentsPanel;
-  }
-
-  function getHomeActiveCommentsPanel() {
-    const ui = state.home.ui;
-    if (!ui) return null;
-    if (state.home.activeCommentsTab === 'pages') return ui.pagesPanel;
-    if (state.home.activeCommentsTab === 'playlist') return ui.playlistPanel;
-    if (state.home.activeCommentsTab === 'recommend') return ui.recommendPanel;
-    return ui.commentsPanel;
   }
 
   function syncPipCommentLayout(targetWindow, options = {}) {
@@ -3770,6 +3966,7 @@ import {
     const { resize = true } = options;
     body.classList.toggle('comments-right', getCommentLayout('pip') === 'right');
     body.classList.toggle('comments-bottom', getCommentLayout('pip') !== 'right');
+    syncCommentsTabs('pip');
     syncCommentWidth('pip');
     attachPipCommentScrollSync(targetWindow);
     attachPipBackToTopSync(targetWindow);
@@ -3797,7 +3994,8 @@ import {
     if (!targetWindow || targetWindow.closed) return null;
     const doc = targetWindow.document;
     if (getCommentLayout('pip') !== 'right') return doc.getElementById('layout');
-    return getPipActiveCommentsPanel(doc);
+    const key = state.pip.activeCommentsTab || 'comments';
+    return doc.getElementById(key === 'comments' ? 'comments-panel' : `${key}-list`);
   }
 
   function getPipCommentInstanceScrollContainer(targetWindow) {
@@ -3807,17 +4005,10 @@ import {
     return doc.getElementById('comments-panel');
   }
 
-  function getPipActiveCommentsPanel(doc) {
-    if (!doc) return null;
-    if (state.pip.activeCommentsTab === 'pages') return doc.getElementById('pages-panel');
-    if (state.pip.activeCommentsTab === 'playlist') return doc.getElementById('playlist-panel');
-    if (state.pip.activeCommentsTab === 'recommend') return doc.getElementById('recommend-panel');
-    return doc.getElementById('comments-panel');
-  }
-
-  function getScreenKind(runtime, kind) {
-    const key = getCommentLayout(kind) === 'bottom' ? 'Wide' : 'Normal';
-    return runtime?.ScreenKind?.[key] ?? (key === 'Wide' ? 1 : 0);
+  function getScreenKind(runtime) {
+    // Nano's Web mode puts controls and the danmaku input over the video.
+    // Our shell owns the bounds, so this fills only the embedded player.
+    return runtime?.ScreenKind?.Web ?? 2;
   }
 
   function getInitialOgvQuality() {
@@ -3848,7 +4039,12 @@ import {
   function handleScreenChanged(kind, runtime, detail) {
     if (!detail?.mainTrigger) return;
     if (isScreenKind(runtime, detail.mainScreen, 'Wide')) setCommentLayout(kind, 'bottom');
-    else if (isScreenKind(runtime, detail.mainScreen, 'Normal')) setCommentLayout(kind, 'right');
+    if (isScreenKind(runtime, detail.mainScreen, 'Wide') || isScreenKind(runtime, detail.mainScreen, 'Normal')) {
+      // Native shortcuts can leave Web mode. Keep the embedded layout immersive
+      // without changing browser fullscreen (which uses sideScreen).
+      const player = state[kind]?.player;
+      try { Promise.resolve(player?.requestStatue?.(getScreenKind(runtime))).catch(() => {}); } catch { /* Player is disconnecting. */ }
+    }
   }
 
   function bindHomeScreenChange(player) {
@@ -4455,21 +4651,23 @@ import {
   }
 
   function readPlayerNavigationInfo(player) {
+    let manifest = {};
+    try { manifest = player?.getManifest?.() || {}; } catch { /* The player may still be connecting. */ }
     const store = player?.rootStore?.configStore || player?.configStore || {};
     const story = player?.rootStore?.storyStore?.state || player?.storyStore?.state || {};
     const primary = player?.primary || {};
     const input = player?.rootPlayer?.input || player?.input || {};
     return {
-      aid: readStoreValue(store, 'aid') || story.aid || input.aid || primary.aid,
-      bvid: String(readStoreValue(store, 'bvid') || story.bvid || input.bvid || primary.bvid || '').trim(),
-      cid: readStoreValue(store, 'cid') || story.cid || input.cid || primary.cid,
-      seasonId: readFirstStoreValue(store, ['seasonId', 'season_id']) ||
+      aid: manifest.aid || readStoreValue(store, 'aid') || story.aid || input.aid || primary.aid,
+      bvid: String(manifest.bvid || readStoreValue(store, 'bvid') || story.bvid || input.bvid || primary.bvid || '').trim(),
+      cid: manifest.cid || readStoreValue(store, 'cid') || story.cid || input.cid || primary.cid,
+      seasonId: manifest.seasonId || readFirstStoreValue(store, ['seasonId', 'season_id']) ||
         story.seasonId || story.season_id || input.seasonId || input.season_id || primary.seasonId || primary.season_id,
-      epId: readFirstStoreValue(store, ['epId', 'ep_id', 'episodeId', 'episode_id']) ||
+      epId: manifest.episodeId || readFirstStoreValue(store, ['epId', 'ep_id', 'episodeId', 'episode_id']) ||
         story.epId || story.ep_id || story.episodeId || story.episode_id ||
         input.epId || input.ep_id || input.episodeId || input.episode_id ||
         primary.epId || primary.ep_id || primary.episodeId || primary.episode_id,
-      p: Number(readStoreValue(store, 'p') || story.p || input.p || primary.p || 1),
+      p: Number(manifest.p || readStoreValue(store, 'p') || story.p || input.p || primary.p || 1),
       title: String(story.title || primary.title || '').trim(),
     };
   }
@@ -4568,6 +4766,13 @@ import {
       hasPrev: Boolean(availability.hasPrev),
       hasNext: Boolean(availability.hasNext),
     };
+
+    // Current Nano exposes navigation through its episode API, not rootStore.
+    // List changes after connect/reload must update these observable flags.
+    if (typeof player.episode?.setNavigationState === 'function') {
+      player.episode.setNavigationState(next);
+      return;
+    }
 
     trySetPlayerStoreState(player?.rootStore?.episodeStore, next);
     trySetPlayerStoreState(player?.episodeStore, next);
@@ -4874,7 +5079,7 @@ import {
     if (getCommentLayout('home') === 'right') {
       const rect = ui.content.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      const targetPlayerWidth = Math.round(Math.max(1, (rect.height - getHomePlayerChromeHeight()) * 16 / 9));
+      const targetPlayerWidth = Math.round(Math.max(1, rect.height * 16 / 9));
       const nextWidth = clampCommentWidth(
         rect.width - MODAL_COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
         rect.width,
@@ -4885,7 +5090,7 @@ import {
       return;
     }
 
-    if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) {
+    if (isHomeViewportFilled()) {
       syncHomeSize();
       return;
     }
@@ -4913,6 +5118,14 @@ import {
   function ensurePipPlayerControls(targetWindow, href) {
     if (!targetWindow || targetWindow.closed) return;
     const doc = targetWindow.document;
+    attachPlayerWheelCapture(doc.getElementById('stage'));
+    const root = doc.getElementById('bilibili-player');
+    if (root && !root.__biliPopupPlayerNanoControlCaptureBound) {
+      root.__biliPopupPlayerNanoControlCaptureBound = true;
+      for (const type of ['pointerdown', 'click', 'keydown', 'keyup']) {
+        root.addEventListener(type, event => onEmbeddedPlayerControl(event, 'pip'), true);
+      }
+    }
     const controls = getOrCreatePipControls(targetWindow, href);
     const controlsToken = (targetWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
     targetWindow.__biliPopupPlayerNanoControlsToken = controlsToken;
@@ -5219,19 +5432,29 @@ import {
   }
 
   function playHomeSoon(token, delay) {
-    window.setTimeout(() => {
+    cancelHomeDelayedPlay();
+    const player = state.home.player;
+    state.home.playTimer = window.setTimeout(() => {
+      state.home.playTimer = 0;
       if (token !== state.switchToken || !state.home.player || state.home.overlay?.classList.contains(`${APP}--hidden`)) return;
+      if (state.home.player !== player) return;
       syncHomeSize();
       try {
-        state.home.player.play?.();
+        const paused = state.home.ui?.playerRoot.querySelector('video')?.paused ?? player.isPaused?.();
+        if (paused !== false) player.play?.()?.catch?.(() => {});
       } catch {
         // Player may already be playing.
       }
     }, delay);
   }
 
+  function cancelHomeDelayedPlay() {
+    window.clearTimeout(state.home.playTimer);
+    state.home.playTimer = 0;
+  }
+
   function startHomeModalResize(event) {
-    if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) return;
+    if (isHomeViewportFilled()) return;
     const ui = state.home.ui;
     const rect = ui?.dialog?.getBoundingClientRect();
     if (!rect) return;
@@ -5296,17 +5519,16 @@ import {
   function fitHomeModalSizeToPlayerRatio(size, axis = 'width') {
     const bounds = getHomeModalSizeBounds();
     const extraWidth = getHomeModalExtraWidth();
-    const extraHeight = MODAL_HEADER_HEIGHT + getHomePlayerChromeHeight();
     const width = Number(size?.width);
     const height = Number(size?.height);
     const fallbackPlayerWidth = Math.max(1, getDefaultHomeModalWidth() - extraWidth);
     const requestedPlayerWidth = axis === 'height'
-      ? ((Number.isFinite(height) ? height : MODAL_HEIGHT_DEFAULT) - extraHeight) * 16 / 9
+      ? (Number.isFinite(height) ? height : MODAL_HEIGHT_DEFAULT) * 16 / 9
       : (Number.isFinite(width) ? width : getDefaultHomeModalWidth()) - extraWidth;
     const playerMinByWidth = Math.max(1, bounds.minWidth - extraWidth);
     const playerMaxByWidth = Math.max(1, bounds.maxWidth - extraWidth);
-    const playerMinByHeight = Math.max(1, (bounds.minHeight - extraHeight) * 16 / 9);
-    const playerMaxByHeight = Math.max(1, (bounds.maxHeight - extraHeight) * 16 / 9);
+    const playerMinByHeight = Math.max(1, bounds.minHeight * 16 / 9);
+    const playerMaxByHeight = Math.max(1, bounds.maxHeight * 16 / 9);
     const playerMax = Math.max(1, Math.min(playerMaxByWidth, playerMaxByHeight));
     const playerMin = Math.min(playerMax, Math.max(playerMinByWidth, playerMinByHeight));
     const playerWidth = Math.min(
@@ -5315,7 +5537,7 @@ import {
     );
     return {
       width: Math.round(playerWidth + extraWidth),
-      height: Math.round((playerWidth * 9) / 16 + extraHeight),
+      height: Math.round((playerWidth * 9) / 16),
     };
   }
 
@@ -5358,7 +5580,7 @@ import {
     const ui = state.home.ui;
     if (!ui?.dialog) return null;
 
-    if (state.home.overlay?.classList.contains(`${APP}--fullscreen`)) {
+    if (isHomeViewportFilled()) {
       ui.dialog.style.width = '';
       ui.dialog.style.height = '';
       return null;
@@ -5384,8 +5606,8 @@ import {
   function syncHomeModalSizeButton() {
     const ui = state.home.ui;
     if (!ui?.resetSize) return;
-    const disabled = !state.modalSize || state.home.overlay?.classList.contains(`${APP}--fullscreen`);
-    ui.resetSize.disabled = Boolean(disabled);
+    const disabled = !state.modalSize || isHomeViewportFilled();
+    ui.setResetSizeDisabled(Boolean(disabled));
   }
 
   function toggleAutoPlayNext() {
@@ -5445,6 +5667,15 @@ import {
 
   function syncHomeSize() {
     if (!state.home.ui?.playerRoot?.isConnected) return;
+    const layout = getCommentLayout('home');
+    const layoutChanged = state.home.renderedCommentLayout && state.home.renderedCommentLayout !== layout;
+    state.home.renderedCommentLayout = layout;
+    state.home.overlay.classList.toggle(`${APP}--comments-right`, layout === 'right');
+    if (layoutChanged) {
+      syncCommentsTabs('home');
+      remountCommentsForLayout('home');
+    }
+    syncEmbeddedLayoutControl('home');
     syncHomePlayerFrame();
     try {
       state.home.player?.resize?.();
@@ -5457,51 +5688,34 @@ import {
   function syncHomePlayerFrame() {
     const ui = state.home.ui;
     if (!ui?.dialog || !ui.content || !ui.playerWrap) return;
+    if (state.home.minimized) return;
     const modalSize = applyHomeModalSize();
-    const fullscreen = state.home.overlay?.classList.contains(`${APP}--fullscreen`);
-    if (getCommentLayout('home') === 'right') {
-      ui.playerWrap.style.height = '';
-      syncHomeModalSizeButton();
-      return;
-    }
-
-    const availableWidth = ui.content.clientWidth;
-    if (!availableWidth) return;
-
-    const headerHeight = 46;
-    const desiredHeight = Math.round((availableWidth * 9) / 16 + getHomePlayerChromeHeight());
-
-    const availableHeight = fullscreen
-      ? ui.content.clientHeight || window.innerHeight
-      : Math.max(1, modalSize.height - headerHeight);
-    ui.playerWrap.style.height = `${Math.min(desiredHeight, availableHeight)}px`;
+    const fullscreen = isHomeViewportFilled();
+    // A FLIP animation transforms the rendered bounds; it must not become the
+    // next layout height or the video shrinks again on every resize callback.
+    const availableHeight = parseFloat(getComputedStyle(ui.content).height) || ui.content.clientHeight || (fullscreen ? window.innerHeight : modalSize?.height);
+    ui.playerSlot.style.height = `${availableHeight}px`;
     syncHomeModalSizeButton();
-  }
-
-  function getHomePlayerChromeHeight() {
-    return window.innerWidth >= PLAYER_CHROME_HEIGHT_WIDE_BREAKPOINT
-      ? PLAYER_CHROME_HEIGHT_WIDE
-      : PLAYER_CHROME_HEIGHT;
   }
 
   function syncHomeFullscreenButton() {
     const ui = state.home.ui;
     if (!ui?.fullscreen) return;
-    const active = Boolean(state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+    const active = isHomeViewportFilled();
     ui.fullscreen.classList.toggle(`${APP}__header-button--active`, active);
-    ui.fullscreen.title = active ? '退出网页内全屏' : '网页内全屏';
+    ui.fullscreen.title = isHomeSystemFullscreen() ? '退出系统全屏' : active ? '退出网页内全屏' : '网页内全屏';
     ui.fullscreen.setAttribute('aria-label', ui.fullscreen.title);
     ui.fullscreen.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
   }
 
   function syncPipSize(targetWindow) {
+    syncEmbeddedLayoutControl('pip');
     const root = targetWindow.document?.getElementById('bilibili-player') ||
       targetWindow.document?.getElementById('live-player');
     if (!root) return;
     const stage = targetWindow.document.getElementById('stage');
-    const rect = stage?.getBoundingClientRect();
-    const width = Math.max(1, Math.floor(rect?.width || targetWindow.innerWidth));
-    const height = Math.max(1, Math.floor(rect?.height || targetWindow.innerHeight));
+    const width = Math.max(1, stage?.clientWidth || targetWindow.innerWidth);
+    const height = Math.max(1, stage?.clientHeight || targetWindow.innerHeight);
     root.style.width = `${width}px`;
     root.style.height = `${height}px`;
     root.style.minWidth = '0px';
@@ -5514,9 +5728,8 @@ import {
     }
     schedulePipBottomFixedWrapperSync(targetWindow);
     targetWindow.requestAnimationFrame(() => {
-      const nextRect = stage?.getBoundingClientRect();
-      const nextWidth = Math.max(1, Math.floor(nextRect?.width || targetWindow.innerWidth));
-      const nextHeight = Math.max(1, Math.floor(nextRect?.height || targetWindow.innerHeight));
+      const nextWidth = Math.max(1, stage?.clientWidth || targetWindow.innerWidth);
+      const nextHeight = Math.max(1, stage?.clientHeight || targetWindow.innerHeight);
       root.style.width = `${nextWidth}px`;
       root.style.height = `${nextHeight}px`;
       root.style.minWidth = '0px';
@@ -5552,6 +5765,9 @@ import {
 
   function writePipDocument(pipWindow, html) {
     state.pip.switchingWindow = true;
+    commentsTabsUi.dispose('pip');
+    pipWindow.__biliPopupReactUi?.dispose();
+    delete pipWindow.__biliPopupReactUi;
     pipWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
     pipWindow.__biliPopupPlayerNanoResizeSyncCleanup?.();
     delete pipWindow.__biliPopupPlayerNanoControlsObserver;
@@ -5559,6 +5775,11 @@ import {
     pipWindow.document.open();
     pipWindow.document.write(html);
     pipWindow.document.close();
+    applyAccentTheme(pipWindow.document.body, state.accentTheme);
+    // document.open() clears document/window listeners, but leaves JS globals.
+    delete pipWindow.__biliPopupPlayerNanoCloseSyncBound;
+    delete pipWindow.__biliPopupPlayerNanoKeydownBound;
+    attachPipWindowCloseSync(pipWindow);
     window.setTimeout(() => {
       state.pip.switchingWindow = false;
     }, 0);
@@ -5587,8 +5808,16 @@ import {
   }
 
   function closeHome() {
+    cancelHomeDelayedPlay();
+    state.home.ui?.videoGestures?.cancel();
     state.switchToken += 1;
     const home = state.home;
+    if (isHomeSystemFullscreen()) void document.exitFullscreen().catch(() => {});
+    cancelHomeLayoutAnimation();
+    home.minimized = false;
+    home.ui?.setOpen(false);
+
+    if (state.shadowHost) state.shadowHost.style.zIndex = '2147482999';
     if (home.overlay) {
       home.overlay.classList.remove(`${APP}--fullscreen`);
       home.overlay.classList.add(`${APP}--hidden`);
@@ -5604,16 +5833,27 @@ import {
     setExternalPlayerFeaturesBlocked(false);
     restoreExternalPlaybackPagePlayer();
     stopAutoPlayCountdownMonitor('home');
-    document.documentElement.style.overflow = '';
+    unlockHomePageScroll();
     document.body.classList.remove(`${APP}--modal-open`);
     document.removeEventListener('keydown', onKeydown, true);
+    document.removeEventListener('keyup', onHomeShortcutKeyup, true);
     if (!state.pip.player) stopGamepadControls();
     restoreOriginalPageMeta();
     if (state.lastFocus?.isConnected) state.lastFocus.focus({ preventScroll: true });
+    scheduleViewportSync();
   }
 
   function onKeydown(event) {
+    if (handleCommentImageShortcut(event, document)) return;
+    if (state.home.minimized && !state.home.overlay?.contains(event.target)) return;
+    if (event.key === 'Escape' && [...(state.home.ui?.mount.querySelectorAll(`[role="menu"], .${APP}__settings__panel, .${APP}__coin-dialog, .${APP}__favorite-dialog`) || [])].some(panel => panel.getClientRects().length)) return;
     if (event.key === 'Escape') {
+      if (isHomeSystemFullscreen()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void toggleHomeSystemFullscreen();
+        return;
+      }
       if (cancelAutoPlayCountdown('home')) {
         event.preventDefault();
         event.stopPropagation();
@@ -5625,8 +5865,15 @@ import {
       return;
     }
 
-    if (isEditableKeyTarget(event.target) || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (isMediaShortcut(event) && !isShortcutInput(event)) cancelHomeDelayedPlay();
+    if (isShortcutInput(event) || event.altKey || event.ctrlKey || event.metaKey) return;
     const key = String(event.key || '').toLowerCase();
+    if (key === 'f') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) void toggleHomeSystemFullscreen();
+      return;
+    }
     if (key === 'k') {
       event.preventDefault();
       event.stopPropagation();
@@ -5644,8 +5891,17 @@ import {
     }
   }
 
+  function onHomeShortcutKeyup(event) {
+    if (handleCommentImageShortcut(event, document)) return;
+    if (state.home.minimized && !state.home.overlay?.contains(event.target)) return;
+    if (String(event.key).toLowerCase() !== 'f' || isShortcutInput(event) || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
   function onPipKeydown(event) {
-    if (isEditableKeyTarget(event.target) || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (handleCommentImageShortcut(event, state.pip.win?.document)) return;
+    if (isShortcutInput(event) || event.altKey || event.ctrlKey || event.metaKey) return;
     const key = String(event.key || '').toLowerCase();
     if (key === 'escape') {
       if (cancelAutoPlayCountdown('pip')) {
@@ -5826,7 +6082,7 @@ import {
 
   function toggleGamepadWebFullscreen(kind) {
     if (kind !== 'home' || !state.home.overlay) return;
-    setHomeFullscreen(!state.home.overlay.classList.contains(`${APP}--fullscreen`));
+    toggleHomeViewportFullscreen();
   }
 
   function handleGamepadAxes(kind, gamepad) {
@@ -5844,12 +6100,15 @@ import {
     if (!tabs.length) return;
     const currentIndex = Math.max(0, tabs.findIndex((button) => button.dataset.tab === state[kind]?.activeCommentsTab));
     const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
-    tabs[nextIndex]?.click?.();
+    const next = tabs[nextIndex];
+    next.click();
+    next.focus({ preventScroll: true });
+    next.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   function getVisibleCommentsTabButtons(kind) {
     const root = kind === 'pip'
-      ? state.pip.win?.document?.querySelector?.(`.${APP}__comments-tabs`)
+      ? state.pip.win?.document?.querySelector?.(`.${APP}__sidebar`)
       : state.home.ui?.commentsTabs;
     return [...(root?.querySelectorAll?.(`.${APP}__comments-tab`) || [])]
       .filter((button) => !button.hidden && button.offsetParent !== null);
@@ -5939,12 +6198,10 @@ import {
       targetDocument.body;
   }
 
-  function isEditableKeyTarget(target) {
-    if (!target?.closest) return false;
-    return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"]'));
-  }
-
   function disposeHomePlayer() {
+    cancelHomeDelayedPlay();
+    state.home.ui?.videoGestures?.cancel();
+    disconnectEmbeddedControlTooltips(state.home.ui?.playerRoot);
     if (state.home.likeBurstTimer) {
       window.clearTimeout(state.home.likeBurstTimer);
       state.home.likeBurstTimer = 0;
@@ -5969,6 +6226,8 @@ import {
   }
 
   function disposePipPlayer() {
+    cancelPipLayoutAnimation();
+    disconnectEmbeddedControlTooltips(state.pip.win?.document.getElementById('bilibili-player'));
     if (state.pip.likeBurstTimer) {
       window.clearTimeout(state.pip.likeBurstTimer);
       state.pip.likeBurstTimer = 0;
@@ -6000,6 +6259,14 @@ import {
   }
 
   function destroy() {
+    if (state.destroyed) return;
+    state.enabled = false;
+    state.destroyed = true;
+    stopPageEnhancements();
+    commentsTabsUi.dispose();
+    state.pip.win?.__biliPopupReactUi?.dispose();
+    if (state.pip.win && !state.pip.win.closed) state.pip.win.close();
+    state.pip.win = null;
     state.observer?.disconnect();
     if (state.scanTimer) window.clearTimeout(state.scanTimer);
     if (state.viewportFrame) cancelAnimationFrame(state.viewportFrame);
@@ -6030,7 +6297,7 @@ import {
     state.shadowHost?.remove();
     state.overlay?.remove();
     document.getElementById(DOCUMENT_STYLE_ID)?.remove();
-    document.documentElement.style.overflow = '';
+    unlockHomePageScroll();
     delete pageWindow.__biliPopupPlayerNano;
   }
 

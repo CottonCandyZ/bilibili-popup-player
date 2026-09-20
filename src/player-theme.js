@@ -1,3 +1,6 @@
+import { APP } from './constants.js';
+import { getBiliAccentVariables } from './accent-theme.js';
+
 const NANO_THEME = {
   'bpx-primary-color': 'var(--brand_blue)',
   'bpx-fn-color': 'var(--brand_blue)',
@@ -54,7 +57,45 @@ export function getPlayerThemeVariableCss(selector) {
         --bpx-dmsend-hint-icon: var(--text3, #757a81);
         --bpx-dmsend-disable-button-bg: var(--graph_bg_thick, #e3e5e7);
         --bpx-dmsend-disable-button-text: var(--text3, #9499a0);
-        --bpx-primary-color: var(--brand_blue, #00aeec);
+        --bpx-primary-color: var(--${APP}-player-accent, #fff);
+        --bpx-fn-color: var(--${APP}-player-accent, #fff);
+        --bpx-fn-hover-color: var(--${APP}-player-accent-hover, #eee);
+        --bpx-toast-fn-color: var(--${APP}-player-accent, #fff);
+        --bpx-toast-fn-hover-color: var(--${APP}-player-accent-hover, #eee);
+        ${getBiliAccentVariables(`var(--${APP}-player-accent, #fff)`, `var(--${APP}-player-accent-hover, #eee)`, `color-mix(in srgb, var(--${APP}-player-accent, #fff) 12%, #18191c)`)}
+      }
+
+      ${selector} :is(.bpx-player-toast-confirm-login, .bpx-player-ctrl-subtitle-language-unlogin-content, .bpx-player-ctrl-translation-unlogin-content, .bpx-player-error-sign-retry-btn) {
+        background-color: var(--${APP}-player-accent);
+        color: var(--${APP}-on-player-accent);
+      }
+      ${selector} :is(.bpx-player-toast-confirm-login, .bpx-player-ctrl-subtitle-language-unlogin-content, .bpx-player-ctrl-translation-unlogin-content, .bpx-player-error-sign-retry-btn):hover {
+        background-color: var(--${APP}-player-accent-hover);
+      }
+      ${selector} .bui-button:not(.bui-disabled):not(.bui-button-disabled) .bui-area.bui-button-blue,
+      ${selector} .bui-radio .bui-radio-button .bui-radio-input:checked + .bui-radio-label,
+      ${selector} .bpx-player-ctrl-playbackrate-unlogin-content,
+      ${selector} .bpx-player-ending-functions-follow:not(.bpx-state-disabled),
+      ${selector} .bpx-player-popup-follow:not(.bpx-player-popup-followed) {
+        color: var(--${APP}-on-player-accent);
+      }
+      ${selector} .bpx-player-popup-follow:not(.bpx-player-popup-followed) svg { fill: currentColor; }
+      ${selector} .bui-switch-input:checked + .bui-switch-label .bui-switch-dot {
+        background: var(--${APP}-on-player-accent);
+      }
+      ${selector} .bpx-player-follow :is(.bpx-player-follow-name, .bpx-player-follow-text):hover,
+      ${selector} :is(.bpx-player-relation-button, .bpx-player-enter-button, .bpx-player-ending-enter-button):hover {
+        color: var(--${APP}-player-accent);
+        fill: var(--${APP}-player-accent);
+      }
+      ${selector} .bpx-player-follow .bpx-player-follow-text:hover svg { fill: var(--${APP}-player-accent) !important; }
+      ${selector} :is(.bpx-player-dm-setting, .bpx-player-video-btn-dm):hover { fill: var(--${APP}-player-accent) !important; }
+      /* Older player builds hard-code #00AEEC on the checkmark path. Keep the
+         monochrome TV outline and disabled icon separate from the accent. */
+      ${selector} .bui-danmaku-switch [data-danmu-color="accent"],
+      ${selector} .bui-danmaku-switch-on svg [data-danmu-status],
+      ${selector} .bui-danmaku-switch:not(.bui-danmaku-switch-new) .bui-danmaku-switch-on svg:not([data-danmu-intl]) path:last-child {
+        fill: var(--${APP}-player-accent);
       }
 
       ${selector} .bpx-player-ctrl-quality,
@@ -66,17 +107,12 @@ export function getPlayerThemeVariableCss(selector) {
         box-sizing: content-box;
       }
 
-      ${selector} .bpx-player-ctrl-quality,
       ${selector} .bpx-player-ctrl-quality-menu-wrap,
       ${selector} .bpx-player-ctrl-quality-menu,
       ${selector} .bpx-player-ctrl-quality-menu-item,
       ${selector} .bpx-player-ctrl-quality-text,
       ${selector} .bpx-player-ctrl-quality-badge {
         font-size: 12px;
-      }
-
-      ${selector} .bpx-player-ctrl-quality-result {
-        font-size: 14px;
       }
 `;
 }
