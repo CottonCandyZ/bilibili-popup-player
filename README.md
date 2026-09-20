@@ -5,6 +5,16 @@
 - 播放模式：`网页内弹窗` / `Document PiP`
 - 封面点击：`按钮起播` / `封面起播`
 
+## 预览
+
+### 网页小窗
+
+![网页小窗：视频独立展示，背景页面虚化](assets/screenshots/popup-player-modal.webp)
+
+### 评论侧栏
+
+![评论侧栏：边看视频边查看视频信息与评论](assets/screenshots/popup-player-sidebar.webp)
+
 ## 安装
 
 访问 [pop-player.nanachi.moe](https://pop-player.nanachi.moe/)，按页面提示安装即可。
