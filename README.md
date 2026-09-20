@@ -1,10 +1,5 @@
 # Bilibili Popup Player - Nano
 
-合并版 userscript，支持首页、动态页、播放页推荐、UP 主空间页、历史记录和搜索页的视频卡片。只保留一个右下角设置入口，dropdown 里切换：
-
-- 播放模式：`网页内弹窗` / `Document PiP`
-- 封面点击：`按钮起播` / `封面起播`
-
 ## 预览
 
 ### 网页小窗
