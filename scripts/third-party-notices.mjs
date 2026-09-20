@@ -2,8 +2,8 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
-// Keep upstream notices with the single-file userscript, including runtime
-// dependencies that are pulled in indirectly by the UI libraries.
+// Generate a separate notice file, including runtime dependencies that are
+// pulled in indirectly by the UI libraries.
 export function readThirdPartyNotices(manifestPath) {
   const visited = new Set();
   const notices = [];

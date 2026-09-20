@@ -48,6 +48,9 @@ importers:
       '@rollup/plugin-terser':
         specifier: ^0.4.4
         version: 0.4.4(rollup@4.60.4)
+      prettier:
+        specifier: ^3.9.8
+        version: 3.9.8
       rollup:
         specifier: ^4.40.2
         version: 4.60.4
@@ -1013,6 +1016,11 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
+  prettier@3.9.8:
+    resolution: {integrity: sha512-WRFq3Wn3WId7LLROfMLdH7xaFr2jR62wU8nLO6rQUOLOxNZUviyJQs1M0iIhLexSFy+L+w0ch66wtoO2jRjG0A==}
+    engines: {node: '>=14'}
+    hasBin: true
+
   randombytes@2.1.0:
     resolution: {integrity: sha512-vYl3iOX+4CKUWuxGi9Ukhie6fsqXqS9FE2Zaic4tNFD2N2QQaXOMFbuKK4QmDHC0JO6B1Zp41J0LpT0oR68amQ==}
 
@@ -1929,6 +1937,8 @@ snapshots:
   playwright@1.63.0:
     dependencies:
       playwright-core: 1.63.0
+
+  prettier@3.9.8: {}
 
   randombytes@2.1.0:
     dependencies:

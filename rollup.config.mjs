@@ -3,18 +3,17 @@ import { babel } from '@rollup/plugin-babel';
 import commonjs from '@rollup/plugin-commonjs';
 import replace from '@rollup/plugin-replace';
 import terser from '@rollup/plugin-terser';
+import { format } from 'prettier';
 import { validateUserscript } from './scripts/validate-userscript.mjs';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readThirdPartyNotices } from './scripts/third-party-notices.mjs';
 
-const license = readFileSync(new URL('./LICENSE', import.meta.url), 'utf8');
 const thirdPartyNotices = readThirdPartyNotices(fileURLToPath(new URL('./package.json', import.meta.url)));
 
 const userscriptBanner = `// ==UserScript==
 // @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.44
+// @version      4.0.45
 // @description  B 站小窗播放：支持网页小窗和 Document PiP，提供评论、播放列表、主题配色与迷你播放。
 // @author       Codex & Cotton
 // @license      AGPL-3.0-only
@@ -31,22 +30,7 @@ const userscriptBanner = `// ==UserScript==
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
-// ==/UserScript==
-/*!
-Bilibili Popup Player
-Copyright (C) 2026 CottonCandyZ and contributors
-SPDX-License-Identifier: AGPL-3.0-only
-Source: https://github.com/CottonCandyZ/bilibili-popup-player
-
-This program is free software: you can redistribute it and/or modify it
-under the terms of the GNU Affero General Public License, version 3,
-as published by the Free Software Foundation.
-This program is distributed WITHOUT ANY WARRANTY; without even the
-implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-
-${license}
-${thirdPartyNotices.replaceAll('*/', '* /')}
-*/`;
+// ==/UserScript==`;
 
 export default {
   input: 'src/main.js',
@@ -65,15 +49,21 @@ export default {
     }),
     nodeResolve({ browser: true, extensions: ['.mjs', '.js', '.jsx', '.json'] }),
     commonjs(),
-    // Terser strips Rollup's banner with comments: false. Its preamble is
-    // inserted after minification, preserving the installable script header.
-    terser({ format: { comments: false, preamble: userscriptBanner } }),
+    // Format the installable bundle without collapsing statements or names.
+    // Keep its metadata first; full license texts live in separate files.
+    terser({
+      compress: false,
+      mangle: false,
+      format: { comments: false, preamble: userscriptBanner },
+    }),
     {
-      name: 'validate-userscript-artifact',
-      generateBundle(_options, bundle) {
+      name: 'format-and-validate-userscript-artifact',
+      async generateBundle(_options, bundle) {
         this.emitFile({ type: 'asset', fileName: 'THIRD_PARTY_NOTICES.txt', source: thirdPartyNotices });
         for (const artifact of Object.values(bundle)) {
-          if (artifact.type === 'chunk') validateUserscript(artifact.code, artifact.fileName);
+          if (artifact.type !== 'chunk') continue;
+          artifact.code = await format(artifact.code, { parser: 'babel', tabWidth: 2, printWidth: 100, endOfLine: 'lf' });
+          validateUserscript(artifact.code, artifact.fileName);
         }
       },
     },
