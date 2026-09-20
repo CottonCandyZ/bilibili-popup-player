@@ -48,7 +48,7 @@
 
 安装本地构建时，在 ScriptCat（脚本猫）或 Tampermonkey（油猴）中导入根目录的 `bilibili-popup-player-nano.user.js`，`dist` 中的同名文件也可使用。文件开头应为 `// ==UserScript==`；构建过程会验证这个元数据头，缺失时终止构建。
 
-发布脚本采用多行缩进格式，不压缩变量名或函数名；许可正文保存在独立文件中，脚本头仅保留 `@license` 标识。
+许可正文保存在独立文件中，脚本头仅保留 `@license` 标识。
 
 独立小窗按 `documentPictureInPicture.requestWindow` 是否可用来启用，不按浏览器名称或版本屏蔽。Firefox 桌面版自 [151](https://www.firefox.com/en-US/firefox/151.0/releasenotes/) 起支持 Document PiP；接口不可用时仍可使用网页小窗。
 

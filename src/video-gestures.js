@@ -1,5 +1,5 @@
 const SURFACE = 'video, .bpx-player-video-wrap, .bpx-player-video-perch, .bpx-player-video-area, .bpx-player-dm-wrap, .bpx-player-dm-mask-wrap, .bilibili-player-video-wrap';
-const INTERACTIVE = 'button, a, input, textarea, select, [role="button"], [role="slider"], [role="menu"], [contenteditable="true"], .bpx-player-ctrl-btn, .bpx-player-ctrl-volume-icon-mini, .bpx-player-control-wrap, .bpx-player-control-top, .bpx-player-sending-area, .bpx-player-toast-wrap, .bpx-player-dialog-wrap, .bpx-player-ending-panel, .bpx-player-popup';
+const INTERACTIVE = 'button, a, input, textarea, select, [role="button"], [role="slider"], [role="menu"], [contenteditable="true"], .bpx-player-ctrl-btn, .bpx-player-ctrl-volume-icon-mini, .bpx-player-control-wrap, .bpx-player-control-top, .bpx-player-sending-area, .bpx-player-toast-wrap, .bpx-player-dialog-wrap, .bpx-player-ending-panel, .bpx-player-popup, .bpx-player-cmd-dm-wrap, .bpx-player-follow';
 
 // Capture above the native player: its delayed single-click handler otherwise
 // pauses the video after our fullscreen handler has already handled a double click.

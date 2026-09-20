@@ -30,6 +30,7 @@ export function installPlayerControls(frame, onVisibilityChange) {
     if (hidden !== 'true' && hidden !== 'false') return false;
     clearTimer();
     const pinned = toolbar?.matches(':hover') || toolbar?.querySelector(':focus-visible, [data-popup-open]') ||
+      player.querySelector('.bpx-player-control-wrap :focus-visible') ||
       player.querySelector(':is(.bpx-player-ctrl-btn-play-icon-mini, .bpx-player-ctrl-volume-icon-mini):is(:hover, :focus-visible)');
     const control = player.querySelector('.bpx-player-control-wrap');
     if (pinned && control) {

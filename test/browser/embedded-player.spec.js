@@ -97,13 +97,12 @@ for (const kind of ['home', 'pip']) {
   });
 }
 
-test('mini pause/resume stays clickable and mouse movement restores it after idle without re-entering', async ({ page }) => {
+test('legacy mini pause/resume follows activity when the regular shell is not floating', async ({ page }) => {
   const errors = await loadFixture(page);
   await mockPlayback(page);
   await page.locator('#card-b .cover').hover();
   await cardButton(page, 'BV1test002').click();
   await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: '收起到右下角', exact: true }).click();
   const frame = page.locator(`#${A}-player-wrap`);
   await page.locator(`#${A}-player .bpx-player-container`).evaluate(root => {
     root.style.position = 'relative';

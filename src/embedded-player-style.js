@@ -4,6 +4,8 @@ export function getEmbeddedPlayerCss() {
   const embedded = `:is(#${APP}-player, [data-bili-popup-ui="pip"] #bilibili-player) .bpx-player-container:not(.bpx-player-rich-pip-root)`;
   const player = `${embedded}[data-screen="web"]`;
   const frame = `:is(#${APP}-player-wrap, [data-bili-popup-ui="pip"] #stage)`;
+  const miniFrame = `:is(#${APP}-overlay.${APP}--minimized #${APP}-player-wrap, ${frame}[data-scroll-floating="true"])`;
+  const mini = `${miniFrame} ${embedded}`;
   return `
     #${APP}-player[data-shell-fullscreen="false"] .bpx-player-ctrl-web-enter,
     #${APP}-player[data-shell-fullscreen="true"] .bpx-player-ctrl-web-leave { display: block !important; }
@@ -75,6 +77,41 @@ export function getEmbeddedPlayerCss() {
     }
     ${embedded} .bpx-player-ctrl-btn-play-icon-mini.bpx-player-ctrl-play-left .bpx-common-svg-icon {
       width: 20px !important; height: 20px !important; margin: 2px 1px 2px 3px; line-height: 20px;
+    }
+    /* Some Nano runtimes hide control-entity in TinyView without creating the
+       legacy mini buttons. Reuse the regular play/mute controls and their native
+       handlers in our floating player, regardless of that optional widget. */
+    ${mini} :is(.bpx-player-control-wrap, .bpx-player-control-entity) {
+      display: block !important; height: 56px !important; pointer-events: none;
+    }
+    ${mini} .bpx-player-control-wrap { position: absolute; inset: auto 0 0; width: 100%; z-index: 90; }
+    ${mini} :is(.bpx-player-control-top, .bpx-player-control-mask, .bpx-player-control-bottom-center,
+      .bpx-player-ctrl-volume-box, .bpx-player-ctrl-btn-play-icon-mini, .bpx-player-ctrl-volume-icon-mini) { display: none !important; }
+    ${mini} .bpx-player-control-bottom {
+      position: absolute; inset: auto 0 0; display: block !important; width: 100%; height: 56px !important;
+      padding: 0 !important; margin: 0; background: none !important; pointer-events: none;
+      opacity: 0 !important; visibility: hidden !important;
+      transition: var(--${APP}-controls-transition, opacity .2s ease-in);
+    }
+    ${miniFrame}[data-controls-visible="true"] ${embedded} .bpx-player-control-bottom {
+      opacity: 1 !important; visibility: visible !important;
+    }
+    ${mini} :is(.bpx-player-control-bottom-left, .bpx-player-control-bottom-right) {
+      position: absolute; inset: auto auto 12px 12px; display: block !important;
+      width: 32px !important; height: 32px !important; min-width: 0; margin: 0; padding: 0; pointer-events: none;
+    }
+    ${mini} .bpx-player-control-bottom-right { left: auto; right: 12px; }
+    ${mini} .bpx-player-control-bottom-left > :not(.bpx-player-ctrl-play),
+    ${mini} .bpx-player-control-bottom-right > :not(.bpx-player-ctrl-volume) { display: none !important; }
+    ${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume) {
+      position: relative; inset: auto; display: block !important; box-sizing: border-box;
+      width: 32px !important; height: 32px !important; min-width: 0; margin: 0 !important; padding: 4px;
+      scale: 1; transform: none; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .5);
+      color: #fff; fill: #fff; font-size: 0; line-height: 24px; cursor: pointer; pointer-events: auto;
+    }
+    ${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume):is(:hover, :focus-visible) { background: rgba(0, 0, 0, .72); }
+    ${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume) .bpx-player-ctrl-btn-icon {
+      width: 24px !important; height: 24px !important; margin: 0; padding: 0; line-height: 24px; transform: none;
     }
   `;
 }

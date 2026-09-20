@@ -21,7 +21,9 @@ function getTidInfo(channel, tid) {
 }
 
 function getUpStaffs(staffData) {
-  if (!Array.isArray(staffData) || !staffData.length) return null;
+  // A fresh list also notifies legacy Nano's command-card state observer when
+  // an optimistic follow was rejected and the authoritative flag is unchanged.
+  if (!Array.isArray(staffData) || !staffData.length) return [];
   return staffData.map((staff) => ({
     face: staff.face,
     mid: staff.mid,
@@ -53,9 +55,6 @@ function getStats(stat) {
 function isPositiveState(value) {
   return value === true || value === 1 || value === '1';
 }
-
-// TODO: Re-enable native player action controls after the nano action channel is understood.
-const PLAYER_NATIVE_ACTIONS_ENABLED = false;
 
 function getStoryType(videoData) {
   if (videoData?.ugc_season?.sections?.length) return 2;
@@ -105,13 +104,13 @@ function getUpInfo(initialState) {
 function getManuscriptInfo(initialState) {
   const vd = initialState?.videoData || {};
   return {
-    coinDisable: !PLAYER_NATIVE_ACTIONS_ENABLED,
+    coinDisable: false,
     coinStatus: Number(vd.req_user?.coin) > 0,
-    collectDisable: !PLAYER_NATIVE_ACTIONS_ENABLED,
+    collectDisable: false,
     collectStatus: isPositiveState(vd.req_user?.favorite),
     cover: vd.pic,
     electricStatus: initialState?.elecFullInfo?.show_info?.state,
-    likeDisable: !PLAYER_NATIVE_ACTIONS_ENABLED,
+    likeDisable: false,
     likeIcon: vd.like_icon,
     likeStatus: isPositiveState(vd.req_user?.like),
     list: getPageList(vd),
@@ -126,11 +125,11 @@ function getManuscriptInfo(initialState) {
 function getManuscriptActionState(initialState) {
   const vd = initialState?.videoData || {};
   return {
-    coinDisable: !PLAYER_NATIVE_ACTIONS_ENABLED,
+    coinDisable: false,
     coinStatus: Number(vd.req_user?.coin) > 0,
-    collectDisable: !PLAYER_NATIVE_ACTIONS_ENABLED,
+    collectDisable: false,
     collectStatus: isPositiveState(vd.req_user?.favorite),
-    likeDisable: !PLAYER_NATIVE_ACTIONS_ENABLED,
+    likeDisable: false,
     likeIcon: vd.like_icon,
     likeStatus: isPositiveState(vd.req_user?.like),
   };

@@ -130,6 +130,7 @@ for (const mode of ['popup', 'web-fullscreen', 'system-sidebar', 'system-bottom'
   if (mode === 'web-fullscreen') {
     await page.locator(`#${A}-player-wrap`).hover();
     await page.getByRole('button', { name: '网页内全屏', exact: true }).click();
+    await expect(page.locator(`#${A}-overlay`)).not.toHaveAttribute('data-layout-animating', 'true');
   }
   if (mode === 'system-bottom') {
     await page.locator(`#${A}-player`).evaluate(el => el.insertAdjacentHTML('beforeend', '<button class="bpx-player-ctrl-wide" style="position:absolute;bottom:20px;left:20px">宽屏</button>'));

@@ -109,10 +109,14 @@ test('the lower watch page shows comments and lists together, with a single-colu
   await page.getByRole('button', { name: '回复评论', exact: true }).click();
   await expect(page.getByRole('button', { name: '回复已展开', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 760, height: 900 });
-  const intro = await page.locator('#' + A + '-video-intro').boundingBox();
-  const narrowRail = await rail.boundingBox(), mount = await page.locator('#' + A + '-comments-mount').boundingBox();
-  expect(narrowRail.y).toBeGreaterThanOrEqual(intro.y + intro.height);
-  expect(mount.y).toBeGreaterThanOrEqual(narrowRail.y + narrowRail.height);
+  // ResizeObserver applies the new shell width on the next frame. Sample all
+  // three boxes together once the narrow column has actually settled.
+  await expect.poll(() => page.evaluate(A => {
+    const intro = document.getElementById(A + '-video-intro').getBoundingClientRect();
+    const rail = document.querySelector('.' + A + '__sidebar-lists').getBoundingClientRect();
+    const mount = document.getElementById(A + '-comments-mount').getBoundingClientRect();
+    return rail.y >= intro.bottom && mount.y >= rail.bottom;
+  }, A)).toBe(true);
   expect(await content.evaluate(el => el.scrollWidth)).toBe(await content.evaluate(el => el.clientWidth));
   expect(errors).toEqual([]);
 });

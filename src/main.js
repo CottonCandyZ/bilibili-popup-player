@@ -79,6 +79,7 @@ import {
   renderPipPlayerDocument,
 } from './pip-document.js';
 import { getPlayerExternalState, getPlayerViewInfo } from './player-view-info.js';
+import { bindNativePlayerActions } from './native-player-actions.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
 import { loadScriptOnce, waitForHostScript } from './script-loader.js';
@@ -1607,6 +1608,7 @@ import {
     }
     renderRecommendations('home', bootstrap);
     syncVideoIntro('home');
+    bindPlayerActions('home');
     bindHomeScreenChange(state.home.player);
     syncHomeSize();
     syncVideoBadges();
@@ -2153,7 +2155,10 @@ import {
       actionState.loaded = true;
     } finally {
       actionState.loading = false;
-      if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
+      if (state[kind]?.bootstrap === bootstrap) {
+        syncPlayerExternalState(kind);
+        syncVideoIntro(kind);
+      }
     }
   }
 
@@ -2296,12 +2301,16 @@ import {
         }
       }
       syncBootstrapActionState(bootstrap, actionState);
-      syncPlayerExternalState(kind);
-      announcePlaybackAction(kind, message, 'success');
+      if (state[kind]?.bootstrap === bootstrap) {
+        syncPlayerExternalState(kind);
+        announcePlaybackAction(kind, message, 'success');
+      }
+      return { ok: true, isLike: actionState.liked, isCoin: actionState.coin > 0, isCollect: actionState.favorite };
     } catch (error) {
       const message = error?.message || '操作失败';
       actionState.folderError = message;
-      announcePlaybackAction(kind, message, 'error');
+      if (state[kind]?.bootstrap === bootstrap) announcePlaybackAction(kind, message, 'error');
+      return { ok: false, message };
     } finally {
       actionState.busy = false;
       if (state[kind]?.bootstrap === bootstrap) syncVideoIntro(kind);
@@ -2487,21 +2496,27 @@ import {
   async function handleFollowUp(kind, mid, follow) {
     const slot = state[kind];
     if (!slot || slot.followBusy) return;
-    const nextFollow = typeof follow === 'boolean' ? follow : !isBootstrapFollowed(slot.bootstrap);
+    const bootstrap = slot.bootstrap;
+    const nextFollow = typeof follow === 'boolean' ? follow : !isBootstrapFollowed(bootstrap);
     const message = nextFollow ? '已关注 UP 主' : '已取消关注';
     slot.followBusy = true;
     syncVideoIntro(kind);
     try {
       await requestFollowUp(mid, nextFollow);
-      setBootstrapFollowed(slot.bootstrap, nextFollow);
-      syncPlayerExternalState(kind);
-      showLikeBurst(kind, message, nextFollow ? 'success' : 'neutral', { icon: false });
-      if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = message;
-      if (kind === 'pip') setPipStatus(message);
+      if (Number(bootstrap?.initialState?.videoData?.owner?.mid) === Number(mid)) setBootstrapFollowed(bootstrap, nextFollow);
+      if (slot.bootstrap === bootstrap) {
+        syncPlayerExternalState(kind);
+        announcePlaybackAction(kind, message, nextFollow ? 'success' : 'neutral');
+      }
+      return { ok: true, isFollow: nextFollow };
     } catch (error) {
       const action = nextFollow ? '关注' : '取消关注';
-      if (kind === 'home' && state.home.ui?.status) state.home.ui.status.textContent = `${action}失败：${error?.message || 'unknown'}`;
-      if (kind === 'pip') setPipStatus(`${action}失败：${error?.message || 'unknown'}`);
+      const message = `${action}失败：${error?.message || 'unknown'}`;
+      if (slot.bootstrap === bootstrap) {
+        syncPlayerExternalState(kind);
+        announcePlaybackAction(kind, message, 'error');
+      }
+      return { ok: false, message };
     } finally {
       slot.followBusy = false;
       syncVideoIntro(kind);
@@ -2580,6 +2595,9 @@ import {
 
     try {
       slot.player.setState(getPlayerExternalState(slot.bootstrap.initialState, playerApi.InternalKind));
+      // Command danmaku optimistically toggles follow before the host request
+      // completes. Refresh even unchanged state so a failed request rolls back.
+      slot.player.danmaku?.getDanmakuX?.()?.updateState?.();
       syncPlayerHandoffAvailability(kind);
     } catch {
       // The nano API is not ready until after connect/reload has mounted its stores.
@@ -2599,6 +2617,23 @@ import {
       return pipWindow && !pipWindow.closed ? pipWindow.nano : null;
     }
     return pageWindow.nano;
+  }
+
+  function bindPlayerActions(kind) {
+    unbindPlayerActions(kind);
+    const slot = state[kind], { player, bootstrap } = slot;
+    slot.disposeNativeActions = bindNativePlayerActions({
+      player, runtime: getPlayerApiForKind(kind),
+      isCurrent: () => slot.player === player && slot.bootstrap === bootstrap &&
+        (kind === 'home' ? isHomeShellOpen() : slot.win && !slot.win.closed),
+      onAction: action => handlePlaybackAction(kind, action),
+      onFollow: (mid, follow) => handleFollowUp(kind, mid, follow),
+    });
+  }
+
+  function unbindPlayerActions(kind) {
+    state[kind].disposeNativeActions?.();
+    state[kind].disposeNativeActions = null;
   }
 
   function setHomeFullscreen(active) {
@@ -2736,12 +2771,14 @@ import {
   }
 
   async function reloadHomePlayer(bootstrap, token) {
+    unbindPlayerActions('home');
     const setting = buildHomePrimarySetting(bootstrap);
     updateDebug(setting, bootstrap);
     state.home.ui.status.textContent = '播放器：reload 中';
     syncHomeSize();
     await Promise.resolve(state.home.player.reload(setting, bootstrap.initialState?.nanoTheme));
     if (token !== state.switchToken || !state.home.player) return;
+    bindPlayerActions('home');
     schedulePlayerExternalStateSync('home');
     bindHomeScreenChange(state.home.player);
     bindHomePlayerNavigate(state.home.player);
@@ -2760,6 +2797,7 @@ import {
     state.home.ui.playerRoot.textContent = '';
     state.home.ui.playerRoot.classList.remove(`${APP}__live-player-root`);
     state.home.player = runtime.createPlayer(setting, bootstrap.initialState?.nanoTheme);
+    bindPlayerActions('home');
     bindHomeScreenChange(state.home.player);
     bindHomePlayerNavigate(state.home.player);
     bindHomePlayerHandoff(state.home.player);
@@ -3386,8 +3424,10 @@ import {
     targetWindow.__biliPopupPlayerNanoCurrentSetting = setting;
     targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
 
+    unbindPlayerActions('pip');
     await Promise.resolve(state.pip.player.reload(setting, bootstrap.initialState?.nanoTheme));
     if (token !== state.switchToken || targetWindow.closed || targetWindow.player !== state.pip.player) return;
+    bindPlayerActions('pip');
     schedulePlayerExternalStateSync('pip');
 
     bindPipScreenChange(targetWindow, state.pip.player);
@@ -3427,6 +3467,7 @@ import {
     targetWindow.__biliPopupPlayerNanoCurrentSetting = setting;
     targetWindow.__biliPopupPlayerNanoCurrentBootstrap = bootstrap;
     state.pip.player = player;
+    bindPlayerActions('pip');
     player.connect();
     schedulePlayerExternalStateSync('pip');
     bindPipScreenChange(targetWindow, player);
@@ -3452,6 +3493,7 @@ import {
     }, 800);
 
     targetWindow.addEventListener('pagehide', () => {
+      if (state.pip.player === player) unbindPlayerActions('pip');
       if (state.pip.player === player) unbindPipScreenChange();
       if (state.pip.player === player) unbindPipPlayerNavigate();
       if (state.pip.player === player) unbindPipPlayerHandoff();
@@ -5808,6 +5850,7 @@ import {
   }
 
   function closeHome() {
+    unbindPlayerActions('home');
     cancelHomeDelayedPlay();
     state.home.ui?.videoGestures?.cancel();
     state.switchToken += 1;
@@ -6199,6 +6242,7 @@ import {
   }
 
   function disposeHomePlayer() {
+    unbindPlayerActions('home');
     cancelHomeDelayedPlay();
     state.home.ui?.videoGestures?.cancel();
     disconnectEmbeddedControlTooltips(state.home.ui?.playerRoot);
@@ -6226,6 +6270,7 @@ import {
   }
 
   function disposePipPlayer() {
+    unbindPlayerActions('pip');
     cancelPipLayoutAnimation();
     disconnectEmbeddedControlTooltips(state.pip.win?.document.getElementById('bilibili-player'));
     if (state.pip.likeBurstTimer) {
