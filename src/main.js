@@ -1992,7 +1992,7 @@ import {
     const control = root?.querySelector('.bpx-player-ctrl-wide');
     control?.setAttribute('aria-label', getCommentLayout(kind) === 'right' ? '宽屏' : '恢复侧栏');
     if (kind === 'home') {
-      root.dataset.shellFullscreen = String(isHomeViewportFilled());
+      root.dataset.shellFullscreen = String(isHomeWebFullscreen());
       root.querySelector('.bpx-player-ctrl-web')?.setAttribute('aria-label', getHomeWebFullscreenLabel());
       root.querySelector('.bpx-player-ctrl-full')?.setAttribute('aria-label', isHomeSystemFullscreen() ? '退出系统全屏' : '系统全屏');
     }
@@ -2009,7 +2009,7 @@ import {
   }
 
   function getHomeWebFullscreenLabel() {
-    return isHomeSystemFullscreen() ? '退出系统全屏' : isHomeViewportFilled() ? '退出网页全屏' : '网页全屏';
+    return isHomeWebFullscreen() ? '退出网页全屏' : '网页全屏';
   }
 
   function syncEmbeddedControlTooltips(kind, root) {
@@ -2667,17 +2667,30 @@ import {
     return isHomeSystemFullscreen() || Boolean(state.home.overlay?.classList.contains(`${APP}--fullscreen`));
   }
 
+  function isHomeWebFullscreen() {
+    return !isHomeSystemFullscreen() && Boolean(state.home.overlay?.classList.contains(`${APP}--fullscreen`));
+  }
+
   function toggleHomeViewportFullscreen() {
-    if (isHomeSystemFullscreen()) void toggleHomeSystemFullscreen();
+    if (isHomeSystemFullscreen()) void toggleHomeSystemFullscreen({ exitToWeb: true });
     else setHomeFullscreen(!state.home.fullscreen);
   }
 
-  async function toggleHomeSystemFullscreen() {
+  async function toggleHomeSystemFullscreen({ exitToWeb = false } = {}) {
     const home = state.home;
     if (!isHomeShellOpen() || !home.ui?.dialog?.requestFullscreen) return;
     try {
-      if (isHomeSystemFullscreen()) await document.exitFullscreen();
-      else {
+      if (isHomeSystemFullscreen()) {
+        const previous = home.fullscreen;
+        // Select the destination before leaving the browser's top layer, so
+        // web fullscreen never briefly renders the windowed layout on exit.
+        setHomeFullscreen(exitToWeb);
+        try { await document.exitFullscreen(); }
+        catch (error) {
+          setHomeFullscreen(previous);
+          throw error;
+        }
+      } else {
         if (home.minimized) setHomeMinimized(false);
         cancelHomeLayoutAnimation();
         // Include our toolbar and either comment layout in the browser's top layer.
@@ -5743,9 +5756,9 @@ import {
   function syncHomeFullscreenButton() {
     const ui = state.home.ui;
     if (!ui?.fullscreen) return;
-    const active = isHomeViewportFilled();
+    const active = isHomeWebFullscreen();
     ui.fullscreen.classList.toggle(`${APP}__header-button--active`, active);
-    ui.fullscreen.title = isHomeSystemFullscreen() ? '退出系统全屏' : active ? '退出网页内全屏' : '网页内全屏';
+    ui.fullscreen.title = active ? '退出网页内全屏' : '网页内全屏';
     ui.fullscreen.setAttribute('aria-label', ui.fullscreen.title);
     ui.fullscreen.replaceChildren(active ? createMinimizeIcon() : createMaximizeIcon());
   }

@@ -155,9 +155,7 @@ for (const classic of [true, false]) test(`${classic ? 'classic' : 'native overl
   expect(errors).toEqual([]);
 });
 
-test('native web fullscreen icons and hover text follow the shell while immersive playback stays enabled', async ({ page }) => {
-  const errors = await prepare(page);
-  await page.setViewportSize({ width: 1800, height: 1000 });
+async function addNativeWebControl(page) {
   const root = page.locator('#' + A + '-player');
   await root.evaluate(root => {
     const web = document.createElement('button');
@@ -170,6 +168,95 @@ test('native web fullscreen icons and hover text follow the shell while immersiv
     root.append(web, tips);
     window.dispatchEvent(new Event('resize'));
   });
+}
+
+for (const layout of ['right', 'bottom']) for (const webControl of ['header', 'native']) test(`system fullscreen buttons select web or window in ${layout} layout using the ${webControl} web control`, async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  const errors = await prepare(page);
+  await addNativeWebControl(page);
+  if (layout === 'bottom') await page.locator('.bpx-player-ctrl-wide').click();
+  const root = page.locator('#' + A + '-player');
+  const overlay = page.locator('#' + A + '-overlay');
+  const dialog = page.locator('#' + A + '-dialog');
+  const frame = page.locator('#' + A + '-player-wrap');
+  const full = root.locator('.bpx-player-ctrl-full');
+  const web = root.locator('.bpx-player-ctrl-web');
+  const title = root.locator('.bpx-player-tooltip-title');
+  const clickWeb = async () => {
+    await frame.hover();
+    if (webControl === 'native') await web.click();
+    else await page.getByRole('button', { name: '网页内全屏', exact: true }).click();
+  };
+  const savedWebMode = () => page.evaluate(() => window.__biliPopupPlayerNano.getState().home.fullscreen);
+
+  // A system-fullscreen exit must choose the pressed button's destination,
+  // independently of whether it was entered from the window or web fullscreen.
+  for (const fromWeb of [false, true]) {
+    if (fromWeb) await clickWeb();
+    await full.click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe(A + '-dialog');
+    await expect(web).toHaveAttribute('aria-label', '网页全屏');
+    await expect(web.locator('.bpx-player-ctrl-web-enter')).toBeVisible();
+    await expect(web.locator('.bpx-player-ctrl-web-leave')).toBeHidden();
+    await expect(title).toHaveText('网页全屏');
+    await expect(full).toHaveAttribute('aria-label', '退出系统全屏');
+    await clickWeb();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+    await expect.poll(savedWebMode).toBe(true);
+    await expect(overlay).toHaveClass(new RegExp(A + '--fullscreen'));
+    await expect.poll(() => dialog.evaluate(el => el.clientWidth === innerWidth && el.clientHeight === innerHeight)).toBe(true);
+    await expect(web).toHaveAttribute('aria-label', '退出网页全屏');
+    await expect(web.locator('.bpx-player-ctrl-web-leave')).toBeVisible();
+    await expect(title).toHaveText('退出网页全屏');
+    expect(await page.evaluate(() => localStorage.getItem('bili-popup-player-nano:home-fullscreen'))).toBe('1');
+
+    await full.click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe(A + '-dialog');
+    await full.click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+    await expect.poll(savedWebMode).toBe(false);
+    await expect(overlay).not.toHaveClass(new RegExp(A + '--fullscreen'));
+    await expect.poll(() => dialog.evaluate(el => el.clientWidth < innerWidth && el.clientHeight < innerHeight)).toBe(true);
+    await expect(web).toHaveAttribute('aria-label', '网页全屏');
+    await expect(full).toHaveAttribute('aria-label', '系统全屏');
+    expect(await page.evaluate(() => localStorage.getItem('bili-popup-player-nano:home-fullscreen'))).toBe('0');
+  }
+  expect(await page.evaluate(() => window.__mockPlayback.created)).toBe(1);
+  expect(await page.evaluate(() => window.__mockPlayback.paused)).toBe(0);
+  expect(await page.evaluate(() => window.__mockPlayback.screenKind)).toBe(2);
+  expect(errors).toEqual([]);
+});
+
+for (const fromWeb of [false, true]) test(`a refused fullscreen exit preserves the ${fromWeb ? 'web' : 'window'} preference`, async ({ page }) => {
+  const errors = await prepare(page, { fullscreen: fromWeb });
+  const full = page.locator('.bpx-player-ctrl-full');
+  await full.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe(A + '-dialog');
+  await page.evaluate(() => {
+    window.__exitFullscreen = document.exitFullscreen;
+    document.exitFullscreen = () => Promise.reject(new Error('Exit refused'));
+  });
+  if (fromWeb) await full.click();
+  else {
+    await page.locator('#' + A + '-player-wrap').hover();
+    await page.getByRole('button', { name: '网页内全屏', exact: true }).click();
+  }
+  await expect(page.locator('#' + A + '-status')).toHaveText('无法切换系统全屏：Exit refused');
+  expect(await page.evaluate(() => document.fullscreenElement?.id)).toBe(A + '-dialog');
+  expect(await page.evaluate(() => window.__biliPopupPlayerNano.getState().home.fullscreen)).toBe(fromWeb);
+  expect(await page.evaluate(() => localStorage.getItem('bili-popup-player-nano:home-fullscreen'))).toBe(fromWeb ? '1' : '0');
+  await page.evaluate(() => { document.exitFullscreen = window.__exitFullscreen; });
+  await full.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+  expect(await page.evaluate(() => window.__biliPopupPlayerNano.getState().home.fullscreen)).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('native web fullscreen icons and hover text follow the shell while immersive playback stays enabled', async ({ page }) => {
+  const errors = await prepare(page);
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await addNativeWebControl(page);
+  const root = page.locator('#' + A + '-player');
   const web = root.locator('.bpx-player-ctrl-web'), title = root.locator('.bpx-player-tooltip-title');
   await web.hover();
   await expect(web).toHaveAttribute('aria-label', '网页全屏');
