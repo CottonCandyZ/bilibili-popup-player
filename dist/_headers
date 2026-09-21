@@ -1,7 +1,7 @@
 /bilibili-popup-player-nano.user.js
   Content-Type: application/javascript; charset=utf-8
-  Cache-Control: no-cache, max-age=0, must-revalidate
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
 
 /bilibili-popup-player-nano.meta.js
   Content-Type: application/javascript; charset=utf-8
-  Cache-Control: no-cache, max-age=0, must-revalidate
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate

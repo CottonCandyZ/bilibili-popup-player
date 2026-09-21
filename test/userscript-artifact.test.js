@@ -29,7 +29,7 @@ test('update metadata and downloadable scripts describe the same release', () =>
   }
 });
 
-test('both stable update endpoints are deployed with revalidation headers', () => {
+test('both stable update endpoints are deployed without persistent caching', () => {
   const headers = readFileSync(new URL('../dist/_headers', import.meta.url), 'utf8');
   const rules = new Map(headers.trim().split(/\n\s*\n/).map((rule) => {
     const [path, ...lines] = rule.split('\n');
@@ -39,7 +39,7 @@ test('both stable update endpoints are deployed with revalidation headers', () =
   for (const url of [metadata.updateURL[0], metadata.downloadURL[0]]) {
     const rule = rules.get(new URL(url).pathname);
     assert.ok(rule, `Missing deployment headers for ${url}`);
-    assert.ok(rule.includes('Cache-Control: no-cache, max-age=0, must-revalidate'));
+    assert.ok(rule.includes('Cache-Control: no-store, no-cache, max-age=0, must-revalidate'));
     assert.ok(rule.includes('Content-Type: application/javascript; charset=utf-8'));
   }
 });

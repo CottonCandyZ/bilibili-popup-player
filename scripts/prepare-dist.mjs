@@ -15,10 +15,11 @@ const previews = await Promise.all([
 await mkdir('dist', { recursive: true });
 await copyFile(fileName, `dist/${fileName}`);
 await copyFile(metaFileName, `dist/${metaFileName}`);
-// These stable URLs must revalidate so managers see a newly published version.
+// Do not store release endpoints: the custom domain's Browser Cache TTL can
+// replace max-age=0 even when Pages serves a revalidation policy.
 await writeFile('dist/_headers', [fileName, metaFileName].map((name) => `/${name}
   Content-Type: application/javascript; charset=utf-8
-  Cache-Control: no-cache, max-age=0, must-revalidate
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
 `).join('\n'));
 await copyFile('LICENSE', 'dist/LICENSE');
 await copyFile('THIRD_PARTY_NOTICES.txt', 'dist/THIRD_PARTY_NOTICES.txt');

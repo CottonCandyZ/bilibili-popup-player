@@ -21,6 +21,13 @@ export async function checkPublishedUserscript(expectedCode, fetchImpl = fetch) 
     if (url === downloadURL && code !== expectedCode) {
       throw new Error(`${url}: published script body does not match the local build`);
     }
+    // A matching body can still stay stale for hours on the next release if the
+    // custom domain overrides Pages' headers. Check what managers actually get.
+    const cacheControl = response.headers.get('cache-control') || '';
+    const directives = cacheControl.toLowerCase().split(',').map((value) => value.trim());
+    if (!directives.includes('no-store') && !directives.includes('no-cache')) {
+      throw new Error(`${url}: Cache-Control must include no-store or no-cache (received ${cacheControl || 'no header'}); check the custom domain's cache settings`);
+    }
   }));
 
   return { version: expected.version[0], updateURL, downloadURL };
