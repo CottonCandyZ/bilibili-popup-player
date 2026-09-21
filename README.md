@@ -20,6 +20,20 @@
 
 独立小窗按 `documentPictureInPicture.requestWindow` 是否可用来启用，不按浏览器名称或版本屏蔽。Firefox 桌面版自 [151](https://www.firefox.com/en-US/firefox/151.0/releasenotes/) 起支持 Document PiP；接口不可用时仍可使用网页小窗。
 
+## 自动更新
+
+正式版使用 [Tampermonkey（油猴）](https://www.tampermonkey.net/documentation.php?locale=en&q=update_url) 和 [ScriptCat（脚本猫）](https://docs.scriptcat.org/docs/dev/meta/#updateurl) 的原生更新机制：
+
+- `@updateURL`：`https://pop-player.nanachi.moe/bilibili-popup-player-nano.meta.js`，仅包含元数据，用于检查版本。
+- `@downloadURL`：`https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js`，发现新版后下载完整脚本。
+- `@version`：发布时递增；仅修改代码、没有提高版本号，不会触发版本升级。
+
+安装后，在管理器中开启此脚本的更新检查，并设置检查间隔。管理器会定期检查新版，再按你的更新设置安装或提示确认；也可以在脚本列表中手动检查更新。更新完成后刷新 B 站页面生效。
+
+旧版已使用同一域名的 `.user.js` 检查更新，发布新版后仍可通过原地址升级，升级后使用轻量的 `.meta.js`。脚本名称和命名空间保持不变。若此前粘贴安装、关闭过更新或手动覆盖过更新地址，请从安装页重新安装一次并检查管理器中的更新设置。本地 dev loader 不参与正式版更新。
+
+构建会从最终脚本头生成根目录和 `dist` 中的 `.meta.js`，确保版本、名称、命名空间与下载文件一致；Cloudflare Pages 的 `dist/_headers` 为两个更新地址设置重新验证缓存的响应头。部署后需能通过上述两个公网地址直接取得脚本，不能返回安装页 HTML。
+
 ## 本地调试
 
 ```sh
@@ -46,11 +60,21 @@ pnpm test:browser
 pnpm run release
 ```
 
-默认自动 bump patch 版本并发布到 Cloudflare Pages。指定版本：
+先按 `.env.example` 配置 Cloudflare 凭据。默认自动递增 patch 版本，构建并通过语法检查、单元测试后发布到 Cloudflare Pages，再校验线上更新元数据及完整下载内容与本地构建一致。指定版本（应高于已发布版本）：
 
 ```sh
-pnpm run release -- 0.3.0
+pnpm run release -- 4.1.0
 ```
+
+指定版本低于当前源码版本时会拒绝发布；允许指定相同版本重试失败的部署。若已经手动修改了 `rollup.config.mjs` 中的 `@version`，可用 `pnpm run publish:pages` 直接发布当前版本。请在 Pages 项目配置的生产分支上发布；[预览分支部署](https://developers.cloudflare.com/pages/configuration/preview-deployments/)不会更新上述正式域名。脚本管理器读取的是 Pages 上的文件，本地构建或 GitHub 提交后仍需确保生产部署完成。
+
+发布后也可以单独复查线上文件：
+
+```sh
+pnpm run check:published
+```
+
+遇到缓存尚未刷新、网络失败、元数据与下载版本不一致或下载内容不完整时，校验会报错。检查部署和缓存状态后可重新执行该命令；它不会重新发布。
 
 ## 架构
 

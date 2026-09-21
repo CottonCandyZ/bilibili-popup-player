@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
+import { resolveReleaseVersion } from './release-version.mjs';
 
 const configPath = 'rollup.config.mjs';
-const versionArg = process.argv[2];
 
 const currentConfig = await readFile(configPath, 'utf8');
 const currentVersion = currentConfig.match(/\/\/ @version\s+(\d+\.\d+\.\d+)/)?.[1];
@@ -11,11 +11,7 @@ if (!currentVersion) {
   process.exit(1);
 }
 
-const nextVersion = versionArg || bumpPatch(currentVersion);
-if (!/^\d+\.\d+\.\d+$/.test(nextVersion)) {
-  console.error(`Invalid version: ${nextVersion}`);
-  process.exit(1);
-}
+const nextVersion = resolveReleaseVersion(currentVersion, process.argv.slice(2));
 
 if (nextVersion !== currentVersion) {
   await writeFile(
@@ -26,14 +22,6 @@ if (nextVersion !== currentVersion) {
 
 console.log(`Releasing ${currentVersion} -> ${nextVersion}`);
 await run('pnpm', ['run', 'publish:pages']);
-await run('pnpm', ['run', 'check']);
-await printPublishedVersion();
-
-function bumpPatch(version) {
-  const parts = version.split('.').map(Number);
-  parts[2] += 1;
-  return parts.join('.');
-}
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -59,16 +47,4 @@ function quoteCmdArg(value) {
   const arg = String(value);
   if (/^[\w./:@=-]+$/.test(arg)) return arg;
   return `"${arg.replace(/"/g, '""')}"`;
-}
-
-async function printPublishedVersion() {
-  const url = `https://pop-player.nanachi.moe/bilibili-popup-player-nano.user.js?t=${Date.now()}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    console.warn(`Published version check failed: ${response.status}`);
-    return;
-  }
-  const text = await response.text();
-  const version = text.match(/\/\/ @version\s+([^\n]+)/)?.[1]?.trim();
-  console.log(`Published userscript: ${version || 'unknown'} (${url})`);
 }

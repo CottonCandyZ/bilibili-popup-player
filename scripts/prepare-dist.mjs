@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { copyFile, cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const fileName = 'bilibili-popup-player-nano.user.js';
+const metaFileName = fileName.replace(/\.user\.js$/, '.meta.js');
 const previews = await Promise.all([
   { file: 'popup-player-modal.webp', caption: '网页小窗', alt: '视频在网页小窗中播放，背景页面虚化', width: 3674, height: 1694 },
   { file: 'popup-player-sidebar.webp', caption: '评论侧栏', alt: '视频在左侧播放，右侧显示视频信息与评论', width: 3686, height: 1706 },
@@ -13,6 +14,12 @@ const previews = await Promise.all([
 
 await mkdir('dist', { recursive: true });
 await copyFile(fileName, `dist/${fileName}`);
+await copyFile(metaFileName, `dist/${metaFileName}`);
+// These stable URLs must revalidate so managers see a newly published version.
+await writeFile('dist/_headers', [fileName, metaFileName].map((name) => `/${name}
+  Content-Type: application/javascript; charset=utf-8
+  Cache-Control: no-cache, max-age=0, must-revalidate
+`).join('\n'));
 await copyFile('LICENSE', 'dist/LICENSE');
 await copyFile('THIRD_PARTY_NOTICES.txt', 'dist/THIRD_PARTY_NOTICES.txt');
 await cp('assets', 'dist/assets', { recursive: true, force: true });
@@ -81,6 +88,7 @@ await writeFile(
 </style>
 <h1>Bilibili Popup Player</h1>
 <p><a href="./${fileName}">安装 userscript</a></p>
+<p class="note">支持 Tampermonkey（油猴）和 ScriptCat（脚本猫）的自动更新。安装后请在脚本管理器中开启此脚本的更新检查；新版发布后，管理器会按设定间隔检查并按你的更新设置安装。也可在管理器中手动检查更新，更新后刷新 B 站页面生效。</p>
 <p>需要先安装对应浏览器的用户脚本管理器：</p>
 <h2>Chrome</h2>
 <ul>
