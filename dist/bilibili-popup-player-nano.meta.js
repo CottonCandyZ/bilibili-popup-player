@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili Popup Player
 // @namespace    https://www.bilibili.com/
-// @version      4.0.48
+// @version      4.0.49
 // @description  B 站小窗播放：支持网页小窗和 Document PiP，提供评论、播放列表、主题配色与迷你播放。
 // @author       Codex & Cotton
 // @license      AGPL-3.0-only

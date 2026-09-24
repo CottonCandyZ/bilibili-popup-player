@@ -14,9 +14,24 @@ export function getEmbeddedPlayerCss() {
     :is(#${APP}-player, [data-bili-popup-ui="pip"] #bilibili-player) .bpx-player-container { box-shadow: none !important; }
     #${APP}-dialog:fullscreen .bpx-player-shadow-progress-area,
     [data-bili-popup-ui="pip"] :fullscreen .bpx-player-shadow-progress-area { display: none !important; }
+    /* Chromium can lose fullscreen danmaku when controls fade. A neutral
+       backdrop filter keeps the video in page compositing with the native
+       danmaku layer, without changing its mask, opacity or running animations. */
+    #${APP}-dialog:fullscreen .bpx-player-dm-mask-wrap,
+    [data-bili-popup-ui="pip"] :fullscreen .bpx-player-dm-mask-wrap { backdrop-filter: brightness(1); }
     /* Nano mounts the normal-mode sending bar before it sets data-screen. */
     ${embedded} .bpx-player-sending-area { display: none !important; }
     ${embedded} .bpx-player-primary-area { height: 100% !important; }
+    /* Native control transitions extend below the viewport. overflow:hidden
+       allows focus/scrollIntoView to shift the video and crop the first danmaku
+       row; clip keeps the same clipping without an internal scroll container. */
+    ${embedded} .bpx-player-video-area { overflow: clip !important; }
+    ${embedded} [data-bpn-linear-chapter] {
+      left: var(--bpn-chapter-left) !important; width: var(--bpn-chapter-width) !important; margin-right: 0 !important;
+    }
+    /* Keep the native hover target above/below the thin track. The separator
+       clips only its last two pixels instead of compressing the time axis. */
+    ${embedded} [data-bpn-linear-chapter]:not(:last-child) { clip-path: inset(-20px 2px -20px 0); }
     #${APP}-player-wrap, [data-bili-popup-ui="pip"] #stage { container: ${APP}-video / inline-size; }
     ${player} .bpx-player-control-bottom { min-width: 0 !important; gap: 8px; padding-inline: 12px !important; }
     ${player} .bpx-player-control-bottom-left, ${player} .bpx-player-control-bottom-right { min-width: 0 !important; flex: 0 0 auto !important; }

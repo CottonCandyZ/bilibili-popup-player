@@ -54,6 +54,38 @@ for (const kind of ['home', 'pip']) {
     expect((await page.locator('#host-player .bpx-player-primary-area').boundingBox()).height).toBe(179);
   });
 
+  test(`${kind} hidden control overflow cannot scroll the first danmaku row out of view`, async ({ page }) => {
+    const root = await mount(page, 1200);
+    // Native control animations overflow the video viewport by 20px. Focus or
+    // scrollIntoView on a control must not scroll that hidden overflow together
+    // with the video, subtitles and first row of danmaku.
+    await page.addStyleTag({ content: `
+      .bpx-player-video-area { overflow:hidden; }
+      .bpx-player-row-dm-wrap { position:absolute; inset:0; pointer-events:none; }
+      .test-danmaku { position:absolute; top:4px; left:100px; font:17px/20px sans-serif; }
+      .test-control-overflow { position:absolute; top:100%; height:20px; width:30px; }
+    ` });
+    await page.locator('.bpx-player-video-area').evaluateAll(areas => {
+      for (const area of areas) area.insertAdjacentHTML('beforeend', '<div class="bpx-player-row-dm-wrap"><span class="test-danmaku">第一行弹幕</span></div><button class="test-control-overflow">控件</button>');
+    });
+    const area = root.locator('.bpx-player-video-area');
+    for (const fullscreen of [false, true, false]) {
+      await root.evaluate(async (el, fullscreen) => {
+        if (fullscreen) await el.parentElement.requestFullscreen();
+        else if (document.fullscreenElement) await document.exitFullscreen();
+      }, fullscreen);
+      await area.locator('.test-control-overflow').evaluate(el => el.scrollIntoView({ block: 'nearest' }));
+      expect(await area.evaluate(el => el.scrollTop)).toBe(0);
+      const viewport = await area.boundingBox(), bullet = await area.locator('.test-danmaku').boundingBox();
+      expect(bullet.y - viewport.y).toBe(4);
+      expect(bullet.y + bullet.height).toBeLessThan(viewport.y + viewport.height);
+    }
+    // The host site's player retains its own overflow behavior.
+    const hostArea = page.locator('#host-player .bpx-player-video-area');
+    await hostArea.evaluate(el => { el.scrollTop = 20; });
+    expect(await hostArea.evaluate(el => el.scrollTop)).toBe(20);
+  });
+
   test(`${kind} mini controls align and play visibility follows shell activity instead of native resume`, async ({ page }) => {
     const root = await mount(page);
     await root.locator('.bpx-player-container').evaluate(el => { el.dataset.screen = 'web'; });

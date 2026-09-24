@@ -80,6 +80,7 @@ import {
 } from './pip-document.js';
 import { getPlayerExternalState, getPlayerViewInfo } from './player-view-info.js';
 import { bindNativePlayerActions } from './native-player-actions.js';
+import { bindNativeProgress } from './native-progress.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
 import { loadScriptOnce, waitForHostScript } from './script-loader.js';
@@ -2622,6 +2623,8 @@ import {
   function bindPlayerActions(kind) {
     unbindPlayerActions(kind);
     const slot = state[kind], { player, bootstrap } = slot;
+    const root = kind === 'home' ? slot.ui?.playerRoot : slot.win?.document.getElementById('bilibili-player');
+    slot.disposeNativeProgress = bindNativeProgress(root);
     slot.disposeNativeActions = bindNativePlayerActions({
       player, runtime: getPlayerApiForKind(kind),
       isCurrent: () => slot.player === player && slot.bootstrap === bootstrap &&
@@ -2632,6 +2635,8 @@ import {
   }
 
   function unbindPlayerActions(kind) {
+    state[kind].disposeNativeProgress?.();
+    state[kind].disposeNativeProgress = null;
     state[kind].disposeNativeActions?.();
     state[kind].disposeNativeActions = null;
   }
