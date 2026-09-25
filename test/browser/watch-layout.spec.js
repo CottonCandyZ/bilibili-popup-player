@@ -92,6 +92,48 @@ for (const layout of ['right', 'bottom']) test(`system fullscreen retains contro
   expect(errors).toEqual([]);
 });
 
+for (const layout of ['right', 'bottom']) for (const web of [false, true]) {
+  test(`system fullscreen tracks every viewport frame from ${web ? 'web' : 'window'} with ${layout} comments`, async ({ page }) => {
+    await page.setViewportSize({ width:1360, height:600 });
+    await prepare(page, { fullscreen: web });
+    if (layout === 'bottom') await page.locator('.bpx-player-ctrl-wide').click();
+    await expect(page.locator('#' + A + '-overlay')).not.toHaveAttribute('data-layout-animating', 'true');
+    await page.evaluate(A => {
+      const dialog = document.getElementById(A + '-dialog');
+      const slot = document.getElementById(A + '-player-slot');
+      const player = document.getElementById(A + '-player');
+      const controls = player.querySelector('.bpx-player-ctrl-full');
+      window.__fullscreenFrames = [];
+      window.__sampleFullscreen = true;
+      const sample = () => {
+        if (document.fullscreenElement === dialog) {
+          const bounds = player.getBoundingClientRect();
+          window.__fullscreenFrames.push({
+            viewport: innerHeight, shell: dialog.getBoundingClientRect().height,
+            slot: slot.getBoundingClientRect().height, player: bounds.height,
+            bottom: controls.getBoundingClientRect().bottom - bounds.top,
+          });
+        }
+        if (window.__sampleFullscreen) requestAnimationFrame(sample);
+      };
+      sample();
+    }, A);
+    await page.locator('.bpx-player-ctrl-full').click();
+    await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+    // Desktop fullscreen changes the viewport separately from fullscreenchange.
+    // Check every paint, not merely the final size after the two queued rAFs.
+    for (const viewport of [{ width:1920, height:1080 }, { width:1360, height:720 }, { width:1920, height:1080 }]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(90);
+    }
+    const frames = await page.evaluate(() => { window.__sampleFullscreen = false; return window.__fullscreenFrames; });
+    expect(frames.length).toBeGreaterThan(5);
+    expect(frames.filter(frame => Math.abs(frame.shell - frame.viewport) > .5 ||
+      Math.abs(frame.slot - frame.viewport) > .5 || Math.abs(frame.player - frame.viewport) > .5 ||
+      Math.abs(frame.bottom - (frame.viewport - 16)) > .5)).toEqual([]);
+  });
+}
+
 test('the lower watch page shows comments and lists together, with a single-column narrow layout', async ({ page }) => {
   const errors = await prepare(page);
   await page.locator('.bpx-player-ctrl-wide').click();

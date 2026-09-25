@@ -133,6 +133,9 @@ export function getModernPlayerCss() {
        engines retain border-radius without adding a mask around floating UI. */
     #${A}-dialog { grid-template-rows: minmax(0, 1fr); overflow: visible; border: 0; border-radius: 6px; corner-shape: superellipse(1.5); background: #000; box-shadow: 0 24px 80px #0005; font-family: var(--${A}-font); transition: opacity .2s ease; }
     #${A}-dialog:fullscreen { width: 100vw !important; height: 100dvh !important; max-width: none; max-height: none; margin: 0; border-radius: 0; box-shadow: none; }
+    /* Desktop fullscreen resizes the viewport separately from fullscreenchange.
+       Override the cached pixel height before paint, without waiting for JS. */
+    #${A}-dialog:fullscreen #${A}-player-slot { height: 100dvh !important; }
     #${A}-dialog:fullscreen::backdrop { background: #000; }
     [data-${A}-comment-preview] { z-index: 2147483647 !important; }
     [data-${A}-comment-preview="viewer"] { position: fixed !important; inset: 0 !important; }

@@ -25,7 +25,9 @@ export function getEmbeddedPlayerCss() {
     /* Native control transitions extend below the viewport. overflow:hidden
        allows focus/scrollIntoView to shift the video and crop the first danmaku
        row; clip keeps the same clipping without an internal scroll container. */
-    ${embedded} .bpx-player-video-area { overflow: clip !important; }
+    /* Unlike hidden, clip does not make a flex item a scroll container: reset
+       its automatic minimum so the native video perch cannot force extra height. */
+    ${embedded} .bpx-player-video-area { overflow: clip !important; min-height: 0 !important; min-width: 0 !important; }
     ${embedded} [data-bpn-linear-chapter] {
       left: var(--bpn-chapter-left) !important; width: var(--bpn-chapter-width) !important; margin-right: 0 !important;
     }

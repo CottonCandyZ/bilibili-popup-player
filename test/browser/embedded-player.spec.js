@@ -86,6 +86,31 @@ for (const kind of ['home', 'pip']) {
     expect(await hostArea.evaluate(el => el.scrollTop)).toBe(20);
   });
 
+  test(`${kind} clipping preserves flex shrinking in a short fullscreen viewport`, async ({ page }) => {
+    const root = await mount(page, 1200);
+    await root.evaluate(el => {
+      el.parentElement.style.height = '400px';
+      el.querySelector('.bpx-player-primary-area').style.cssText = 'display:flex;flex-direction:column;';
+      const area = el.querySelector('.bpx-player-video-area');
+      area.style.cssText = 'flex:1 1 0%;height:auto;';
+      // Native video-perch uses a percentage placeholder. It must not become
+      // the flex item's minimum height after changing hidden to overflow:clip.
+      area.insertAdjacentHTML('afterbegin', '<div style="padding-top:50%"></div>');
+    });
+    const area = root.locator('.bpx-player-video-area');
+    const controls = root.locator('.bpx-player-control-wrap');
+    await area.evaluate(el => el.style.setProperty('min-height', 'auto', 'important'));
+    expect((await area.boundingBox()).height).toBe(600);
+    await area.evaluate(el => el.style.removeProperty('min-height'));
+    for (const width of [1200, 1800, 800]) {
+      await root.evaluate((el, width) => { el.parentElement.style.width = `${width}px`; }, width);
+      const box = await area.boundingBox(), bar = await controls.boundingBox();
+      expect(box.height).toBe(400);
+      expect(bar.y + bar.height).toBe(box.y + box.height);
+      expect(await area.evaluate(el => { el.scrollTop = 100; return el.scrollTop; })).toBe(0);
+    }
+  });
+
   test(`${kind} mini controls align and play visibility follows shell activity instead of native resume`, async ({ page }) => {
     const root = await mount(page);
     await root.locator('.bpx-player-container').evaluate(el => { el.dataset.screen = 'web'; });
