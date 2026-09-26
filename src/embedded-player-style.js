@@ -6,6 +6,7 @@ export function getEmbeddedPlayerCss() {
   const frame = `:is(#${APP}-player-wrap, [data-bili-popup-ui="pip"] #stage)`;
   const miniFrame = `:is(#${APP}-overlay.${APP}--minimized #${APP}-player-wrap, ${frame}[data-scroll-floating="true"])`;
   const mini = `${miniFrame} ${embedded}`;
+  const miniButton = `${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume)`;
   return `
     #${APP}-player[data-shell-fullscreen="false"] .bpx-player-ctrl-web-enter,
     #${APP}-player[data-shell-fullscreen="true"] .bpx-player-ctrl-web-leave { display: block !important; }
@@ -102,7 +103,10 @@ export function getEmbeddedPlayerCss() {
       display: block !important; height: 56px !important; pointer-events: none;
     }
     ${mini} .bpx-player-control-wrap { position: absolute; inset: auto 0 0; width: 100%; z-index: 90; }
+    /* The heatmap is a sibling of control-top, so hiding the seek bar alone
+       leaves its graph and pin floating above the compact controls. */
     ${mini} :is(.bpx-player-control-top, .bpx-player-control-mask, .bpx-player-control-bottom-center,
+      .bpx-player-pbp, .bpx-player-pbp-pin,
       .bpx-player-ctrl-volume-box, .bpx-player-ctrl-btn-play-icon-mini, .bpx-player-ctrl-volume-icon-mini) { display: none !important; }
     ${mini} .bpx-player-control-bottom {
       position: absolute; inset: auto 0 0; display: block !important; width: 100%; height: 56px !important;
@@ -120,15 +124,20 @@ export function getEmbeddedPlayerCss() {
     ${mini} .bpx-player-control-bottom-right { left: auto; right: 12px; }
     ${mini} .bpx-player-control-bottom-left > :not(.bpx-player-ctrl-play),
     ${mini} .bpx-player-control-bottom-right > :not(.bpx-player-ctrl-volume) { display: none !important; }
-    ${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume) {
+    ${miniButton} {
       position: relative; inset: auto; display: block !important; box-sizing: border-box;
-      width: 32px !important; height: 32px !important; min-width: 0; margin: 0 !important; padding: 4px;
+      width: 32px !important; height: 32px !important; min-width: 0; margin: 0 !important; padding: 6px;
       scale: 1; transform: none; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .5);
-      color: #fff; fill: #fff; font-size: 0; line-height: 24px; cursor: pointer; pointer-events: auto;
+      color: #fff; fill: #fff; font-size: 0; line-height: 20px; cursor: pointer; pointer-events: auto;
     }
-    ${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume):is(:hover, :focus-visible) { background: rgba(0, 0, 0, .72); }
-    ${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume) .bpx-player-ctrl-btn-icon {
-      width: 24px !important; height: 24px !important; margin: 0; padding: 0; line-height: 24px; transform: none;
+    ${miniButton}:is(:hover, :focus-visible) { background: rgba(0, 0, 0, .72); }
+    /* Web mode gives the inner SVG span its own 28px height. Size both wrappers
+       to keep the native animated icons square and centered inside the circle.
+       Leave ctrl-btn-icon display alone: Nano uses it to switch mute/unmute. */
+    ${miniButton} :is(.bpx-player-ctrl-btn-icon, .bpx-common-svg-icon) {
+      width: 20px !important; height: 20px !important; margin: 0; padding: 0; line-height: 20px; transform: none;
     }
+    ${miniButton} .bpx-common-svg-icon { display: block; }
+    ${miniButton} svg { display: block; width: 100%; height: 100%; }
   `;
 }
