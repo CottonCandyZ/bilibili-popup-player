@@ -155,6 +155,7 @@ function HomePlayerPage(props) {
                     <div className={`${S}__shortcut-content`}>
                     <p className={`${APP}__gamepad-disabled-hint`}>手柄控制已关闭</p>
                     <p className={`${APP}__gamepad-disconnected-hint`}>连接手柄后按任意键</p>
+                    <p className={`${APP}__gamepad-connected-hint`} role="status">手柄已连接</p>
                     <dl>{[['A', '暂停 / 播放'], ['X / B', '调整进度'], ['Y', '系统全屏'], ['Menu', '网页全屏'], ['LB / RB', '切换分区'], ['LT / RT', '上一集 / 下一集'], ['摇杆', '滚动列表']].map(([key, action]) => <div key={key}><dt>{action}</dt><dd><kbd>{key}</kbd></dd></div>)}</dl>
                     </div>
                   </Collapsible.Panel>

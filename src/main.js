@@ -2803,6 +2803,7 @@ import {
     bindHomePlayerHandoff(state.home.player);
     bindHomePlayerEnded(state.home.player);
     startAutoPlayCountdownMonitor('home');
+    startGamepadControls();
     syncPlayerHandoffAvailability('home');
     setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     state.home.ui.status.textContent = '播放器：已 reload';
@@ -2825,6 +2826,7 @@ import {
     setHomePlayerFeatureBlocked(homeRenderer.isClosed());
     updateDebug(setting, bootstrap);
     state.home.player.connect();
+    startGamepadControls();
     schedulePlayerExternalStateSync('home');
     state.home.ui.status.textContent = '播放器：已 createPlayer';
     syncHomeSize();
@@ -3073,6 +3075,7 @@ import {
     pageWindow.EmbedPlayer = { instance: player };
     pageWindow.__PLAYER_GLOBAL_INSTANCE__ = player;
     state.home.player = createLivePipPlayerAdapter(pageWindow, player, state.home.ui?.playerWrap || playerRoot);
+    startGamepadControls();
     setHomePlayerFeatureBlocked(false);
     syncHomeSize();
     window.setTimeout(() => syncHomeSize(), 600);
@@ -3252,6 +3255,7 @@ import {
     };
 
     state.pip.player = createLivePipPlayerAdapter(targetWindow, player, targetWindow.document.getElementById('stage') || playerRoot);
+    startGamepadControls();
     attachPipWindowResizeSync(targetWindow);
     syncPipSize(targetWindow);
     targetWindow.setTimeout(() => syncPipSize(targetWindow), 600);
@@ -5980,11 +5984,17 @@ import {
   }
 
   function startGamepadControls() {
-    if (!state.gamepadControlsEnabled || state.gamepadFrame || !navigator.getGamepads) {
+    // Opening the shell precedes async player creation. Start again once the
+    // player is connected; an early frame otherwise stops with no active player.
+    if (!state.gamepadControlsEnabled || state.gamepadFrame || !navigator.getGamepads || !getActiveGamepadKind()) {
       syncGamepadIndicator();
       return;
     }
-    updateGamepadConnectionState([...navigator.getGamepads()].some(Boolean));
+    const gamepads = [...navigator.getGamepads()];
+    updateGamepadConnectionState(gamepads.some(Boolean));
+    // Reopening or reenabling controls must not replay an already held button.
+    primeGamepadButtons(gamepads);
+    state.gamepadIgnoreInput = false;
     state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
   }
 
@@ -6107,8 +6117,8 @@ import {
     }
 
     if (!repeat) return;
-    const repeatAt = state.gamepadRepeatAt.get(key) || 0;
-    if (now < repeatAt) return;
+    const repeatAt = state.gamepadRepeatAt.get(key);
+    if (repeatAt == null || now < repeatAt) return;
     runGamepadAction(kind, action, true);
     state.gamepadRepeatAt.set(key, now + GAMEPAD_REPEAT_INTERVAL_MS);
   }
