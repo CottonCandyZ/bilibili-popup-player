@@ -1,5 +1,6 @@
 import { APP, HOST_ID } from './constants.js';
 import { COVER_HOST_SELECTOR, getLinkPlaybackKey } from './video-meta.js';
+import { getViewportOverflowElement } from './page-scroll.js';
 
 export const CARD_ACTION_SELECTOR = 'button, input, select, textarea, [role="button"], [role="menuitem"], [class*="watch-later"], [class*="watchLater"], .van-watchlater';
 
@@ -58,12 +59,15 @@ export function intersectRects(a, b) {
 }
 
 export function getVisibleCardRect(anchor) {
-  const win = anchor.ownerDocument.defaultView;
+  const doc = anchor.ownerDocument, win = doc.defaultView;
+  const viewportOverflow = getViewportOverflowElement(doc);
   let rect = intersectRects(anchor.getBoundingClientRect(), { left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight });
   for (let element = anchor; element; element = element.parentElement) {
     const style = win.getComputedStyle(element);
     if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0 || element.hidden || element.inert) return null;
-    if (element !== anchor && /(hidden|clip|scroll|auto)/.test(`${style.overflowX} ${style.overflowY}`)) {
+    // Root/body overflow propagated to the viewport is already clipped above.
+    // Their height:100% boxes can be entirely above a scrolled search result.
+    if (element !== anchor && element !== doc.documentElement && element !== viewportOverflow && /(hidden|clip|scroll|auto)/.test(`${style.overflowX} ${style.overflowY}`)) {
       const bounds = element.getBoundingClientRect();
       const clipX = /(hidden|clip|scroll|auto)/.test(style.overflowX);
       const clipY = /(hidden|clip|scroll|auto)/.test(style.overflowY);

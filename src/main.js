@@ -90,6 +90,7 @@ import { createSettingsUi } from './settings-ui.jsx';
 import { applyAccentTheme, normalizeAccentTheme } from './accent-theme.js';
 import { animatePlayerLayout, capturePlayerLayout } from './layout-motion.js';
 import { installVideoGestures } from './video-gestures.js';
+import { lockPageScroll } from './page-scroll.js';
 import { isMediaShortcut, isShortcutInput } from './media-shortcuts.js';
 import { getStorageItem, removeStorageItem, setStorageItem } from './storage.js';
 import {
@@ -247,7 +248,7 @@ import {
     home: {
       minimized: false,
       fullscreen: getStorageItem(STORAGE_HOME_FULLSCREEN) === '1',
-      savedPageOverflow: null,
+      releasePageScroll: null,
       layoutAnimation: null,
       playTimer: 0,
       overlay: null,
@@ -1794,14 +1795,12 @@ import {
   }
 
   function lockHomePageScroll() {
-    if (state.home.savedPageOverflow === null) state.home.savedPageOverflow = document.documentElement.style.overflow;
-    document.documentElement.style.overflow = 'hidden';
+    state.home.releasePageScroll ||= lockPageScroll(document);
   }
 
   function unlockHomePageScroll() {
-    if (state.home.savedPageOverflow === null) return;
-    document.documentElement.style.overflow = state.home.savedPageOverflow;
-    state.home.savedPageOverflow = null;
+    state.home.releasePageScroll?.();
+    state.home.releasePageScroll = null;
   }
 
   function setHomeMinimized(minimized) {
