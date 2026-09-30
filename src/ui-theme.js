@@ -139,6 +139,8 @@ export function getModernPlayerCss() {
     #${A}-dialog:fullscreen::backdrop { background: #000; }
     [data-${A}-comment-preview] { z-index: 2147483647 !important; }
     [data-${A}-comment-preview="viewer"] { position: fixed !important; inset: 0 !important; }
+    [data-${A}-login-layer] > .bili-mini-mask { position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; }
+    [data-${A}-login-layer] .bili-mini-close-icon:focus-visible { outline: 2px solid var(--${A}-accent); outline-offset: 3px; }
     #${A}-dialog:fullscreen :is(.${A}__modal-resize-handle, .${A}__resize-hint, .bpx-player-ctrl-full-enter) { display: none !important; }
     #${A}-dialog:fullscreen .bpx-player-ctrl-full-leave { display: block !important; }
     #${A}-dialog[data-starting-style], #${A}-dialog[data-ending-style] { opacity: 0; }

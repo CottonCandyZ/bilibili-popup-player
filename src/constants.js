@@ -22,7 +22,8 @@ export const STORAGE_AUTO_PLAY_NEXT = `${APP}:auto-play-next`;
 export const STORAGE_AUTO_PLAY_COUNTDOWN = `${APP}:auto-play-countdown`;
 export const STORAGE_GAMEPAD_CONTROLS = `${APP}:gamepad-controls`;
 export const STORAGE_ACCENT_THEME = `${APP}:accent-theme`;
-export const ENABLED_URL_RE = /^https?:\/\/(?:www\.bilibili\.com\/(?:$|[?#]|index\.html|video\/BV|bangumi\/play\/(?:ss|ep)|account\/history|history)|space\.bilibili\.com\/|search\.bilibili\.com\/|live\.bilibili\.com\/|t\.bilibili\.com\/)/;
+// Match the userscript's sites, without restricting their page routes.
+export const ENABLED_URL_RE = /^https?:\/\/(?:www|space|search|live|t)\.bilibili\.com\//;
 export const BV_RE = /\/video\/(BV[0-9A-Za-z]+)/;
 export const OGV_RE = /\/bangumi\/play\/(ss|ep)(\d+)/;
 // UGC player 4.10.3, served by the native playback page on 2026-09-20.

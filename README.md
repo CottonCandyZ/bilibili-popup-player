@@ -20,6 +20,8 @@
 
 独立小窗按 `documentPictureInPicture.requestWindow` 是否可用来启用，不按浏览器名称或版本屏蔽。Firefox 桌面版自 [151](https://www.firefox.com/en-US/firefox/151.0/releasenotes/) 起支持 Document PiP；接口不可用时仍可使用网页小窗。
 
+4.0.54 起适配 [BewlyCat](https://github.com/keleus/BewlyCat) 的 Shadow DOM 卡片、独立滚动区域和封面预览。也取消了站内页面路径白名单，动画等分区页中的视频封面可使用小窗入口；文字链接、选集格子及被遮挡的卡片仍不挂入口。实测范围见 [BewlyCat 兼容性记录](test/manual/bewlycat-4.0.54.md)。
+
 ## 自动更新
 
 正式版使用 [Tampermonkey（油猴）](https://www.tampermonkey.net/documentation.php?locale=en&q=update_url) 和 [ScriptCat（脚本猫）](https://docs.scriptcat.org/docs/dev/meta/#updateurl) 的原生更新机制：
@@ -81,8 +83,10 @@ pnpm run check:published
 - 共用卡片扫描、封面点击拦截、播放页 SSR 解析、主题 CSS、评论组件、调试入口。
 - 设置入口和普通卡片按钮渲染在页面级 shadow overlay 中；历史记录等悬停浮层的按钮挂载到卡片内部的独立 shadow root，以保留浮层的悬停状态，销毁时清理挂载点和定位样式。
 - `card-targets.js` 负责真实封面识别、可见区域与遮挡检测；播放页排除当前视频，OGV 选集不挂入口。
+- `page-dom.js` 跟踪开放的 Shadow DOM 和内部滚动，卡片检测使用跨边界的可见性与命中结果；缓存列表重新显示时会恢复绑定。
 - `settings-ui.jsx`、`player-shell-ui.jsx` 和 `content-ui.jsx` 使用 Base UI 的 Popover、Switch、Radio、Dialog、Tabs 与 Button；`ui-theme.js` 统一样式。
 - 评论组件保留在我们自己的 modal/PiP 容器内。
+- `native-login.js` 将小窗触发的原生登录弹层挂入播放器容器，兼容系统全屏层级并保留登录 SDK 的重复打开与关闭流程。
 - 播放容器通过 renderer adapter 区分：
   - `homeRenderer`：当前网页内 modal / 右下角迷你播放器。
   - `pipRenderer`：支持 Document Picture-in-Picture 的浏览器独立小窗。

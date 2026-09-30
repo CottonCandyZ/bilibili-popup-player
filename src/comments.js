@@ -1,6 +1,7 @@
 import { loadScriptOnce } from './script-loader.js';
 import { installCommentTheme } from './comment-theme.js';
 import { installCommentImages } from './comment-images.js';
+import { installNativeLogin } from './native-login.js';
 
 export async function mountComments(adapter, bootstrap) {
   const { slot, mount, targetDocument, getCtor, beforeLoad, getPlayer, getScrollContainer, getLayout, isActive } = adapter;
@@ -82,6 +83,7 @@ function installCompactCommentStyles(slot, mount, targetDocument) {
   slot.commentStyleCleanup?.();
   slot.commentStyleCleanup = installCommentTheme(mount, targetDocument);
   slot.commentImagesCleanup ??= installCommentImages(mount, targetDocument);
+  slot.commentLoginCleanup ??= installNativeLogin(mount, targetDocument);
 }
 
 function buildCommentProps(bootstrap, scrollContainer, lazyLoad) {
@@ -115,6 +117,8 @@ export function disposeCommentInstance(state, kind) {
 }
 
 function disposeMountedComment(slot) {
+  slot.commentLoginCleanup?.();
+  slot.commentLoginCleanup = null;
   slot.commentImagesCleanup?.();
   slot.commentImagesCleanup = null;
   const current = slot.comments;

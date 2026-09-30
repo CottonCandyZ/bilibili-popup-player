@@ -1,5 +1,6 @@
 import { APP } from './constants.js';
 import { hasCommentImagePreview } from './comment-images.js';
+import { hasNativeLogin } from './native-login.js';
 
 export function isShortcutInput(event) {
   return getEventPath(event).some(node => node?.matches?.(
@@ -19,6 +20,11 @@ export function isMediaShortcut(event) {
 // original event reach Nano so it owns short presses, repeats, held speed and
 // release/blur restoration. Do not duplicate the player's keyboard behavior.
 export function onPlayerShellKeyDown(event) {
+  if (hasNativeLogin(event.currentTarget.ownerDocument)) {
+    event.stopPropagation();
+    event.preventBaseUIHandler?.();
+    return;
+  }
   if (hasCommentImagePreview(event.currentTarget.ownerDocument)) {
     event.preventBaseUIHandler?.();
     return;

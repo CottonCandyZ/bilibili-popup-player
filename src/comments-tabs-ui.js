@@ -1,5 +1,6 @@
 import { APP } from './constants.js';
 import { getPlayableKey } from './live-cards.js';
+import { isRenderedCard } from './page-dom.js';
 import {
   getCardTitle,
   getVideoMetaFromLink,
@@ -183,7 +184,7 @@ export function createCommentsTabsUi({
   function getScannedPlaylistCards() {
     const seen = new Set();
     return state.cardEntries
-      .filter((entry) => entry.card?.isConnected && entry.link?.isConnected)
+      .filter((entry) => entry.link?.isConnected && isRenderedCard(entry.card))
       .map((entry) => getPlaylistCardFromEntry(entry))
       .filter((card) => {
         const key = getPlayableKey(card);
@@ -196,7 +197,7 @@ export function createCommentsTabsUi({
   function getScannedLiveCards() {
     const seen = new Set();
     return state.cardEntries
-      .filter((entry) => entry.card?.isConnected && entry.link?.isConnected)
+      .filter((entry) => entry.link?.isConnected && isRenderedCard(entry.card))
       .map((entry) => getPlaylistCardFromEntry(entry))
       .filter((card) => {
         const key = getPlayableKey(card);
@@ -895,6 +896,7 @@ function getEntryCardSubtitle(root) {
     '.bili-dyn-live-users__item__uname',
     '.bili-video-card__info--author',
     '.video-page-card-small-author',
+    '.channel-name',
     '[class*="author"]',
   ].join(','))?.textContent);
 }
@@ -908,6 +910,8 @@ function getEntryCardDuration(root) {
 }
 
 function getEntryCardStats(root) {
+  const coverStats = [...(root?.querySelectorAll?.('.cover-stat-view .video-card-cover-stats__value, .cover-stat-danmaku .video-card-cover-stats__value') || [])];
+  if (coverStats.length) return coverStats.map(element => cleanText(element.textContent)).join(' ');
   const playInfo = root?.querySelector?.('.playinfo')?.textContent;
   if (playInfo) return cleanText(playInfo);
   const items = uniqueList([...(root?.querySelectorAll?.([

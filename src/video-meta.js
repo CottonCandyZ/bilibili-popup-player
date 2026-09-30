@@ -80,12 +80,14 @@ const FALLBACK_CARD_ROOT_SELECTOR = [
 const CARD_TITLE_SELECTORS = [
   '.bili-video-card__info--tit',
   '.video-page-card-small-title',
+  '.video-card-title',
   '.bili-dyn-card-video__title, [class*="dyn-card-video__title"]',
   '.history-card__title',
   '.bili-history-card__title',
   '.bili-dyn-live-users__item__title',
   '.info-title',
   '.title',
+  'h3[title], h3 a[href], h2[title], h2 a[href]',
 ];
 
 const NON_TITLE_SELECTOR = [

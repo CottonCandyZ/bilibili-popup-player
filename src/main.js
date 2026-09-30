@@ -38,11 +38,12 @@ import {
 } from './archive-actions.js';
 import { disposeCommentInstance, mountComments } from './comments.js';
 import { handleCommentImageShortcut } from './comment-images.js';
+import { dismissNativeLogin, handleNativeLoginShortcut } from './native-login.js';
 import { createCommentsTabsUi } from './comments-tabs-ui.js';
 import {
   createHomeFeedSession,
   fetchHomeFeedCards,
-  isHomeFeedPage,
+  isHomeFeedPage as isHomeFeedUrl,
 } from './home-feed.js';
 import {
   createExternalLinkIcon,
@@ -91,6 +92,7 @@ import { applyAccentTheme, normalizeAccentTheme } from './accent-theme.js';
 import { animatePlayerLayout, capturePlayerLayout } from './layout-motion.js';
 import { installVideoGestures } from './video-gestures.js';
 import { lockPageScroll } from './page-scroll.js';
+import { composedClosest, composedContains, createPageDomTracker, getDeepActiveElement, isRenderedCard } from './page-dom.js';
 import { isMediaShortcut, isShortcutInput } from './media-shortcuts.js';
 import { getStorageItem, removeStorageItem, setStorageItem } from './storage.js';
 import {
@@ -395,7 +397,7 @@ import {
     if (!state.enabled || state.destroyed || state.observer) return;
     document.addEventListener('mousemove', onDocumentMouseMove, true);
     document.addEventListener('mouseleave', onDocumentMouseLeave, true);
-    document.addEventListener('focusin', scheduleViewportSync, true);
+    document.addEventListener('focusin', onPageFocusIn, true);
     document.addEventListener('focusout', scheduleViewportSync, true);
     document.addEventListener('click', onDirectCoverClick, true);
     document.addEventListener('transitionend', scheduleViewportSync, true);
@@ -406,10 +408,10 @@ import {
     window.addEventListener('hashchange', onRouteChanged);
     window.addEventListener('gamepadconnected', onGamepadConnectionChanged);
     window.addEventListener('gamepaddisconnected', onGamepadConnectionChanged);
-    state.observer = new MutationObserver(onDomMutated);
-    state.observer.observe(document.documentElement, {
-      childList: true, subtree: true, attributes: true,
-      attributeFilter: ['href', 'title', 'aria-label', 'class', 'style', 'hidden', 'inert', 'src', 'data-src'],
+    state.observer = createPageDomTracker(document, {
+      isExcluded: isOwnUiScanTarget,
+      onMutation: onDomMutated,
+      onScroll: scheduleViewportSync,
     });
     // SPA navigation can change history without mutating the card subtree.
     state.routeTimer = window.setInterval(onRouteChanged, 600);
@@ -428,7 +430,7 @@ import {
     state.viewportFrame = 0;
     document.removeEventListener('mousemove', onDocumentMouseMove, true);
     document.removeEventListener('mouseleave', onDocumentMouseLeave, true);
-    document.removeEventListener('focusin', scheduleViewportSync, true);
+    document.removeEventListener('focusin', onPageFocusIn, true);
     document.removeEventListener('focusout', scheduleViewportSync, true);
     document.removeEventListener('click', onDirectCoverClick, true);
     document.removeEventListener('transitionend', scheduleViewportSync, true);
@@ -553,6 +555,14 @@ import {
 
   function openOriginalPage(href, entry) {
     if (!href) return;
+    if (entry.link?.isConnected && entry.link.getRootNode().host) {
+      // Preserve the replacement page's choice of current tab, background tab
+      // or drawer when using our explicit jump button.
+      replayingCardLink = true;
+      try { entry.link.click(); }
+      finally { replayingCardLink = false; }
+      return;
+    }
     if (isPlaybackPage() || isOgvPage()) {
       if (isHomeShellOpen()) closeHome();
       const key = getLinkPlaybackKey(entry.link);
@@ -826,7 +836,7 @@ import {
   function syncCardControlHost(entry) {
     // Keep hover ancestry inside site popovers so moving onto our button does
     // not dismiss the history/favorites panel underneath it.
-    const parent = entry.card.closest('[class*="popover"], [class*="popper"]') ? entry.card : null;
+    const parent = entry.card.getRootNode().host || composedClosest(entry.card, '[class*="popover"], [class*="popper"]') ? entry.card : null;
     if (parent === entry.localParent && entry.controlHost?.isConnected) return;
     if (!parent && !entry.controlHost && entry.button.parentNode === state.overlay) return;
     removeCardControlHost(entry);
@@ -963,8 +973,8 @@ import {
     const result = { button: false, badge: false };
     if (!state.enabled || (isHomeShellOpen() && !state.home.minimized) || document.fullscreenElement) return result;
     const bounds = entry.anchor.getBoundingClientRect();
-    const focused = document.activeElement;
-    const focus = (entry.card.contains(focused) && focused?.matches(':focus-visible')) || entry.button.matches(':focus-visible');
+    const focused = getDeepActiveElement(document);
+    const focus = (composedContains(entry.card, focused) && focused?.matches(':focus-visible')) || entry.button.matches(':focus-visible');
     const touch = window.matchMedia('(hover: none)').matches;
     if (!pointInRect(state.pointer, entry.card.getBoundingClientRect()) && !focus && !touch && !entry.badge.classList.contains(APP + '--active')) return result;
     const visible = getVisibleCardRect(entry.anchor);
@@ -1000,6 +1010,12 @@ import {
 
   function onDocumentMouseMove(event) {
     state.pointer = { x: event.clientX, y: event.clientY };
+    if (state.observer?.hasUntrackedRoot(event)) scheduleScan();
+    scheduleViewportSync();
+  }
+
+  function onPageFocusIn(event) {
+    if (state.observer?.hasUntrackedRoot(event)) scheduleScan();
     scheduleViewportSync();
   }
 
@@ -1237,9 +1253,11 @@ import {
   function scan() {
     if (!state.enabled || state.destroyed) return;
     ensureControlOverlay();
+    state.observer?.refresh();
+    const queryCards = selector => state.observer?.queryAll(selector) || [];
     state.cardEntries.forEach(entry => { entry.seen = false; });
     const currentOgvKey = getCurrentPageOgvKey();
-    [...document.querySelectorAll('a[href*="/video/BV"]')]
+    queryCards('a[href*="/video/BV"]')
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
         if (isOwnUiScanTarget(link)) return;
@@ -1247,7 +1265,7 @@ import {
         if (!meta || meta.bvid === getCurrentPageBvid()) return;
         bindLink(link, meta);
       });
-    [...document.querySelectorAll(OGV_VIDEO_LINK_SELECTOR)]
+    queryCards(OGV_VIDEO_LINK_SELECTOR)
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
         if (isOwnUiScanTarget(link)) return;
@@ -1256,7 +1274,7 @@ import {
         if (!meta || (currentOgvKey && key === currentOgvKey)) return;
         bindOgvLink(link, meta);
       });
-    [...document.querySelectorAll(LIVE_CARD_LINK_SELECTOR)]
+    queryCards(LIVE_CARD_LINK_SELECTOR)
       .forEach((link) => {
         if (isOwnUiScanTarget(link)) return;
         const meta = getLiveMetaFromLink(link);
@@ -1352,17 +1370,21 @@ import {
   function shouldRescanMutation(mutation) {
     if (isOwnUiScanTarget(mutation.target)) return false;
     if (mutation.type === 'childList') return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
+    if (mutation.type === 'characterData') return Boolean(mutation.target.parentElement?.closest('a[href], [title], h2, h3'));
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
     if (!(target instanceof Element)) return false;
+    // SPA tabs can keep a cached feed mounted and reveal only its wrapper.
+    // Its cards may have been removed from our bindings while hidden.
+    if (['class', 'style', 'hidden', 'inert'].includes(mutation.attributeName) &&
+      (target.shadowRoot || target.querySelector('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"]'))) return true;
     return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], img, picture, [title], [aria-label]') ||
       target.closest?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"]') ||
       target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, .bangumi-card, .season-item, .episode-item, .ep-list-item, .media-card, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bangumi"], [class*="season"], [class*="episode"], [class*="bili-dyn"]');
   }
 
   function isOwnUiScanTarget(element) {
-    if (!(element instanceof Element)) return false;
-    return Boolean(element.getRootNode() === state.shadowRoot || element.closest?.(`#${APP}-overlay, #${HOST_ID}, [data-bili-popup-ui]`));
+    return Boolean(composedClosest(element, `#${APP}-overlay, #${HOST_ID}, [data-bili-popup-ui]`));
   }
 
   function isPlaybackPageWebFullscreen() {
@@ -1448,10 +1470,10 @@ import {
 
   function onDirectCoverClick(event) {
     if (replayingCardLink || !state.enabled || !state.directClick || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const target = event.target;
+    const target = event.composedPath()[0];
     if (!(target instanceof Element) || isOwnUiScanTarget(target)) return;
-    if (target.closest(CARD_ACTION_SELECTOR)) return;
-    const entry = state.cardEntries.find(item => item.anchor.contains(target));
+    if (composedClosest(target, CARD_ACTION_SELECTOR)) return;
+    const entry = state.cardEntries.find(item => composedContains(item.anchor, target));
     if (!entry || !findCardAnchor(entry.link, entry.card, entry.meta)) return;
     const meta = isLiveMeta(entry.meta) ? getLiveMetaFromLink(entry.link) || entry.meta
       : isOgvMeta(entry.meta) ? getOgvMetaFromLink(entry.link) : getVideoMetaFromLink(entry.link);
@@ -3776,6 +3798,12 @@ import {
     });
   }
 
+  function isHomeFeedPage() {
+    // A replacement homepage has its own tabs/feed. Do not append the native
+    // recommendation API to its ranking, history or other custom lists.
+    return isHomeFeedUrl() && !state.cardEntries.some(entry => entry.card.getRootNode().host && isRenderedCard(entry.card));
+  }
+
   function attachPipPlaylistAutoRefresh(targetWindow) {
     if (!targetWindow || targetWindow.closed) return;
     const doc = targetWindow.document;
@@ -5871,6 +5899,7 @@ import {
   }
 
   function closeHome() {
+    dismissNativeLogin(document);
     unbindPlayerActions('home');
     cancelHomeDelayedPlay();
     state.home.ui?.videoGestures?.cancel();
@@ -5908,6 +5937,7 @@ import {
   }
 
   function onKeydown(event) {
+    if (handleNativeLoginShortcut(event, document)) return;
     if (handleCommentImageShortcut(event, document)) return;
     if (state.home.minimized && !state.home.overlay?.contains(event.target)) return;
     if (event.key === 'Escape' && [...(state.home.ui?.mount.querySelectorAll(`[role="menu"], .${APP}__settings__panel, .${APP}__coin-dialog, .${APP}__favorite-dialog`) || [])].some(panel => panel.getClientRects().length)) return;
@@ -5956,6 +5986,7 @@ import {
   }
 
   function onHomeShortcutKeyup(event) {
+    if (handleNativeLoginShortcut(event, document)) return;
     if (handleCommentImageShortcut(event, document)) return;
     if (state.home.minimized && !state.home.overlay?.contains(event.target)) return;
     if (String(event.key).toLowerCase() !== 'f' || isShortcutInput(event) || event.altKey || event.ctrlKey || event.metaKey) return;
@@ -5964,6 +5995,7 @@ import {
   }
 
   function onPipKeydown(event) {
+    if (handleNativeLoginShortcut(event, state.pip.win?.document)) return;
     if (handleCommentImageShortcut(event, state.pip.win?.document)) return;
     if (isShortcutInput(event) || event.altKey || event.ctrlKey || event.metaKey) return;
     const key = String(event.key || '').toLowerCase();
