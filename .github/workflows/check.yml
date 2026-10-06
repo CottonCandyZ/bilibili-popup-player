@@ -1,0 +1,29 @@
+name: Check
+
+on: pull_request
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build && pnpm check && pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Browser regression
+        env:
+          PLAYWRIGHT_CHANNEL: chromium
+        run: pnpm exec playwright test test/browser/pip-activation.spec.js test/browser/pip-support.spec.js test/browser/shadow-cards.spec.js test/browser/watch-later.spec.js

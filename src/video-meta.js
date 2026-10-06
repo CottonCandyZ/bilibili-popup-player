@@ -110,16 +110,32 @@ export const OGV_VIDEO_LINK_SELECTOR = [
   'a[href*="/bangumi/play/ep"]',
 ].join(',');
 
+export const VIDEO_LINK_SELECTOR = 'a[href*="/video/BV"], a[href*="/list/watchlater"]';
+
+function getVideoBvid(url) {
+  const bvid = url.pathname.match(BV_RE)?.[1];
+  if (bvid) return bvid;
+  if (!/^\/list\/watchlater\/?$/.test(url.pathname)) return '';
+  const selected = url.searchParams.get('bvid') || '';
+  return /^BV[0-9A-Za-z]+$/.test(selected) ? selected : '';
+}
+
 export function normalizeVideoHref(rawHref, baseUrl = location.href) {
   if (!rawHref) return '';
   try {
     const url = new URL(rawHref, baseUrl);
     if (!isBilibiliUrl(url)) return '';
-    const match = url.pathname.match(BV_RE);
-    if (match) {
-      const canonical = new URL(`/video/${match[1]}/`, 'https://www.bilibili.com');
-      canonical.search = url.search;
-      canonical.hash = url.hash;
+    const bvid = getVideoBvid(url);
+    if (bvid) {
+      const canonical = new URL(`/video/${bvid}/`, 'https://www.bilibili.com');
+      if (/^\/list\/watchlater\/?$/.test(url.pathname)) {
+        // List filters and the list's oid are not video playback parameters.
+        const page = url.searchParams.get('p');
+        if (/^[1-9]\d*$/.test(page || '')) canonical.searchParams.set('p', page);
+      } else {
+        canonical.search = url.search;
+        canonical.hash = url.hash;
+      }
       return canonical.href;
     }
     return url.href;
@@ -278,7 +294,7 @@ export function getLinkPlaybackKey(link, baseUrl = location.href) {
   try {
     const url = new URL(link.getAttribute('href') || link.href, baseUrl);
     if (!isBilibiliUrl(url)) return '';
-    const bv = url.pathname.match(BV_RE)?.[1];
+    const bv = getVideoBvid(url);
     if (bv) return `${bv}:p${Math.max(1, Number(url.searchParams.get('p')) || 1)}`;
     const ogv = url.pathname.match(OGV_RE);
     if (ogv) return `${ogv[1]}${ogv[2]}`;

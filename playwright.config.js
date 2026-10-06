@@ -7,7 +7,8 @@ export default defineConfig({
   workers: 3,
   use: {
     browserName: 'chromium',
-    channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
+    channel: process.env.PLAYWRIGHT_EXECUTABLE_PATH ? undefined : process.env.PLAYWRIGHT_CHANNEL || 'chrome',
+    launchOptions: { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH },
     headless: true,
     viewport: { width: 1360, height: 900 },
     trace: 'retain-on-failure',

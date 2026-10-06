@@ -70,6 +70,36 @@ test('Bewly-style previews open the popup with complete playlist metadata', asyn
   expect(errors).toEqual([]);
 });
 
+for (const layout of ['vertical', 'horizontal']) {
+  test(`BewlyBewly ${layout} covers support preview clicks and card actions`, async ({ page }) => {
+    const errors = await loadShadowCards(page);
+    // VideoCard.vue / Picture.vue in BewlyBewly/BewlyBewly at d421435:
+    // the preview video is a sibling of picture inside a *-card-cover div.
+    await page.locator('#shadow-card-0').evaluate((card, layout) => {
+      const cover = card.querySelector('[data-layout-edit-target]');
+      cover.removeAttribute('data-layout-edit-target');
+      cover.className = `${layout}-card-cover`;
+      cover.style.cssText = 'position:relative;width:238px;height:134px';
+      const video = document.createElement('video');
+      video.className = 'preview';
+      video.style.cssText = 'width:100%;height:100%;pointer-events:auto';
+      cover.querySelector('.preview').replaceWith(video);
+      card.querySelector('h3').removeAttribute('class');
+      card.querySelector('h3').removeAttribute('title');
+      card.querySelector('h3 a').title = '扩展卡片 0';
+    }, layout);
+    await page.getByRole('button', { name: '小窗播放设置', exact: true }).click();
+    await page.getByRole('switch', { name: '点击封面播放', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.locator('#shadow-card-0 .watch-later').click();
+    expect(await page.evaluate(() => window.__nativeCardClicks)).toBe(1);
+    await page.locator('#shadow-card-0 .preview').click({ position: { x: 80, y: 50 } });
+    await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
+    expect(await page.evaluate(() => window.__nativeCardClicks)).toBe(1);
+    expect(errors).toEqual([]);
+  });
+}
+
 test('composed cover clicks respect normal links, modifiers and card actions', async ({ page }) => {
   await loadShadowCards(page);
   await cover(page).click({ position: { x: 60, y: 40 } });
