@@ -3,10 +3,10 @@
 ## 浏览器回归
 
 - 原生 Document PiP：卡片按钮、封面点击、播放页入口、网页小窗切换；暂停回调消耗手势、申请失败回退、禁用后取消回退。
-- BewlyBewly：横向/纵向封面、预览层、卡片操作、Shadow DOM 内的「稍后再看」列表。
-- 稍后再看：视频链接解析、列表保留、内部滚动、卡片复用和移除。
+- BewlyBewly：Shadow DOM 中的横向/纵向封面、预览层和卡片操作。
+- B 站原生稍后再看：列表与导航浮层的视频链接解析、列表保留、内部滚动、卡片复用和移除。
 
-BewlyBewly 场景依据 [d421435](https://github.com/BewlyBewly/BewlyBewly/tree/d42143547bf4e9cc6864f227fcbcbd396bbff25b) 的 VideoCard、WatchLater 和 WatchLaterPop 组件构建。原生列表链接依据 B 站稍后再看页面的 `index.b6f87aaf.js` / `374.afee6aad.js`。
+BewlyBewly 场景依据 [d421435](https://github.com/BewlyBewly/BewlyBewly/tree/d42143547bf4e9cc6864f227fcbcbd396bbff25b) 的 VideoCard 和 Picture 组件构建。B 站原生列表链接与卡片结构依据稍后再看页面的 `index.b6f87aaf.js` / `374.afee6aad.js`；导航浮层使用较小封面的测试布局，仍需登录后实测。
 
 ```sh
 pnpm exec playwright test test/browser/pip-activation.spec.js test/browser/watch-later.spec.js test/browser/shadow-cards.spec.js
