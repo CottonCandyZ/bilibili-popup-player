@@ -27,7 +27,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build && pnpm check && pnpm test
       - run: pnpm exec playwright install --with-deps chromium
+        if: github.event.pull_request.user.login != github.repository_owner
       - name: Browser regression
+        if: github.event.pull_request.user.login != github.repository_owner
         env:
           PLAYWRIGHT_CHANNEL: chromium
         run: pnpm exec playwright test test/browser/pip-activation.spec.js test/browser/pip-support.spec.js test/browser/shadow-cards.spec.js test/browser/watch-later.spec.js

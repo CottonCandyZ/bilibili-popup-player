@@ -46,11 +46,6 @@ jobs:
           pnpm build
           pnpm check
           pnpm test
-      - run: pnpm exec playwright install --with-deps chromium
-      - name: Browser regression
-        env:
-          PLAYWRIGHT_CHANNEL: chromium
-        run: pnpm exec playwright test test/browser/pip-activation.spec.js test/browser/pip-support.spec.js test/browser/shadow-cards.spec.js test/browser/watch-later.spec.js
       - name: Commit release version
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}

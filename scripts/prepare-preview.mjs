@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +8,9 @@ export async function preparePreview({ prNumber, sha, directory = 'dist' }) {
   if (!/^[1-9]\d{0,9}$/.test(String(prNumber))) throw new Error('Invalid PR number');
   if (!/^[0-9a-f]{40}$/i.test(sha || '')) throw new Error('Invalid commit SHA');
   sha = sha.toLowerCase();
-  const branch = `pr-${prNumber}-${sha}`;
+  // Pages truncates branch aliases to 28 characters. Derive the alias from
+  // the full SHA so commits sharing a short Git hash still have distinct URLs.
+  const branch = `pr-${prNumber}-${createHash('sha256').update(sha).digest('hex')}`.slice(0, 28);
   const url = `https://${branch}.bilibili-popup-player-nano.pages.dev`;
   const name = `Bilibili Popup Player (PR #${prNumber} · ${sha.slice(0, 7)})`;
   const scriptPath = resolve(directory, 'bilibili-popup-player-nano.user.js');

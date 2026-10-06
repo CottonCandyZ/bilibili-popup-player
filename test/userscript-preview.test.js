@@ -48,18 +48,21 @@ test('preview preserves the tested script body and permissions while isolating i
 });
 
 test('preview URLs bind the full commit hash, including commits with the same short hash', async (t) => {
-  const first = await fixture(t);
-  const second = await fixture(t);
-  const firstResult = await preparePreview({ prNumber: 4, sha, directory: first.directory });
-  const otherSha = sha.slice(0, -1) + '9';
-  const secondResult = await preparePreview({ prNumber: 4, sha: otherSha, directory: second.directory });
-  assert.equal(firstResult.branch, `pr-4-${sha}`);
-  assert.equal(firstResult.url, `https://pr-4-${sha}.bilibili-popup-player-nano.pages.dev`);
-  assert.notEqual(firstResult.url, secondResult.url);
-  const firstCode = await readFile(join(first.directory, 'bilibili-popup-player-nano.user.js'), 'utf8');
-  const secondCode = await readFile(join(second.directory, 'bilibili-popup-player-nano.user.js'), 'utf8');
-  assert.notEqual(validateUserscript(firstCode).namespace[0], validateUserscript(secondCode).namespace[0]);
-  assert.equal(validateUserscript(firstCode).downloadURL[0], firstResult.install_url);
+  for (const prNumber of [4, 1234567890]) {
+    const first = await fixture(t);
+    const second = await fixture(t);
+    const firstResult = await preparePreview({ prNumber, sha, directory: first.directory });
+    const otherSha = sha.slice(0, -1) + '9';
+    const secondResult = await preparePreview({ prNumber, sha: otherSha, directory: second.directory });
+    assert.ok(firstResult.branch.startsWith(`pr-${prNumber}-`));
+    assert.ok(firstResult.branch.length <= 28, 'Pages must not truncate the alias');
+    assert.equal(firstResult.url, `https://${firstResult.branch}.bilibili-popup-player-nano.pages.dev`);
+    assert.notEqual(firstResult.url, secondResult.url);
+    const firstCode = await readFile(join(first.directory, 'bilibili-popup-player-nano.user.js'), 'utf8');
+    const secondCode = await readFile(join(second.directory, 'bilibili-popup-player-nano.user.js'), 'utf8');
+    assert.notEqual(validateUserscript(firstCode).namespace[0], validateUserscript(secondCode).namespace[0]);
+    assert.equal(validateUserscript(firstCode).downloadURL[0], firstResult.install_url);
+  }
 });
 
 test('preview rejects invalid PR numbers and hashes before changing files', async (t) => {
@@ -83,8 +86,8 @@ test('preview CLI exports the commit branch and install URLs for the deployment 
     stdio: 'pipe',
   });
   const values = Object.fromEntries((await readFile(output, 'utf8')).trim().split('\n').map(line => line.split('=')));
-  assert.equal(values.branch, `pr-4-${sha}`);
-  assert.equal(values.url, `https://pr-4-${sha}.bilibili-popup-player-nano.pages.dev`);
+  assert.match(values.branch, /^pr-4-[0-9a-f]{23}$/);
+  assert.equal(values.url, `https://${values.branch}.bilibili-popup-player-nano.pages.dev`);
   assert.equal(values.install_url, `${values.url}/bilibili-popup-player-nano.user.js`);
   assert.equal(values.version, production.version[0]);
 });
