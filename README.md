@@ -35,7 +35,7 @@
 | 验证 | Node.js test runner、Playwright |
 | 部署 | Wrangler、Cloudflare Pages |
 
-播放器和评论功能复用 B 站网页组件。完整依赖见 [package.json](package.json)，许可信息见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。
+播放器和评论功能复用 B 站网页组件。完整依赖见 [package.json](package.json)，已发布版本的许可信息见 [第三方许可](https://pop-player.nanachi.moe/THIRD_PARTY_NOTICES.txt)。
 
 ## 本地调试
 
@@ -55,7 +55,7 @@ pnpm test
 pnpm test:browser
 ```
 
-构建后的脚本位于根目录和 `dist`。浏览器测试默认使用 Chrome，也可设置 `PLAYWRIGHT_CHANNEL=msedge` 或 `PLAYWRIGHT_EXECUTABLE_PATH=/path/to/chromium`。
+构建后的脚本位于根目录和 `dist`，构建产物不提交到 Git。浏览器测试默认使用 Chrome，也可设置 `PLAYWRIGHT_CHANNEL=msedge` 或 `PLAYWRIGHT_EXECUTABLE_PATH=/path/to/chromium`。
 
 ## 贡献
 
