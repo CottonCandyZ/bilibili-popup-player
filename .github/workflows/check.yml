@@ -55,6 +55,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      pull-requests: write
     environment:
       name: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
       url: ${{ steps.prepare.outputs.url }}
@@ -96,3 +97,38 @@ jobs:
         run: |
           echo "[打开 PR 测试安装页]($PREVIEW_URL) · [直接安装测试脚本]($INSTALL_URL)" >> "$GITHUB_STEP_SUMMARY"
           echo '测试前请在脚本管理器中停用正式版和其他 PR 预览版。' >> "$GITHUB_STEP_SUMMARY"
+      - name: Update PR test link
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PREVIEW_URL: ${{ steps.prepare.outputs.url }}
+          INSTALL_URL: ${{ steps.prepare.outputs.install_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const sha = process.env.PR_HEAD_SHA;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: issue_number });
+            if (pr.state !== 'open' || pr.head.sha !== sha) {
+              core.info('The PR changed; keeping the current preview comment.');
+              return;
+            }
+            const marker = '<!-- bilibili-popup-player:pr-preview -->';
+            const body = [
+              marker,
+              '### 测试预览',
+              '',
+              `对应提交 [\`${sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${sha})。`,
+              '',
+              `[打开测试安装页](${process.env.PREVIEW_URL}) · [直接安装测试脚本](${process.env.INSTALL_URL})`,
+              '',
+              '链接固定对应上述提交。测试前请停用正式版和其他 PR 预览版。',
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const previous = comments.find(comment =>
+              comment.user?.login === 'github-actions[bot]' && comment.body?.startsWith(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
