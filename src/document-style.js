@@ -604,7 +604,8 @@ export function installDocumentStyle(targetDocument = document) {
         height: 28px;
         padding: 0;
         border: 0;
-        border-radius: 0 0 12px 0;
+        /* Keep the transparent hit area clickable at the very corner. */
+        border-radius: 0;
         color: var(--${APP}-text-muted);
         background: transparent;
         cursor: nwse-resize;

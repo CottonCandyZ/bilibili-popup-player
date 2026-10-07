@@ -22,6 +22,30 @@ async function longComments(page, id = A + '-comments-mount') {
   });
 }
 
+for (const layout of ['right', 'bottom']) test(`the exact bottom-right corner resizes the ${layout} layout`, async ({ page }) => {
+  const errors = await openPlayer(page);
+  if (layout === 'bottom') await page.locator('.bpx-player-ctrl-wide').click();
+  const overlay = page.locator('#' + A + '-overlay');
+  await expect(overlay).not.toHaveAttribute('data-layout-animating', 'true');
+  const dialog = page.locator('#' + A + '-dialog');
+  const before = await dialog.boundingBox();
+  const corner = { x: before.x + before.width - 1, y: before.y + before.height - 1 };
+  expect(await page.evaluate(({ A, corner }) =>
+    Boolean(document.elementFromPoint(corner.x, corner.y)?.closest('.' + A + '__modal-resize-handle')),
+  { A, corner })).toBe(true);
+  await page.mouse.move(corner.x, corner.y);
+  await page.mouse.down();
+  await page.mouse.move(corner.x - 80, corner.y - 45, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => (await dialog.boundingBox()).width).toBeLessThan(before.width - 40);
+  await expect.poll(async () => (await dialog.boundingBox()).height).toBeLessThan(before.height - 20);
+  const after = await dialog.boundingBox();
+  const handle = await page.getByRole('button', { name: '调整窗口尺寸', exact: true }).boundingBox();
+  expect(Math.abs(handle.x + handle.width - after.x - after.width)).toBeLessThan(1);
+  expect(Math.abs(handle.y + handle.height - after.y - after.height)).toBeLessThan(1);
+  expect(errors).toEqual([]);
+});
+
 test('tab switches never lay out two panels in the same animation frame', async ({ page }) => {
   const errors = await openPlayer(page);
   await longComments(page);
