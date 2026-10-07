@@ -27,6 +27,24 @@ async function openPlayer(page, context, kind = 'home', prepare) {
   return { surface, errors };
 }
 
+for (const kind of ['home', 'pip']) test(`${kind} native scrollbars follow the player theme instead of the host color scheme`, async ({ page, context }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await context.addCookies([{ name: 'theme_style', value: 'light', domain: '.bilibili.com', path: '/' }]);
+  const { surface, errors } = await openPlayer(page, context, kind);
+  // Extensions / browser preferences may advertise dark native controls even
+  // when Bilibili's surface palette is light. Do not inherit that mismatch.
+  await surface.addStyleTag({ content: ':root { color-scheme: dark; --bg1: #fff; }' });
+  const panel = surface.locator(kind === 'home' ? `#${A}-comments-panel` : '#comments-panel');
+  await expect(panel).toHaveCSS('color-scheme', 'light');
+  for (const scheme of ['dark', 'light']) {
+    await page.evaluate(scheme => { document.cookie = `theme_style=${scheme};domain=.bilibili.com;path=/`; }, scheme);
+    await expect(panel).toHaveCSS('color-scheme', scheme);
+  }
+  await expect(panel).toHaveCSS('scrollbar-color', 'auto');
+  await expect(surface.locator('html')).toHaveCSS('color-scheme', 'dark');
+  expect(errors).toEqual([]);
+});
+
 for (const kind of ['home', 'pip']) test(`${kind} accent presets and custom colors apply immediately without changing the host page`, async ({ page, context }) => {
   const { surface, errors } = await openPlayer(page, context, kind);
   const original = await page.locator('body').evaluate(el => getComputedStyle(el).getPropertyValue('--brand_blue'));

@@ -46,6 +46,9 @@ export function applyAccentTheme(root, theme, scheme = getThemeStyle()) {
   if (!root) return;
   root.dataset.biliPopupAccent = theme.preset;
   root.dataset.biliPopupScheme = scheme;
+  // Native scrollbars/controls must match our surface palette, not an
+  // inherited host color-scheme or the browser's separate dark preference.
+  root.style.colorScheme = scheme;
   const color = getAccentColor(theme, scheme);
   // Brand presets use white labels in both schemes. Keep automatic contrast for
   // custom colors, including a separately configured dark palette.
