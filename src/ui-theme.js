@@ -116,6 +116,12 @@ export function getModernPlayerCss() {
     [data-bili-popup-accent] { ${getAccentThemeVariables()} }
     ${getSettingsCss()}
     ${getEmbeddedPlayerCss()}
+    /* A non-auto standard width keeps browser-rendered scrollbars and ignores
+       extension ::-webkit-scrollbar styling (which can reserve layout space).
+       Only the isolated OS probe may select our classic-scrollbar fallback. */
+    :is(#${A}-content, [data-bili-popup-ui="pip"] #layout, .${A}__comments-panel, .${A}__playlist, .${S}__panel):not(.${A}__virtual-scroll) {
+      scrollbar-width: thin !important; scrollbar-color: auto !important; scrollbar-gutter: auto !important;
+    }
     .${A}__virtual-scroll { scrollbar-width: none !important; scrollbar-gutter: auto !important; }
     .${A}__virtual-scroll::-webkit-scrollbar { display: none !important; }
     .${A}__scrollbar-layer { position: fixed; inset: 0; z-index: 2147483201; pointer-events: none; }
@@ -153,7 +159,10 @@ export function getModernPlayerCss() {
        composited video's edge at fractional device pixels (for example 125%). */
     #${A}-overlay.${A}--comments-right #${A}-content, body.comments-right #layout { grid-template-rows: minmax(0, 1fr); background: #000; }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer,
-    body.comments-right #comments-resizer { border: 0; box-shadow: -1px 0 0 var(--${A}-surface); background: var(--${A}-surface); }
+    body.comments-right #comments-resizer { border: 0; box-shadow: none; background: var(--${A}-border); }
+    /* Keep a forgiving drag target without reserving a blank strip beside every tab. */
+    #${A}-overlay.${A}--comments-right #${A}-comments-resizer::after,
+    body.comments-right #comments-resizer::after { content: ''; position: absolute; inset: 0 -4px; cursor: col-resize; }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer::before,
     body.comments-right #comments-resizer::before { background: transparent; }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer:is(:hover, :focus-visible)::before,
@@ -239,6 +248,10 @@ export function getModernPlayerCss() {
     .${A}__playlist { flex: 1 1 auto; min-height: 0; padding: 12px 16px 0; gap: 4px; align-content: start; grid-auto-rows: min-content; max-height: min(65dvh, 640px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
     #${A}-overlay.${A}--comments-right .${A}__playlist, body.comments-right .${A}__playlist { max-height: none; }
     .${A}__playlist-card { border-radius: 8px; padding: 8px; transition: background .15s; }
+    /* Align the shared sidebar content with the tabs. Lists already have 8px
+       inside each card; comments need the equivalent inset only once. */
+    .${A}__sidebar[data-watch-layout="false"] > .${A}__comments-panel { padding-inline: 12px; }
+    .${A}__sidebar[data-watch-layout="false"] .${A}__playlist { padding-inline: 4px; }
     .${A}__playlist-card.${A}__playlist-card--compact { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; min-height: 40px; }
     .${A}__playlist-inline-duration { color: var(--${A}-text-muted); font-size: 11px; }
     button.${A}__playlist-card { width: 100%; text-align: left; font: inherit; color: inherit; border: 0; background: transparent; cursor: pointer; }

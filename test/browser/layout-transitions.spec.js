@@ -489,8 +489,10 @@ test('full navigation controls and long quality labels fit at the former clippin
     }
   }, A);
   const frame = page.locator('#' + A + '-player-wrap'), root = page.locator('#' + A + '-player');
+  const sidebarWidth = await page.locator('#' + A + '-comments').evaluate(el => el.offsetWidth);
+  const dividerWidth = await page.locator('#' + A + '-comments-resizer').evaluate(el => el.offsetWidth);
   for (const width of [1000, 961, 960, 901, 800, 761, 760, 561, 560]) {
-    await page.evaluate(({ A, width }) => { window.__biliPopupPlayerNano.getState().modalSize = { width: width + 308, height: 600 }; window.dispatchEvent(new Event('resize')); }, { A, width });
+    await page.evaluate(({ width, extraWidth }) => { window.__biliPopupPlayerNano.getState().modalSize = { width: width + extraWidth, height: 600 }; window.dispatchEvent(new Event('resize')); }, { width, extraWidth: sidebarWidth + dividerWidth });
     await expect.poll(() => frame.evaluate(el => el.clientWidth)).toBe(width);
     const bounds = await frame.boundingBox();
     for (const control of await root.locator('.bpx-player-ctrl-btn').all()) {

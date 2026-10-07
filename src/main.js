@@ -2,6 +2,7 @@ import {
   APP,
   BADGE_CLASS,
   BUTTON_CLASS,
+  COMMENTS_RESIZER_WIDTH,
   DOCUMENT_STYLE_ID,
   ENABLED_URL_RE,
   HOST_ID,
@@ -143,7 +144,6 @@ import {
   const MODAL_BLOCK_MARGIN_MIN = 96;
   const MODAL_BLOCK_MARGIN_MAX = 220;
   const MODAL_BLOCK_MARGIN_RATIO = 0.12;
-  const MODAL_COMMENTS_RESIZER_WIDTH = 8;
   const URL_PARAM_PLAY = 'bpn_play';
   const URL_PARAM_BVID = 'bpn_bvid';
   const URL_PARAM_PAGE = 'bpn_p';
@@ -5185,7 +5185,7 @@ import {
       if (!rect.width || !rect.height) return;
       const targetPlayerWidth = Math.round(Math.max(1, rect.height * 16 / 9));
       const nextWidth = clampCommentWidth(
-        rect.width - MODAL_COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
+        rect.width - COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
         rect.width,
       );
       state.homeCommentWidth = nextWidth;
@@ -5676,7 +5676,7 @@ import {
 
   function getHomeModalExtraWidth() {
     return getCommentLayout('home') === 'right' && window.innerWidth > 900
-      ? state.homeCommentWidth + MODAL_COMMENTS_RESIZER_WIDTH
+      ? state.homeCommentWidth + COMMENTS_RESIZER_WIDTH
       : 0;
   }
 

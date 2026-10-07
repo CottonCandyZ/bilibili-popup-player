@@ -1,4 +1,5 @@
 export const APP = 'bili-popup-player-nano';
+export const COMMENTS_RESIZER_WIDTH = 1;
 export const STYLE_ID = `${APP}-style`;
 export const DOCUMENT_STYLE_ID = `${APP}-document-style`;
 export const HOST_ID = `${APP}-host`;
