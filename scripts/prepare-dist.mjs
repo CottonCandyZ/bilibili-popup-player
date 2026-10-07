@@ -89,7 +89,7 @@ await writeFile(
 </style>
 <h1>Bilibili Popup Player</h1>
 <p><a href="./${fileName}">安装 userscript</a></p>
-<p class="note">支持 Tampermonkey（油猴）和 ScriptCat（脚本猫）的自动更新。安装后请在脚本管理器中开启此脚本的更新检查；新版发布后，管理器会按设定间隔检查并按你的更新设置安装。也可在管理器中手动检查更新，更新后刷新 B 站页面生效。</p>
+<p class="note">支持油猴和脚本猫自动更新。请在脚本管理器中开启更新检查，更新后刷新 B 站页面。</p>
 <p>需要先安装对应浏览器的用户脚本管理器：</p>
 <h2>Chrome</h2>
 <ul>
@@ -97,8 +97,7 @@ await writeFile(
   <li><a href="https://chromewebstore.google.com/detail/scriptcat/ndcooeababalnlpkfedmmbbbgkljhpjf">ScriptCat</a></li>
 </ul>
 <h2>Firefox</h2>
-<p class="note"><s>Firefox 当前不支持 Document PiP，本脚本会隐藏 PiP 入口，仅提供网页内弹窗模式。</s></p>
-<p>Firefox 桌面版自 <strong>151</strong> 起已支持 Document PiP（独立小窗）。脚本按浏览器实际能力启用独立小窗，接口不可用时仍可使用网页小窗。<a href="https://www.firefox.com/en-US/firefox/151.0/releasenotes/">查看官方发布说明</a>。</p>
+<p>独立小窗按浏览器能力启用，无法使用时回退网页小窗。</p>
 <ul>
   <li><a href="https://addons.mozilla.org/firefox/addon/tampermonkey/">Tampermonkey</a></li>
   <li><a href="https://addons.mozilla.org/firefox/addon/violentmonkey/">Violentmonkey</a></li>

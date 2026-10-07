@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { checkPublishedUserscript } from '../scripts/check-published-userscript.mjs';
 import { resolveReleaseVersion } from '../scripts/release-version.mjs';
@@ -12,6 +17,22 @@ const metadata = validateUserscript(code);
 const updateURL = metadata.updateURL[0];
 const downloadURL = metadata.downloadURL[0];
 const cacheHeaders = { 'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate' };
+
+test('CI release preparation updates only the version and prints a usable step output', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'popup-release-'));
+  const config = '// @version      4.0.54\nexport default { input: "src/main.js" };\n';
+  const path = join(directory, 'rollup.config.mjs');
+  const script = fileURLToPath(new URL('../scripts/prepare-release.mjs', import.meta.url));
+  try {
+    await writeFile(path, config);
+    assert.equal(execFileSync(process.execPath, [script], { cwd: directory, encoding: 'utf8' }), '4.0.55\n');
+    assert.equal(await readFile(path, 'utf8'), config.replace('4.0.54', '4.0.55'));
+    assert.throws(() => execFileSync(process.execPath, [script, '4.0.53'], { cwd: directory, stdio: 'pipe' }));
+    assert.equal(await readFile(path, 'utf8'), config.replace('4.0.54', '4.0.55'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('release versions advance numerically and accept the documented pnpm separator', () => {
   assert.equal(resolveReleaseVersion('4.0.9'), '4.0.10');

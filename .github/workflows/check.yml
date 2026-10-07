@@ -1,0 +1,134 @@
+name: Check
+
+on: pull_request
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      preview_ready: ${{ steps.preview-config.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build && pnpm check && pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+        if: github.event.pull_request.user.login != github.repository_owner
+      - name: Browser regression
+        if: github.event.pull_request.user.login != github.repository_owner
+        env:
+          PLAYWRIGHT_CHANNEL: chromium
+        run: pnpm exec playwright test test/browser/pip-activation.spec.js test/browser/pip-support.spec.js test/browser/shadow-cards.spec.js test/browser/watch-later.spec.js
+      - name: Check preview configuration
+        id: preview-config
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'PR preview skipped: configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets, then rerun this workflow.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  preview:
+    name: PR preview
+    needs: check
+    if: needs.check.outputs.preview_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
+    environment:
+      name: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      url: ${{ steps.prepare.outputs.url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Prepare preview userscript
+        id: prepare
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/prepare-preview.mjs
+      - run: pnpm check
+      - name: Deploy preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_BRANCH: ${{ steps.prepare.outputs.branch }}
+        run: pnpm exec node scripts/deploy-pages.mjs
+      - name: Verify preview userscript
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if node scripts/check-published-userscript.mjs dist/bilibili-popup-player-nano.user.js; then exit 0; fi
+            if [ "$attempt" -lt 6 ]; then sleep 10; fi
+          done
+          exit 1
+      - name: Add test links
+        env:
+          PREVIEW_URL: ${{ steps.prepare.outputs.url }}
+          INSTALL_URL: ${{ steps.prepare.outputs.install_url }}
+        run: |
+          echo "[打开 PR 测试安装页]($PREVIEW_URL) · [直接安装测试脚本]($INSTALL_URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo '测试前请在脚本管理器中停用正式版和其他 PR 预览版。' >> "$GITHUB_STEP_SUMMARY"
+      - name: Update PR test link
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PREVIEW_URL: ${{ steps.prepare.outputs.url }}
+          INSTALL_URL: ${{ steps.prepare.outputs.install_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const sha = process.env.PR_HEAD_SHA;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: issue_number });
+            if (pr.state !== 'open' || pr.head.sha !== sha) {
+              core.info('The PR changed; keeping the current preview comment.');
+              return;
+            }
+            const marker = '<!-- bilibili-popup-player:pr-preview -->';
+            const body = [
+              marker,
+              '### 测试预览',
+              '',
+              `对应提交 [\`${sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${sha})。`,
+              '',
+              `[打开测试安装页](${process.env.PREVIEW_URL}) · [直接安装测试脚本](${process.env.INSTALL_URL})`,
+              '',
+              '链接固定对应上述提交。测试前请停用正式版和其他 PR 预览版。',
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const previous = comments.find(comment =>
+              comment.user?.login === 'github-actions[bot]' && comment.body?.startsWith(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

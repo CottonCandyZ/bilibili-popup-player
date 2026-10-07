@@ -197,6 +197,77 @@ for (const classic of [true, false]) test(`${classic ? 'classic' : 'native overl
   expect(errors).toEqual([]);
 });
 
+test('late BewlyBewly scrollbar styling keeps native scrollbars without reserving player space', async ({ page }) => {
+  const errors = await prepare(page, { classic: false });
+  const dialog = page.locator('#' + A + '-dialog');
+  await expect(dialog).toHaveAttribute('data-scrollbars', 'native');
+  // BewlyBewly src/styles/main.scss at d421435 applies these globally.
+  await page.addStyleTag({ content: `
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(120, 120, 140, .44); border-radius: 20px; }
+    /* Also exercise a host rule reserving gutters, independent of the OS. */
+    #${A}-content, .${A}__comments-panel, .${A}__playlist { scrollbar-gutter: stable; }
+  ` });
+  for (const [tab, key] of [['评论', 'comments-panel'], ['播放列表', 'playlist-list'], ['相关推荐', 'recommend-list']]) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    const panel = page.locator('#' + A + '-' + key);
+    await panel.evaluate(el => {
+      const tail = document.createElement('div'); tail.style.cssText = 'height:2000px;flex-shrink:0'; el.append(tail);
+    });
+    await expect.poll(() => panel.evaluate(el => el.offsetWidth - el.clientWidth)).toBe(0);
+    await expect(panel).not.toHaveClass(/__virtual-scroll/);
+    await panel.evaluate(el => { el.scrollTop = 100; });
+    await expect.poll(() => panel.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  }
+  await page.locator('.bpx-player-ctrl-wide').click();
+  await expect(page.locator('#' + A + '-overlay')).not.toHaveAttribute('data-layout-animating', 'true');
+  const content = page.locator('#' + A + '-content');
+  await expect.poll(() => content.evaluate(el => el.offsetWidth - el.clientWidth)).toBe(0);
+  await expect(dialog).toHaveAttribute('data-scrollbars', 'native');
+  await expect(dialog.locator('.' + A + '__scrollbar-layer')).toHaveCount(0);
+  await expect(content).not.toHaveClass(/__virtual-scroll/);
+  const bounds = await content.boundingBox(), video = await page.locator('#' + A + '-player').boundingBox();
+  expect(video.x).toBeCloseTo(bounds.x, 0);
+  expect(video.y).toBeCloseTo(bounds.y, 0);
+  expect(video.width).toBeCloseTo(bounds.width, 0);
+  // Isolation must leave the host page's own scrollbar styling alone.
+  expect(await page.locator('body').evaluate(el => getComputedStyle(el, '::-webkit-scrollbar').width)).toBe('6px');
+  await content.evaluate(el => { el.scrollTop = 100; });
+  await expect.poll(() => content.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  await page.locator('#' + A + '-player-wrap').hover();
+  await page.getByRole('button', { name: '收起到右下角', exact: true }).click();
+  await expect(dialog).not.toHaveAttribute('data-scrollbars');
+  await expect(dialog.locator('.' + A + '__scrollbar-layer')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('sidebar tabs share compact insets while the thin divider remains draggable', async ({ page }) => {
+  const errors = await prepare(page);
+  const sidebar = page.locator('#' + A + '-comments');
+  const divider = page.locator('#' + A + '-comments-resizer');
+  const bounds = await sidebar.boundingBox();
+  const video = await page.locator('#' + A + '-player-wrap').boundingBox();
+  expect(bounds.x - video.x - video.width).toBeCloseTo(1, 0);
+  for (const [tab, selector] of [
+    ['评论', '#' + A + '-video-intro'],
+    ['播放列表', '#' + A + '-playlist-list .' + A + '__playlist-cover'],
+    ['相关推荐', '#' + A + '-recommend-list .' + A + '__playlist-cover'],
+  ]) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    const item = await page.locator(selector).first().boundingBox();
+    expect(item.x - bounds.x).toBeCloseTo(12, 0);
+  }
+  const grip = await divider.boundingBox();
+  // Hit the transparent extension of the 1px divider, not only its hairline.
+  await page.mouse.move(grip.x - 3, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 63, grip.y + grip.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => (await sidebar.boundingBox()).width).toBeGreaterThan(bounds.width + 40);
+  expect(errors).toEqual([]);
+});
+
 async function addNativeWebControl(page) {
   const root = page.locator('#' + A + '-player');
   await root.evaluate(root => {

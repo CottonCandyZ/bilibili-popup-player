@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 loadDotEnv('.env');
 
 if (!process.env.CLOUDFLARE_API_TOKEN) {
-  console.error('Missing CLOUDFLARE_API_TOKEN. Copy .env.example to .env and fill it first.');
+  console.error('Missing CLOUDFLARE_API_TOKEN. Set it in the environment or .env.');
   process.exit(1);
 }
 if (process.env.CLOUDFLARE_ACCOUNT_ID === '') delete process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -17,6 +17,7 @@ const deployArgs = [
   '--project-name',
   'bilibili-popup-player-nano',
 ];
+if (process.env.CLOUDFLARE_PAGES_BRANCH) deployArgs.push('--branch', process.env.CLOUDFLARE_PAGES_BRANCH);
 const command = process.platform === 'win32' ? 'cmd.exe' : 'wrangler';
 const args = process.platform === 'win32'
   ? ['/d', '/s', '/c', `wrangler ${deployArgs.join(' ')}`]
@@ -55,14 +56,14 @@ async function inferAccountId() {
   });
   if (!response.ok) {
     console.error('CLOUDFLARE_ACCOUNT_ID is missing, and the token cannot list Cloudflare accounts.');
-    console.error('Fill CLOUDFLARE_ACCOUNT_ID in .env and rerun pnpm run deploy.');
+    console.error('Set CLOUDFLARE_ACCOUNT_ID in the environment or .env and rerun pnpm run publish:pages.');
     process.exit(1);
   }
   const payload = await response.json();
   const accounts = Array.isArray(payload.result) ? payload.result : [];
   if (accounts.length !== 1) {
     console.error(`CLOUDFLARE_ACCOUNT_ID is missing, and token returned ${accounts.length} accounts.`);
-    console.error('Fill CLOUDFLARE_ACCOUNT_ID in .env and rerun pnpm run deploy.');
+    console.error('Set CLOUDFLARE_ACCOUNT_ID in the environment or .env and rerun pnpm run publish:pages.');
     process.exit(1);
   }
   console.log(`Using Cloudflare account: ${accounts[0].name}`);

@@ -1,6 +1,12 @@
 # Dependencies
 node_modules/
 
+# Generated release files
+/dist/
+/bilibili-popup-player-nano.user.js
+/bilibili-popup-player-nano.meta.js
+/THIRD_PARTY_NOTICES.txt
+
 # Local development state
 .dev/
 .wrangler/

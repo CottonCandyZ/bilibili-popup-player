@@ -34,7 +34,8 @@ export async function checkPublishedUserscript(expectedCode, fetchImpl = fetch) 
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const code = await readFile(new URL('../bilibili-popup-player-nano.user.js', import.meta.url), 'utf8');
+  const path = process.argv[2] ? resolve(process.argv[2]) : new URL('../bilibili-popup-player-nano.user.js', import.meta.url);
+  const code = await readFile(path, 'utf8');
   const { version, updateURL, downloadURL } = await checkPublishedUserscript(code);
   console.log(`Published userscript ${version} verified:\n${updateURL}\n${downloadURL}`);
 }

@@ -1,4 +1,4 @@
-import { APP } from './constants.js';
+import { APP, COMMENTS_RESIZER_WIDTH } from './constants.js';
 import { externalLinkIconMarkup } from './icons.js';
 import { getPlayerThemeVariableCss } from './player-theme.js';
 import { escapeHtml } from './text.js';
@@ -41,7 +41,7 @@ export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, 
       }
       body.comments-right #layout {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
+        grid-template-columns: minmax(0, 1fr) ${COMMENTS_RESIZER_WIDTH}px var(--${APP}-comments-width, 420px);
         overflow: hidden;
       }
       body.comments-right #stage {
@@ -58,8 +58,8 @@ export function renderPipPlayerDocument({ title, stylesheets, themeClassMarkup, 
         grid-column: 2;
         grid-row: 1;
         z-index: 4;
-        width: 8px;
-        min-width: 8px;
+        width: ${COMMENTS_RESIZER_WIDTH}px;
+        min-width: ${COMMENTS_RESIZER_WIDTH}px;
         height: 100vh;
         cursor: col-resize;
         background: var(--bg1, #fff);

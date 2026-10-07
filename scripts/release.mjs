@@ -1,26 +1,7 @@
 import { spawn } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolveReleaseVersion } from './release-version.mjs';
+import { prepareRelease } from './prepare-release.mjs';
 
-const configPath = 'rollup.config.mjs';
-
-const currentConfig = await readFile(configPath, 'utf8');
-const currentVersion = currentConfig.match(/\/\/ @version\s+(\d+\.\d+\.\d+)/)?.[1];
-if (!currentVersion) {
-  console.error(`Cannot find userscript @version in ${configPath}`);
-  process.exit(1);
-}
-
-const nextVersion = resolveReleaseVersion(currentVersion, process.argv.slice(2));
-
-if (nextVersion !== currentVersion) {
-  await writeFile(
-    configPath,
-    currentConfig.replace(/(\/\/ @version\s+)\d+\.\d+\.\d+/, `$1${nextVersion}`),
-  );
-}
-
-console.log(`Releasing ${currentVersion} -> ${nextVersion}`);
+console.log(`Releasing ${await prepareRelease(process.argv.slice(2))}`);
 await run('pnpm', ['run', 'publish:pages']);
 
 function run(command, args) {

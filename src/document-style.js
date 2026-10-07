@@ -2,6 +2,7 @@ import {
   APP,
   BADGE_CLASS,
   BUTTON_CLASS,
+  COMMENTS_RESIZER_WIDTH,
   DOCUMENT_STYLE_ID,
   SETTINGS_CLASS,
 } from './constants.js';
@@ -603,7 +604,8 @@ export function installDocumentStyle(targetDocument = document) {
         height: 28px;
         padding: 0;
         border: 0;
-        border-radius: 0 0 12px 0;
+        /* Keep the transparent hit area clickable at the very corner. */
+        border-radius: 0;
         color: var(--${APP}-text-muted);
         background: transparent;
         cursor: nwse-resize;
@@ -652,7 +654,7 @@ export function installDocumentStyle(targetDocument = document) {
 
       #${APP}-overlay.${APP}--comments-right #${APP}-content {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 8px var(--${APP}-comments-width, 420px);
+        grid-template-columns: minmax(0, 1fr) ${COMMENTS_RESIZER_WIDTH}px var(--${APP}-comments-width, 420px);
         overflow: hidden;
       }
 
@@ -710,8 +712,8 @@ export function installDocumentStyle(targetDocument = document) {
         display: block;
         position: relative;
         z-index: 2;
-        width: 8px;
-        min-width: 8px;
+        width: ${COMMENTS_RESIZER_WIDTH}px;
+        min-width: ${COMMENTS_RESIZER_WIDTH}px;
         height: 100%;
         cursor: col-resize;
         background: var(--bg1, #fff);

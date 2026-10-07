@@ -2,6 +2,7 @@ import {
   APP,
   BADGE_CLASS,
   BUTTON_CLASS,
+  COMMENTS_RESIZER_WIDTH,
   DOCUMENT_STYLE_ID,
   ENABLED_URL_RE,
   HOST_ID,
@@ -108,6 +109,7 @@ import {
 } from './video-intro.js';
 import {
   OGV_VIDEO_LINK_SELECTOR,
+  VIDEO_LINK_SELECTOR,
   getCardRoot,
   getCurrentPageBvid,
   getCurrentPageOgvKey,
@@ -142,7 +144,6 @@ import {
   const MODAL_BLOCK_MARGIN_MIN = 96;
   const MODAL_BLOCK_MARGIN_MAX = 220;
   const MODAL_BLOCK_MARGIN_RATIO = 0.12;
-  const MODAL_COMMENTS_RESIZER_WIDTH = 8;
   const URL_PARAM_PLAY = 'bpn_play';
   const URL_PARAM_BVID = 'bpn_bvid';
   const URL_PARAM_PAGE = 'bpn_p';
@@ -295,6 +296,7 @@ import {
     },
     pip: {
       win: null,
+      lastError: null,
       player: null,
       comments: null,
       commentContext: '',
@@ -1257,7 +1259,7 @@ import {
     const queryCards = selector => state.observer?.queryAll(selector) || [];
     state.cardEntries.forEach(entry => { entry.seen = false; });
     const currentOgvKey = getCurrentPageOgvKey();
-    queryCards('a[href*="/video/BV"]')
+    queryCards(VIDEO_LINK_SELECTOR)
       .sort((a, b) => Number(isCoverLink(b)) - Number(isCoverLink(a)))
       .forEach((link) => {
         if (isOwnUiScanTarget(link)) return;
@@ -1374,12 +1376,13 @@ import {
     if (mutation.type !== 'attributes') return false;
     const target = mutation.target;
     if (!(target instanceof Element)) return false;
+    const playableLinks = `${VIDEO_LINK_SELECTOR}, ${OGV_VIDEO_LINK_SELECTOR}, ${LIVE_CARD_LINK_SELECTOR}`;
     // SPA tabs can keep a cached feed mounted and reveal only its wrapper.
     // Its cards may have been removed from our bindings while hidden.
     if (['class', 'style', 'hidden', 'inert'].includes(mutation.attributeName) &&
-      (target.shadowRoot || target.querySelector('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"]'))) return true;
+      (target.shadowRoot || target.querySelector(playableLinks))) return true;
     return target.matches?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"], a[href], img, picture, [title], [aria-label]') ||
-      target.closest?.('a[href*="/video/"], a[href*="/bangumi/play/"], a[href*="live.bilibili.com/"]') ||
+      target.closest?.(playableLinks) ||
       target.closest?.('.bili-video-card, .feed-card, .video-card, .suit-video-card, .bili-dyn-card-video, .bili-dyn-card-live, .bili-dyn-card, .bili-dyn-item, .user-row, .bangumi-card, .season-item, .episode-item, .ep-list-item, .media-card, [class*="video-card"], [class*="live-card"], [class*="room-card"], [class*="feed-card"], [class*="bangumi"], [class*="season"], [class*="episode"], [class*="bili-dyn"]');
   }
 
@@ -1493,8 +1496,7 @@ import {
       setStorageItem(STORAGE_MODE, 'home');
       syncSettings();
     }
-    pauseExternalPlaybackPagePlayer();
-    rendererOrchestrator.openByMode(meta);
+    return openWithRenderer(getActiveRenderer(), meta);
   }
 
   function getActiveRenderer() {
@@ -1503,6 +1505,13 @@ import {
 
   function openWithRenderer(renderer, meta) {
     if (!state.enabled || state.destroyed || !meta) return;
+    if (renderer === pipRenderer) {
+      // Request PiP before calling host SDKs, which may consume user activation.
+      const pending = rendererOrchestrator.openWithRenderer(renderer, meta);
+      pauseExternalPlaybackPagePlayer();
+      pausePlayer(state.home.player);
+      return pending;
+    }
     pauseExternalPlaybackPagePlayer();
     return rendererOrchestrator.openWithRenderer(renderer, meta);
   }
@@ -1896,7 +1905,6 @@ import {
     const href = bootstrap?.href || ui?.openOriginal?.dataset.href || '';
     if (!bootstrap || !href) return;
 
-    pausePlayer(state.home.player);
     if (ui?.status) ui.status.textContent = '已暂停，正在打开 PiP';
     if (isLiveBootstrap(bootstrap) || info?.roomId) {
       const roomId = info?.roomId;
@@ -2948,13 +2956,18 @@ import {
       setLastButtonStatus('换源中');
     } else {
       setLastButtonStatus('打开中');
+      state.pip.lastError = null;
       try {
+        // Keep this call before any asynchronous bootstrap/player work.
         pipWindow = await window.documentPictureInPicture.requestWindow({
           width: Math.min(960, Math.floor(window.screen.availWidth * 0.55)),
           height: Math.min(540, Math.floor(window.screen.availHeight * 0.55)),
         });
-      } catch {
-        setLastButtonStatus('PiP 被拒绝');
+      } catch (error) {
+        if (!state.enabled || state.destroyed || token !== state.switchToken) return null;
+        state.pip.lastError = { name: error?.name || 'Error', message: error?.message || String(error) };
+        setLastButtonStatus(`PiP ${state.pip.lastError.name}，使用网页小窗`);
+        void openWithRenderer(homeRenderer, meta);
         return null;
       }
       if (!state.enabled || state.destroyed || token !== state.switchToken) { pipWindow.close(); return null; }
@@ -5172,7 +5185,7 @@ import {
       if (!rect.width || !rect.height) return;
       const targetPlayerWidth = Math.round(Math.max(1, rect.height * 16 / 9));
       const nextWidth = clampCommentWidth(
-        rect.width - MODAL_COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
+        rect.width - COMMENTS_RESIZER_WIDTH - targetPlayerWidth,
         rect.width,
       );
       state.homeCommentWidth = nextWidth;
@@ -5663,7 +5676,7 @@ import {
 
   function getHomeModalExtraWidth() {
     return getCommentLayout('home') === 'right' && window.innerWidth > 900
-      ? state.homeCommentWidth + MODAL_COMMENTS_RESIZER_WIDTH
+      ? state.homeCommentWidth + COMMENTS_RESIZER_WIDTH
       : 0;
   }
 
