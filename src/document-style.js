@@ -1119,7 +1119,7 @@ ${getPlayerThemeVariableCss(`#${APP}-player`)}
       .${APP}__video-actions-row {
         display: flex;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         gap: 24px;
       }
 

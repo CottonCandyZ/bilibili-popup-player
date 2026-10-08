@@ -89,6 +89,41 @@ async function openPlayer(page, context, kind = 'home') {
 }
 
 for (const kind of ['home', 'pip']) {
+  test(`${kind} active intro actions stay inside narrow sidebars`, async ({ page, context }) => {
+    const { surface, errors } = await openPlayer(page, context, kind);
+    await surface.locator('.native-triple').click();
+    const row = surface.locator(`.${A}__video-actions-row`);
+    await expect(row.locator(`.${A}--active`)).toHaveCount(3);
+    await expect(row.locator(`.${A}__video-action-label`)).toHaveText(['点赞', '投币', '收藏']);
+    await expect(row.getByRole('button', { name: '投币', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    for (const width of [240, 300, 420]) {
+      await row.evaluate((el, width) => {
+        el.closest('.bili-popup-player-nano__video-intro').style.width = `${width}px`;
+      }, width);
+      const geometry = await row.evaluate(el => {
+        const bounds = el.closest('.bili-popup-player-nano__video-intro').getBoundingClientRect();
+        return {
+          width: el.clientWidth, scrollWidth: el.scrollWidth,
+          bounds: { left: bounds.left, right: bounds.right, bottom: bounds.bottom },
+          children: [...el.querySelectorAll('button, .bili-popup-player-nano__video-action-label')].map(node => {
+            const rect = node.getBoundingClientRect();
+            return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+          }),
+        };
+      });
+      expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width + 1);
+      const buttons = geometry.children.filter((_, index) => index % 2 === 0);
+      expect(new Set(buttons.map(button => button.top)).size).toBe(1);
+      expect(Math.abs(buttons[0].left - geometry.bounds.left)).toBeLessThanOrEqual(1);
+      for (const child of geometry.children) {
+        expect(child.left).toBeGreaterThanOrEqual(geometry.bounds.left - 1);
+        expect(child.right).toBeLessThanOrEqual(geometry.bounds.right + 1);
+        expect(child.bottom).toBeLessThanOrEqual(geometry.bounds.bottom + 1);
+      }
+    }
+    expect(errors).toEqual([]);
+  });
+
   test(`${kind} reload detaches old native handlers and binds exactly once`, async ({ page, context }) => {
     const { errors, requests, surface } = await openPlayer(page, context, kind);
     await surface.getByRole('tab', { name: '分P', exact: true }).click();

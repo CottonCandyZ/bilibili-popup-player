@@ -479,7 +479,7 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
       .${APP}__video-actions-row {
         display: flex;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         gap: 24px;
       }
       .${APP}__video-action {

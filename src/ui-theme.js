@@ -305,11 +305,11 @@ export function getModernPlayerCss() {
     .${A}__video-intro-avatar-link:focus-visible { outline: 2px solid var(--${A}-text); outline-offset: 3px; }
     .${A}__sidebar .${A}__video-intro-name { font-size: 13px; }
     .${A}__sidebar .${A}__video-intro-body { margin: 10px 0 0; }
+    .${A}__sidebar .${A}__video-actions { margin-left: 0; }
     .${A}__sidebar[data-watch-layout="true"] .${A}__video-intro-up { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; }
     .${A}__sidebar[data-watch-layout="true"] .${A}__video-intro-up:not(:has(img)) { grid-template-columns: minmax(0, 1fr) auto; }
     .${A}__sidebar[data-watch-layout="true"] .${A}__video-intro-avatar { width: 40px; height: 40px; }
     .${A}__sidebar[data-watch-layout="true"] .${A}__video-intro-name { font-size: 14px; }
-    .${A}__sidebar[data-watch-layout="true"] .${A}__video-actions { margin-left: 0; }
     .${A}__sidebar[data-watch-layout="true"] .${A}__video-actions-row { justify-content: flex-start; gap: 24px; }
     .${A}__sidebar .${A}__video-intro-follow { border-radius: 16px; color: var(--${A}-on-accent, var(--${A}-surface)); background: var(--${A}-accent, var(--${A}-text)); }
     .${A}__sidebar .${A}__video-intro-follow:is(:hover, :focus-visible) { background: var(--${A}-accent-hover); }

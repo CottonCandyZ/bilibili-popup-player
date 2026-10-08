@@ -166,7 +166,7 @@ function renderPlaybackActions(targetDocument, actions, onAction, mount) {
     active: actions.liked,
     disabled: actions.busy,
     icon: 'like',
-    label: actions.liked ? '已点赞' : '点赞',
+    label: '点赞',
   });
   like.title = `${like.title}（长按三连）`;
   like.setAttribute('aria-label', `${like.getAttribute('aria-label')}，长按三连`);
@@ -176,7 +176,7 @@ function renderPlaybackActions(targetDocument, actions, onAction, mount) {
     active: Number(actions.coin) > 0,
     disabled: actions.busy,
     icon: 'coin',
-    label: Number(actions.coin) > 0 ? `已投 ${actions.coin} 币` : '投币',
+    label: '投币',
     onClick: () => onAction?.('coin'),
   });
   coin.appendChild(createLongPressRing(targetDocument));
@@ -185,7 +185,7 @@ function renderPlaybackActions(targetDocument, actions, onAction, mount) {
     active: actions.favorite,
     disabled: actions.busy,
     icon: 'favorite',
-    label: actions.favorite ? '已收藏' : '收藏',
+    label: '收藏',
     onClick: () => onAction?.('favorite'),
   });
   favorite.appendChild(createLongPressRing(targetDocument));
@@ -475,6 +475,7 @@ function createActionButton(targetDocument, {
   button.disabled = Boolean(disabled);
   button.title = label;
   button.setAttribute('aria-label', label);
+  button.setAttribute('aria-pressed', String(Boolean(active)));
   button.appendChild(createOfficialActionIcon(targetDocument, icon));
   const text = targetDocument.createElement('span');
   text.className = `${APP}__video-action-label`;
