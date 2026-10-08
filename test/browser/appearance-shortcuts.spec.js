@@ -61,19 +61,28 @@ for (const kind of ['home', 'pip']) for (const scheme of ['light', 'dark']) {
       if (kind === 'home' && enabled) {
         await expect(sidebar.getByRole('button', { name: '关闭播放器', exact: true })).toHaveCSS('color', 'rgb(255, 255, 255)');
       }
+      if (enabled) expect(await sidebar.evaluate(el => getComputedStyle(el, '::after').backgroundColor)).toBe('rgba(0, 0, 0, 0.9)');
     }
     expect((await context.cookies()).find(c => c.name === 'theme_style').value).toBe(scheme);
     const resizer = surface.locator(kind === 'home' ? `#${A}-comments-resizer` : '#comments-resizer');
     await expect(resizer).toHaveCSS('width', '0px');
     await expect(resizer).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    expect(await resizer.evaluate(el => getComputedStyle(el, '::before').display)).toBe('none');
+    expect(await resizer.evaluate(el => getComputedStyle(el, '::before').opacity)).toBe('0');
     const edge = await resizer.boundingBox();
+    const videoBefore = await root.boundingBox(), sidebarBefore = await sidebar.boundingBox();
     await surface.mouse.move(edge.x + 3, edge.y + edge.height / 2);
+    expect(await resizer.evaluate(el => getComputedStyle(el, '::before').opacity)).toBe('1');
+    expect(await root.boundingBox()).toEqual(videoBefore);
+    expect(await sidebar.boundingBox()).toEqual(sidebarBefore);
     expect(await resizer.evaluate(el => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.x + 3, r.y + r.height / 2) === el; })).toBe(true);
     const width = (await sidebar.boundingBox()).width;
     await surface.mouse.down();
     await surface.mouse.move(edge.x - 40, edge.y + edge.height / 2, { steps: 4 });
+    await surface.mouse.move(10, 10);
+    expect(await resizer.evaluate(el => getComputedStyle(el, '::before').opacity)).toBe('1');
     await surface.mouse.up();
+    await surface.mouse.move(0, 0);
+    expect(await resizer.evaluate(el => getComputedStyle(el, '::before').opacity)).toBe('0');
     await expect.poll(async () => (await sidebar.boundingBox()).width).toBeGreaterThan(width + 20);
     await sidebar.getByRole('tab', { name: '相关推荐', exact: true }).click();
     await expect(sidebar.getByText('下一站，慢慢走', { exact: true })).toBeVisible();

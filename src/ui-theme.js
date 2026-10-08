@@ -165,7 +165,11 @@ export function getModernPlayerCss() {
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer::after,
     body.comments-right #comments-resizer::after { content: ''; position: absolute; inset: 0 -5px; cursor: col-resize; }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer::before,
-    body.comments-right #comments-resizer::before { display: none; }
+    body.comments-right #comments-resizer::before { display: block; opacity: 0; pointer-events: none; background: var(--${A}-accent); }
+    #${A}-overlay.${A}--comments-right #${A}-comments-resizer:is(:hover, :focus-visible)::before,
+    #${A}-overlay.${A}--resizing #${A}-comments-resizer::before,
+    body.comments-right #comments-resizer:is(:hover, :focus-visible)::before,
+    body.resizing-comments #comments-resizer::before { opacity: 1; }
     [data-bili-popup-ui="pip"] #stage-slot { height: 100vh; }
     #${A}-overlay.${A}--minimized #${A}-player-slot { height: 100% !important; }
     #${A}-overlay[data-layout-hide-comments="true"] :is(#${A}-comments, #${A}-comments-resizer, .${A}__back-to-top) { visibility: hidden; pointer-events: none; }
@@ -234,7 +238,7 @@ export function getModernPlayerCss() {
        Dim the sidebar uniformly; window controls remain above the grey veil. */
     ${lightsOff} .${A}__sidebar { position: relative; isolation: isolate; }
     ${lightsOff} .${A}__sidebar > :not(.${A}__sidebar-heading) { isolation: isolate; }
-    ${lightsOff} .${A}__sidebar::after { content: ''; position: absolute; inset: 0; z-index: 1; background: rgb(0 0 0 / .6); pointer-events: none; }
+    ${lightsOff} .${A}__sidebar::after { content: ''; position: absolute; inset: 0; z-index: 1; background: rgb(0 0 0 / .9); pointer-events: none; }
     ${lightsOff} .${A}__sidebar-window-controls { position: relative; z-index: 2; }
     ${lightsOff} .${A}__sidebar-window-controls .${A}__header-button { color: #fff; }
     ${lightsOff} .${A}__sidebar-window-controls .${A}__header-button:is(:hover, :focus-visible) { color: #fff; background: rgb(255 255 255 / .15); }
