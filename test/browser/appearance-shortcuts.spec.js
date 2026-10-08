@@ -27,6 +27,48 @@ async function openPlayer(page, context, kind = 'home', prepare) {
   return { surface, errors };
 }
 
+for (const kind of ['home', 'pip']) for (const scheme of ['light', 'dark']) {
+  test(`${kind} ${scheme} sidebar stays unchanged and clickable with native lights off`, async ({ page, context }) => {
+    const { surface, errors } = await openPlayer(page, context, kind);
+    await surface.addStyleTag({ content: `
+      :root { --bg1:${scheme === 'dark' ? '#17181a' : '#fff'}; --text1:${scheme === 'dark' ? '#e7e9eb' : '#18191c'}; --text2:${scheme === 'dark' ? '#a2a7ae' : '#61666d'}; }
+      /* Native Nano core: a fixed pseudo-element dims everything except video. */
+      .bpx-docker-major { position:relative; width:100%; height:100%; }
+      .bpx-docker-major.bpx-state-light-off::before { content:''; position:fixed; inset:0; background:#000; opacity:.9; z-index:1002; }
+      .bpx-docker-major.bpx-state-light-off .bpx-player-container { position:relative; z-index:1010; }
+    ` });
+    const root = surface.locator(kind === 'home' ? `#${A}-player` : '#bilibili-player');
+    await root.evaluate(el => {
+      const docker = document.createElement('div');
+      docker.className = 'bpx-docker-major';
+      docker.append(...el.childNodes);
+      el.append(docker);
+    });
+    await surface.mouse.move(0, 0);
+    const sidebar = surface.locator(`.${A}__sidebar`);
+    const before = await sidebar.screenshot({ animations: 'disabled' });
+    const docker = root.locator('.bpx-docker-major');
+    for (const enabled of [true, false, true]) {
+      await docker.evaluate((el, enabled) => el.classList.toggle('bpx-state-light-off', enabled), enabled);
+      expect((await sidebar.screenshot({ animations: 'disabled' })).equals(before), 'lights off must not dim any sidebar pixels').toBe(true);
+    }
+    await sidebar.getByRole('tab', { name: '相关推荐', exact: true }).click();
+    await expect(sidebar.getByText('下一站，慢慢走', { exact: true })).toBeVisible();
+    if (kind === 'home') {
+      await sidebar.getByRole('button', { name: '收起到右下角', exact: true }).click();
+      await expect(surface.locator(`#${A}-overlay`)).toHaveClass(new RegExp(`${A}--minimized`));
+      await surface.locator(`#${A}-player-wrap`).hover();
+      await surface.getByRole('button', { name: '还原播放器', exact: true }).click();
+      await sidebar.getByRole('button', { name: '关闭播放器', exact: true }).click();
+      await expect(surface.locator(`#${A}-overlay`)).toBeHidden();
+    }
+    // Native players outside our shell keep their viewport-wide mask.
+    await surface.locator('body').evaluate(el => el.insertAdjacentHTML('beforeend', '<div id="host-lightoff" class="bpx-docker-major bpx-state-light-off"></div>'));
+    expect(await surface.locator('#host-lightoff').evaluate(el => getComputedStyle(el, '::before').position)).toBe('fixed');
+    expect(errors).toEqual([]);
+  });
+}
+
 for (const kind of ['home', 'pip']) test(`${kind} native scrollbars follow the player theme instead of the host color scheme`, async ({ page, context }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await context.addCookies([{ name: 'theme_style', value: 'light', domain: '.bilibili.com', path: '/' }]);
