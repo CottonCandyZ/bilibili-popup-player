@@ -8,6 +8,9 @@ export function getEmbeddedPlayerCss() {
   const mini = `${miniFrame} ${embedded}`;
   const miniButton = `${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume)`;
   return `
+    /* Nano's fixed lights-off mask escapes into the sidebar. The popup already
+       dims the host page; keep the native mask inside its own video docker. */
+    :is(#${APP}-player, [data-bili-popup-ui="pip"] #bilibili-player) .bpx-docker-major.bpx-state-light-off::before { position: absolute; }
     #${APP}-player[data-shell-fullscreen="false"] .bpx-player-ctrl-web-enter,
     #${APP}-player[data-shell-fullscreen="true"] .bpx-player-ctrl-web-leave { display: block !important; }
     #${APP}-player[data-shell-fullscreen="false"] .bpx-player-ctrl-web-leave,

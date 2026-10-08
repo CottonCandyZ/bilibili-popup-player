@@ -111,6 +111,7 @@ export function getOverlayCss() {
 }
 
 export function getModernPlayerCss() {
+  const lightsOff = `:is(#${A}-overlay, [data-bili-popup-ui="pip"]):has(.bpx-docker-major.bpx-state-light-off)`;
   return `
     :root { ${themeTokens} }
     [data-bili-popup-accent] { ${getAccentThemeVariables()} }
@@ -159,16 +160,16 @@ export function getModernPlayerCss() {
        composited video's edge at fractional device pixels (for example 125%). */
     #${A}-overlay.${A}--comments-right #${A}-content, body.comments-right #layout { grid-template-rows: minmax(0, 1fr); background: #000; }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer,
-    body.comments-right #comments-resizer { border: 0; box-shadow: none; background: var(--${A}-border); }
-    /* Keep a forgiving drag target without reserving a blank strip beside every tab. */
+    body.comments-right #comments-resizer { border: 0; box-shadow: none; background: transparent; }
+    /* An invisible drag target straddles the zero-width grid track. */
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer::after,
-    body.comments-right #comments-resizer::after { content: ''; position: absolute; inset: 0 -4px; cursor: col-resize; }
+    body.comments-right #comments-resizer::after { content: ''; position: absolute; inset: 0 -5px; cursor: col-resize; }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer::before,
-    body.comments-right #comments-resizer::before { background: transparent; }
+    body.comments-right #comments-resizer::before { display: block; opacity: 0; pointer-events: none; background: var(--${A}-accent); }
     #${A}-overlay.${A}--comments-right #${A}-comments-resizer:is(:hover, :focus-visible)::before,
     #${A}-overlay.${A}--resizing #${A}-comments-resizer::before,
     body.comments-right #comments-resizer:is(:hover, :focus-visible)::before,
-    body.resizing-comments #comments-resizer::before { background: var(--${A}-accent, var(--${A}-border)); }
+    body.resizing-comments #comments-resizer::before { opacity: 1; }
     [data-bili-popup-ui="pip"] #stage-slot { height: 100vh; }
     #${A}-overlay.${A}--minimized #${A}-player-slot { height: 100% !important; }
     #${A}-overlay[data-layout-hide-comments="true"] :is(#${A}-comments, #${A}-comments-resizer, .${A}__back-to-top) { visibility: hidden; pointer-events: none; }
@@ -233,6 +234,14 @@ export function getModernPlayerCss() {
     #${A}-overlay.${A}--comments-right:not(.${A}--minimized) .${A}__sidebar-window-controls { display: flex; }
     #${A}-overlay.${A}--comments-right:not(.${A}--minimized) #${A}-header :is(.${A}__minimize-button, .${A}__header-button--close) { display: none; }
     .${A}__sidebar-window-controls .${A}__header-button { width: 26px; height: 28px; color: var(--${A}-text-subtle); border-radius: 4px; }
+    /* Keep the native lights-off feel without its viewport-wide black mask.
+       Dim the sidebar uniformly; window controls remain above the grey veil. */
+    ${lightsOff} .${A}__sidebar { position: relative; isolation: isolate; }
+    ${lightsOff} .${A}__sidebar > :not(.${A}__sidebar-heading) { isolation: isolate; }
+    ${lightsOff} .${A}__sidebar::after { content: ''; position: absolute; inset: 0; z-index: 1; background: rgb(0 0 0 / .9); pointer-events: none; }
+    ${lightsOff} .${A}__sidebar-window-controls { position: relative; z-index: 2; }
+    ${lightsOff} .${A}__sidebar-window-controls .${A}__header-button { color: #fff; }
+    ${lightsOff} .${A}__sidebar-window-controls .${A}__header-button:is(:hover, :focus-visible) { color: #fff; background: rgb(255 255 255 / .15); }
     .${A}__sidebar-window-controls .${A}__header-button:hover, .${A}__sidebar-window-controls .${A}__header-button:focus-visible { color: var(--${A}-text); background: var(--${A}-surface-soft); }
     .${A}__sidebar-window-controls .${A}__header-button svg { width: 16px; height: 16px; }
     .${A}__comments-tab { flex-shrink: 0; display: inline-flex; align-items: center; min-height: 34px; padding: 0 1px; border: 0; border-bottom: 2px solid transparent; color: var(--${A}-text-subtle); background: transparent; font: 500 12px/1.5 var(--${A}-font); white-space: nowrap; cursor: pointer; }
