@@ -18,11 +18,12 @@ export function getEmbeddedPlayerCss() {
     :is(#${APP}-player, [data-bili-popup-ui="pip"] #bilibili-player) .bpx-player-container { box-shadow: none !important; }
     #${APP}-dialog:fullscreen .bpx-player-shadow-progress-area,
     [data-bili-popup-ui="pip"] :fullscreen .bpx-player-shadow-progress-area { display: none !important; }
-    /* Chromium can lose fullscreen danmaku when controls fade. A neutral
-       backdrop filter keeps the video in page compositing with the native
-       danmaku layer, without changing its mask, opacity or running animations. */
-    #${APP}-dialog:fullscreen .bpx-player-dm-mask-wrap,
-    [data-bili-popup-ui="pip"] :fullscreen .bpx-player-dm-mask-wrap { backdrop-filter: brightness(1); }
+    /* The marker is placed only in a measured black border during fullscreen.
+       Change a single near-black pixel, without a video-sized backdrop filter. */
+    .${APP}__fullscreen-marker { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; contain: strict;
+      z-index: 74; pointer-events: none; background: #010101; animation: ${APP}-marker-paint 2s steps(1, end) infinite; }
+    .${APP}__fullscreen-marker[hidden] { display: none; }
+    @keyframes ${APP}-marker-paint { 50% { background-color: #020202; } }
     /* Nano mounts the normal-mode sending bar before it sets data-screen. */
     ${embedded} .bpx-player-sending-area { display: none !important; }
     ${embedded} .bpx-player-primary-area { height: 100% !important; }

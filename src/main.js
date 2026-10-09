@@ -18,6 +18,7 @@ import {
   STORAGE_AUTO_PLAY_NEXT,
   STORAGE_DIRECT_CLICK,
   STORAGE_GAMEPAD_CONTROLS,
+  STORAGE_BACKGROUND_BLUR,
   STORAGE_LAST_PLAYED,
   STORAGE_MODAL_SIZE,
   STORAGE_MODE,
@@ -197,10 +198,12 @@ import {
     homeSizeFrame: 0,
     viewportFrame: 0,
     gamepadFrame: 0,
+    gamepadDiscoveryTimer: 0,
     gamepadButtons: new Map(),
     gamepadRepeatAt: new Map(),
     gamepadConnected: false,
-    gamepadControlsEnabled: getStorageItem(STORAGE_GAMEPAD_CONTROLS) !== '0',
+    gamepadControlsEnabled: getStorageItem(STORAGE_GAMEPAD_CONTROLS) === '1',
+    backgroundBlur: getStorageItem(STORAGE_BACKGROUND_BLUR) !== '0',
     gamepadIgnoreInput: false,
     autoPlayHintTimer: 0,
     lastFocus: null,
@@ -6034,8 +6037,12 @@ import {
       syncGamepadIndicator();
       return;
     }
+    window.clearTimeout(state.gamepadDiscoveryTimer);
+    state.gamepadDiscoveryTimer = 0;
     const gamepads = [...navigator.getGamepads()];
-    updateGamepadConnectionState(gamepads.some(Boolean));
+    const connected = gamepads.some(Boolean);
+    updateGamepadConnectionState(connected);
+    if (!connected) { scheduleGamepadDiscovery(); return; }
     // Reopening or reenabling controls must not replay an already held button.
     primeGamepadButtons(gamepads);
     state.gamepadIgnoreInput = false;
@@ -6043,6 +6050,8 @@ import {
   }
 
   function stopGamepadControls() {
+    window.clearTimeout(state.gamepadDiscoveryTimer);
+    state.gamepadDiscoveryTimer = 0;
     if (state.gamepadFrame) {
       window.cancelAnimationFrame(state.gamepadFrame);
       state.gamepadFrame = 0;
@@ -6051,7 +6060,18 @@ import {
     state.gamepadRepeatAt.clear();
   }
 
+  function scheduleGamepadDiscovery() {
+    // Some browsers expose a pad after an activation press without another
+    // connection event. Retain that fallback without waking every display frame.
+    window.clearTimeout(state.gamepadDiscoveryTimer);
+    state.gamepadDiscoveryTimer = window.setTimeout(() => {
+      state.gamepadDiscoveryTimer = 0;
+      startGamepadControls();
+    }, 1000);
+  }
+
   function onGamepadConnectionChanged() {
+    if (!state.gamepadControlsEnabled) return;
     const connected = Boolean(navigator.getGamepads && [...navigator.getGamepads()].some(Boolean));
     updateGamepadConnectionState(connected);
     if (state.gamepadControlsEnabled && connected && getActiveGamepadKind()) startGamepadControls();
@@ -6100,7 +6120,7 @@ import {
     const connected = gamepads.some(Boolean);
     const connectionChanged = updateGamepadConnectionState(connected);
     if (!connected) {
-      state.gamepadFrame = window.requestAnimationFrame(pollGamepadControls);
+      scheduleGamepadDiscovery();
       return;
     }
     if (connectionChanged || state.gamepadIgnoreInput) {

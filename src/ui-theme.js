@@ -53,6 +53,8 @@ function getSettingsCss() {
     .${S}__palette-panel { height: var(--collapsible-panel-height); overflow: hidden; opacity: 1; transition: height .2s ease, opacity .16s ease; }
     .${S}__palette-panel[data-starting-style], .${S}__palette-panel[data-ending-style] { height: 0; opacity: 0; }
     .${S}__palette-content { padding: 6px 0 4px; }
+    .${S}__effect-hint { margin: 4px 0; color: var(--${A}-text-muted); font-size: 12px; line-height: 1.5; }
+    .${S}__effects .${S}__action[data-panel-open] > svg { transform: rotate(180deg); }
     .${S}__palette-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
     .${S}__palette-preset { display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 0; padding: 9px 2px 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--${A}-text-subtle); font: 11px/1.5 var(--${A}-font); cursor: pointer; }
     .${S}__palette-preset:hover { background: var(--${A}-surface-soft); }
@@ -131,14 +133,37 @@ export function getModernPlayerCss() {
     .${A}__scrollbar[data-visible="true"] { opacity: 1; visibility: visible; pointer-events: auto; }
     .${A}__scrollbar-thumb { position: absolute; left: 3px; top: 0; width: 4px; min-height: 24px; border-radius: 4px; background: color-mix(in srgb, var(--${A}-text-muted) 70%, transparent); }
     .${A}__scrollbar:hover .${A}__scrollbar-thumb { width: 6px; left: 2px; background: var(--${A}-text-subtle); }
-    #${A}-overlay { background: #11111100; backdrop-filter: blur(0px); opacity: 0; transition: opacity .2s ease, background-color .2s ease, backdrop-filter .2s ease; }
-    #${A}-overlay[data-open="true"] { background: #11111166; backdrop-filter: blur(8px); opacity: 1; }
+    /* Filter only the visible background to reduce the surface recomposited
+       during playback, including in Chromium's software compositor.
+       Keep edge tiles outside the video; tiny corner
+       tiles preserve the rounded silhouette without extending a whole strip. */
+    #${A}-overlay { padding: 0; grid-template: 1fr auto 1fr / 1fr auto 1fr; background: transparent; opacity: 0; transition: opacity .2s ease; }
+    #${A}-overlay[data-open="true"] { opacity: 1; }
+    .${A}__backdrop { grid-area: 2 / 2; place-self: stretch; min-width: 0; min-height: 0; pointer-events: none; background: #11111100; backdrop-filter: blur(0px); transition: background-color .2s ease, backdrop-filter .2s ease, visibility 0s; }
+    .${A}__backdrop[data-part="top"] { grid-area: 1 / 1 / 2 / 4; }
+    .${A}__backdrop[data-part="bottom"] { grid-area: 3 / 1 / 4 / 4; }
+    .${A}__backdrop[data-part="left"] { grid-area: 2 / 1 / 3 / 2; }
+    .${A}__backdrop[data-part="right"] { grid-area: 2 / 3 / 3 / 4; }
+    .${A}__backdrop[data-part*="-"] { width: 6px; height: 6px; }
+    .${A}__backdrop[data-part="top-left"] { place-self: start; }
+    .${A}__backdrop[data-part="top-right"] { place-self: start end; }
+    .${A}__backdrop[data-part="bottom-left"] { place-self: end start; }
+    .${A}__backdrop[data-part="bottom-right"] { place-self: end; }
+    #${A}-overlay[data-open="true"] > .${A}__backdrop { background: #11111166; backdrop-filter: blur(8px); }
+    /* Fill behind the dialog only while it fades/moves, then release that
+       filter surface. Grid tracks follow resizing without JS geometry reads. */
+    #${A}-overlay[data-open="true"] > .${A}__backdrop[data-part="center"] { visibility: hidden; transition-delay: 0s, 0s, .22s; }
+    #${A}-overlay[data-layout-animating="true"] > .${A}__backdrop[data-part="center"] { visibility: visible; transition-delay: 0s; }
     #${A}-overlay.${A}--hidden:not([hidden]) { display: grid; pointer-events: none; }
     #${A}-overlay[hidden] { display: none; }
-    @starting-style { #${A}-overlay[data-open="true"] { background: #11111100; backdrop-filter: blur(0px); opacity: 0; } }
+    @starting-style {
+      #${A}-overlay[data-open="true"] { opacity: 0; }
+      #${A}-overlay[data-open="true"] > .${A}__backdrop { background: #11111100; backdrop-filter: blur(0px); }
+      #${A}-overlay[data-open="true"] > .${A}__backdrop[data-part="center"] { visibility: visible; }
+    }
     /* Native continuous corners also shape the shadow and overflow clip; older
        engines retain border-radius without adding a mask around floating UI. */
-    #${A}-dialog { grid-template-rows: minmax(0, 1fr); overflow: visible; border: 0; border-radius: 6px; corner-shape: superellipse(1.5); background: #000; box-shadow: 0 24px 80px #0005; font-family: var(--${A}-font); transition: opacity .2s ease; }
+    #${A}-dialog { grid-area: 2 / 2; z-index: 1; grid-template-rows: minmax(0, 1fr); overflow: visible; border: 0; border-radius: 6px; corner-shape: superellipse(1.5); background: #000; box-shadow: 0 24px 80px #0005; font-family: var(--${A}-font); transition: opacity .2s ease; }
     #${A}-dialog:fullscreen { width: 100vw !important; height: 100dvh !important; max-width: none; max-height: none; margin: 0; border-radius: 0; box-shadow: none; }
     /* Desktop fullscreen resizes the viewport separately from fullscreenchange.
        Override the cached pixel height before paint, without waiting for JS. */
@@ -327,7 +352,9 @@ export function getModernPlayerCss() {
     .${A}__favorite-item input:focus-visible + i { outline: 2px solid var(--${A}-accent); outline-offset: 3px; }
     .${A}__favorite-item input { display: block; position: absolute; opacity: 0; width: 1px; height: 1px; }
     #${A}-overlay.${A}--comments-right #${A}-comments-mount, body.comments-right #comments-mount { padding: 12px 0 0; }
-    #${A}-overlay.${A}--minimized { display: block; padding: 0; pointer-events: none; background: #11111100; backdrop-filter: blur(0px); }
+    #${A}-overlay.${A}--minimized { pointer-events: none; background: transparent; }
+    #${A}-overlay.${A}--minimized > .${A}__backdrop { background: #11111100; backdrop-filter: blur(0px); visibility: hidden; transition-delay: 0s, 0s, .2s; }
+    #${A}-overlay[data-background-blur="false"] > .${A}__backdrop { backdrop-filter: none; }
     #${A}-overlay.${A}--minimized #${A}-dialog { position: fixed; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)) !important; height: auto !important; max-height: calc(100dvh - 32px); grid-template-rows: minmax(0, 1fr); border-radius: 4px; pointer-events: auto; box-shadow: 0 8px 32px #0004; }
     #${A}-overlay.${A}--minimized #${A}-header { grid-template-columns: minmax(0, 1fr) auto; padding: 4px 6px 16px 10px; gap: 4px; }
     #${A}-overlay.${A}--minimized #${A}-title { font-size: 12px; }
@@ -355,7 +382,7 @@ export function getModernPlayerCss() {
     #${A}-overlay.${A}--comments-right .bpx-player-ctrl-wide-leave, body.comments-right #bilibili-player .bpx-player-ctrl-wide-leave,
     #${A}-overlay:not(.${A}--comments-right) .bpx-player-ctrl-wide-enter, body.comments-bottom #bilibili-player .bpx-player-ctrl-wide-enter { display: none !important; }
     @media (max-width: 900px) { #${A}-overlay.${A}--comments-right .${A}__sidebar { height: auto; } #${A}-overlay.${A}--comments-right .${A}__playlist { max-height: 65dvh; } }
-    @media (max-width: 700px) { #${A}-overlay { padding: 8px; } #${A}-header { gap: 6px; padding-inline: 8px; grid-template-columns: minmax(0, 1fr) auto; } .${A}__header-history { display: none; } .${A}__header-actions { gap: 1px; } }
+    @media (max-width: 700px) { #${A}-header { gap: 6px; padding-inline: 8px; grid-template-columns: minmax(0, 1fr) auto; } .${A}__header-history { display: none; } .${A}__header-actions { gap: 1px; } }
     @media (hover: none) { #${A}-header, .${A}__pip-tools { opacity: 1; pointer-events: auto; } }
     @media (prefers-reduced-motion: reduce) { #${A}-overlay, #${A}-overlay *, #shell * { animation-duration: .01ms !important; transition-duration: 0s !important; scroll-behavior: auto !important; } }
   `;
