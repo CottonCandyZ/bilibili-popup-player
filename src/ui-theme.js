@@ -136,15 +136,16 @@ export function getModernPlayerCss() {
     /* Keep one continuous backdrop behind the dialog. Adjacent blur tiles
        sample each other's filtered pixels and create visible seams. Keeping
        the filter on this sibling avoids a filter on the video's ancestor. */
-    #${A}-overlay { background: transparent; opacity: 0; transition: opacity .2s ease; }
-    #${A}-overlay[data-open="true"] { opacity: 1; }
+    /* An opacity animation here creates a backdrop root and prevents the child
+       filter from sampling the page until the fade finishes. Fade the dialog
+       itself and animate the backdrop's tint/filter independently. */
+    #${A}-overlay { background: transparent; }
     .${A}__backdrop { position: absolute; inset: 0; pointer-events: none; background: #11111100; backdrop-filter: blur(0px); transition: background-color .2s ease, backdrop-filter .2s ease, visibility 0s; }
     #${A}-overlay[data-open="true"] > .${A}__backdrop { background: #11111166; backdrop-filter: blur(8px); }
     #${A}-overlay[data-open="true"][data-background-blur="false"]:not(.${A}--minimized) > .${A}__backdrop { background: #11111199; }
     #${A}-overlay.${A}--hidden:not([hidden]) { display: grid; pointer-events: none; }
     #${A}-overlay[hidden] { display: none; }
     @starting-style {
-      #${A}-overlay[data-open="true"] { opacity: 0; }
       #${A}-overlay[data-open="true"] > .${A}__backdrop { background: #11111100; backdrop-filter: blur(0px); }
     }
     /* Native continuous corners also shape the shadow and overflow clip; older
