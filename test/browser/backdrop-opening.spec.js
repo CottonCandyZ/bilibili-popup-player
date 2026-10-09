@@ -5,6 +5,7 @@ test('backdrop is visibly blurred halfway through opening and reopening', async 
   const errors = await loadFixture(page);
   await mockPlayback(page);
   await page.addStyleTag({ content: `
+    #${APP}-overlay, .${APP}__backdrop { transition-duration:2s !important; }
     #blur-stripes { position:fixed;inset:0;z-index:2147482900;pointer-events:none;
       background:repeating-linear-gradient(#000 0 4px,#fff 4px 8px); }
   ` });
@@ -18,7 +19,7 @@ test('backdrop is visibly blurred halfway through opening and reopening', async 
       if (overlay?.dataset.open !== 'true' ||
         (event.target !== overlay && !event.target.classList.contains(id + '__backdrop'))) return;
       for (const animation of event.target.getAnimations()) {
-        animation.pause(); animation.currentTime = 100;
+        animation.pause(); animation.currentTime = 1000;
       }
     }, true);
   }, APP);
@@ -31,14 +32,15 @@ test('backdrop is visibly blurred halfway through opening and reopening', async 
     const blur = await backdrop.evaluate(el => Number(/blur\(([\d.]+)px\)/.exec(getComputedStyle(el).backdropFilter)?.[1]));
     expect(blur).toBeGreaterThan(4);
     expect(blur).toBeLessThan(8);
-    // This patch is outside the dialog, away from viewport/filter edges.
-    const screenshot = await page.screenshot({ clip: { x: 8, y: 32, width: 16, height: 32 } });
+    // Capture the full viewport: a clipped screenshot can clip the compositor's
+    // filter input too. Sample a patch outside the dialog afterward.
+    const screenshot = await page.screenshot();
     const contrast = await page.evaluate(async data => {
       const image = new Image(); image.src = 'data:image/png;base64,' + data;
       await image.decode();
       const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
       const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
-      const { data: pixels } = ctx.getImageData(8, 0, 1, image.height);
+      const { data: pixels } = ctx.getImageData(16, 32, 1, 32);
       const reds = [...pixels].filter((_, i) => i % 4 === 0);
       return Math.max(...reds) - Math.min(...reds);
     }, screenshot.toString('base64'));
