@@ -33,7 +33,15 @@ export function installOverlayScrollbars(root) {
   function schedule() { if (!frame) frame = win.requestAnimationFrame(render); }
   const resize = new win.ResizeObserver(schedule);
   const mutation = new win.MutationObserver(changes => {
-    if (changes.some(change => !layer.contains(change.target))) { discover(); schedule(); }
+    // Native progress labels and danmaku change throughout playback. They are
+    // clipped inside the player and cannot change a sidebar's scroll geometry.
+    // The resize observer still handles actual changes to the content viewport.
+    // A batch may include updates to a danmaku node removed later in the same
+    // task; its detached target no longer has a player ancestor.
+    if (changes.some(change => root.contains(change.target) && !layer.contains(change.target) &&
+      !change.target.closest?.(`#${APP}-player, #bilibili-player, #live-player`))) {
+      discover(); schedule();
+    }
   });
 
   function armHide(record) {

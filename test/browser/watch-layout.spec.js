@@ -197,6 +197,43 @@ for (const classic of [true, false]) test(`${classic ? 'classic' : 'native overl
   expect(errors).toEqual([]);
 });
 
+test('danmaku and progress text do not rescan overlay scrollbars', async ({ page }) => {
+  const errors = await prepare(page, { classic: true });
+  // Let startup UI (including the one-time resize hint) finish before counting.
+  await page.waitForTimeout(4500);
+  // Include real scroll overflow so a missed update is observable as a stale thumb.
+  const comments = page.locator('#' + A + '-comments-mount');
+  await comments.evaluate(el => { el.innerHTML = '<div style="height:2000px">评论</div>'; });
+  const bar = page.locator(`.${A}__scrollbar[aria-controls="${A}-comments-panel"]`);
+  await expect.poll(async () => Number(await bar.getAttribute('aria-valuemax'))).toBeGreaterThan(1000);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const previousRange = Number(await bar.getAttribute('aria-valuemax'));
+  await page.evaluate(A => {
+    const dialog = document.getElementById(A + '-dialog');
+    const query = dialog.querySelectorAll;
+    window.__scrollbarDiscoveries = 0;
+    dialog.querySelectorAll = function (selector) {
+      if (selector.includes('#layout')) window.__scrollbarDiscoveries++;
+      return query.call(this, selector);
+    };
+  }, A);
+  await page.locator('#' + A + '-player').evaluate(async root => {
+    const layer = document.createElement('div');
+    root.firstChild.append(layer);
+    for (let frame = 0; frame < 30; frame++) {
+      await new Promise(requestAnimationFrame);
+      layer.textContent = '弹幕和进度 ' + frame;
+    }
+    layer.remove();
+    await new Promise(requestAnimationFrame);
+  });
+  expect(await page.evaluate(() => window.__scrollbarDiscoveries)).toBe(0);
+  await comments.evaluate(el => { el.innerHTML = '<div style="height:4000px">新评论</div>'; });
+  await expect.poll(async () => Number(await bar.getAttribute('aria-valuemax'))).toBeGreaterThan(previousRange + 1000);
+  expect(await page.evaluate(() => window.__scrollbarDiscoveries)).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
 test('late BewlyBewly scrollbar styling keeps native scrollbars without reserving player space', async ({ page }) => {
   const errors = await prepare(page, { classic: false });
   const dialog = page.locator('#' + A + '-dialog');

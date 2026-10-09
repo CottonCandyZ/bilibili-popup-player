@@ -421,7 +421,7 @@ test('backdrop blur interpolates on open, minimize, restore and close', async ({
     window.__blurSamples = [];
     function sample() {
       const overlay = document.getElementById(id + '-overlay');
-      if (overlay) window.__blurSamples.push(Number(/blur\(([\d.]+)px\)/.exec(getComputedStyle(overlay).backdropFilter)?.[1] || 0));
+      if (overlay) window.__blurSamples.push(Number(/blur\(([\d.]+)px\)/.exec(getComputedStyle(overlay.querySelector('.' + id + '__backdrop')).backdropFilter)?.[1] || 0));
       window.__blurFrame = requestAnimationFrame(sample);
     }
     sample();
@@ -429,19 +429,20 @@ test('backdrop blur interpolates on open, minimize, restore and close', async ({
   const hasIntermediate = () => page.evaluate(() => window.__blurSamples.some(value => value > 0 && value < 8));
   const reset = () => page.evaluate(() => { window.__blurSamples = []; });
   const overlay = page.locator(`#${APP}-overlay`);
+  const backdrop = overlay.locator(`.${APP}__backdrop`);
   await page.locator('#card-b .cover').hover();
   await cardButton(page, 'BV1test002').click();
-  await expect(overlay).toHaveCSS('backdrop-filter', 'blur(8px)');
+  await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(8px)');
   expect(await hasIntermediate()).toBe(true);
   await reset();
   await page.getByRole('button', { name: '收起到右下角', exact: true }).click();
-  await expect(overlay).toHaveCSS('backdrop-filter', 'blur(0px)');
+  await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(0px)');
   expect(await hasIntermediate()).toBe(true);
   await expect.poll(() => page.locator(`#${APP}-dialog`).evaluate(el => el.getAnimations().length)).toBe(0);
   await page.locator(`#${APP}-player-wrap`).hover();
   await reset();
   await page.getByRole('button', { name: '还原播放器', exact: true }).click();
-  await expect(overlay).toHaveCSS('backdrop-filter', 'blur(8px)');
+  await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(8px)');
   expect(await hasIntermediate()).toBe(true);
   await expect.poll(() => page.locator(`#${APP}-dialog`).evaluate(el => el.getAnimations().length)).toBe(0);
   await page.locator(`#${APP}-player-wrap`).hover();

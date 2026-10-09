@@ -5,7 +5,7 @@ import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { Field } from '@base-ui/react/field';
 import { Collapsible } from '@base-ui/react/collapsible';
-import { APP, SETTINGS_CLASS as C, STORAGE_ACCENT_THEME, STORAGE_AUTO_PLAY_COUNTDOWN, STORAGE_DIRECT_CLICK, STORAGE_GAMEPAD_CONTROLS, STORAGE_MODE } from './constants.js';
+import { APP, SETTINGS_CLASS as C, STORAGE_ACCENT_THEME, STORAGE_AUTO_PLAY_COUNTDOWN, STORAGE_BACKGROUND_BLUR, STORAGE_DIRECT_CLICK, STORAGE_GAMEPAD_CONTROLS, STORAGE_MODE } from './constants.js';
 import { ACCENT_PRESETS, getAccentColor, normalizeAccentTheme, normalizeHexColor } from './accent-theme.js';
 import { setStorageItem } from './storage.js';
 import { Icon, mountReact } from './ui-runtime.jsx';
@@ -16,6 +16,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
   const snapshot = () => ({
     enabled: state.enabled, mode: state.mode, directClick: state.directClick,
     autoPlayCountdown: state.autoPlayCountdown, gamepadControlsEnabled: state.gamepadControlsEnabled,
+    backgroundBlur: state.backgroundBlur,
     accentTheme: state.accentTheme,
     themeStyle: state.themeStyle,
     supportsPip: supportsPip?.() !== false,
@@ -65,6 +66,7 @@ export function createSettingsUi({ state, getShadowRoot, syncCardButtons, suppor
     onDirectChange: value => update('directClick', value, STORAGE_DIRECT_CLICK),
     onCountdownChange: value => update('autoPlayCountdown', value, STORAGE_AUTO_PLAY_COUNTDOWN, onAutoPlayCountdownChange),
     onGamepadChange: value => update('gamepadControlsEnabled', value, STORAGE_GAMEPAD_CONTROLS, onGamepadControlsChange),
+    onBackgroundBlurChange: value => update('backgroundBlur', value, STORAGE_BACKGROUND_BLUR),
     onAccentChange: value => {
       state.accentTheme = normalizeAccentTheme(value);
       setStorageItem(STORAGE_ACCENT_THEME, JSON.stringify(state.accentTheme));
@@ -99,6 +101,15 @@ export function SettingsControl({ settings, container, variant = 'floating', chi
               <Setting checked={state.gamepadControlsEnabled} onChange={settings.onGamepadChange} disabled={!state.enabled} label="手柄控制" />
             </fieldset>
             <AccentPicker theme={state.accentTheme} scheme={state.themeStyle} onChange={settings.onAccentChange} />
+            <Collapsible.Root className={`${C}__effects`}>
+              <Collapsible.Trigger className={`${C}__action`}><span>显示效果</span><Icon name="down" size={15} /></Collapsible.Trigger>
+              <Collapsible.Panel className={`${C}__palette-panel`}>
+                <div className={`${C}__palette-content`}>
+                  <Setting checked={state.backgroundBlur} onChange={settings.onBackgroundBlurChange} disabled={!state.enabled} label="背景模糊" />
+                  <p className={`${C}__effect-hint`}>仅影响网页小窗背景，关闭可降低性能开销。</p>
+                </div>
+              </Collapsible.Panel>
+            </Collapsible.Root>
             {children && <div className={`${C}__extra`}>{children}</div>}
           </Popover.Popup>
         </Popover.Positioner>

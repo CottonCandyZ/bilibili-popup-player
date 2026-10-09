@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog } from '@base-ui/react/dialog';
 import { Button } from '@base-ui/react/button';
@@ -11,6 +11,7 @@ import { installOverlayScrollbars } from './overlay-scrollbars.js';
 import { copyPlaybackLink } from './share-link.js';
 import { onPlayerShellKeyDown } from './media-shortcuts.js';
 import { installPlayerControls } from './player-controls.js';
+import { installFullscreenMarker } from './fullscreen-marker.js';
 
 export function mountHomePlayerPage(props) {
   const targetDocument = props.targetDocument || document;
@@ -78,6 +79,7 @@ function CopyLinkButton({ targetDocument }) {
 }
 
 function HomePlayerPage(props) {
+  const { backgroundBlur } = useSyncExternalStore(props.settings.subscribe, props.settings.getSnapshot);
   useOverlayScrollbars(props.container.ownerDocument, `${APP}-dialog`, props.open && !props.minimized);
   const pointerOnBackdrop = useRef(false);
   const scrollPlayer = useScrollMiniPlayer(props.container.ownerDocument, 'home', props.open && !props.minimized, props.onFrameResize);
@@ -115,7 +117,7 @@ function HomePlayerPage(props) {
       <Dialog.Close className={`${APP}__header-button ${APP}__header-button--close`} title="关闭播放器" aria-label="关闭播放器"><Icon name="close" size={17} /></Dialog.Close>
     </>, sidebarControls)}
     <Dialog.Portal container={props.container} keepMounted>
-      <div id={`${APP}-overlay`} ref={props.refs('overlay')} hidden={!props.open && !present} data-open={props.open}
+      <div id={`${APP}-overlay`} ref={props.refs('overlay')} hidden={!props.open && !present} data-open={props.open} data-background-blur={backgroundBlur}
         onPointerDownCapture={(event) => {
           pointerOnBackdrop.current = event.target === event.currentTarget;
         }}
@@ -124,6 +126,7 @@ function HomePlayerPage(props) {
           pointerOnBackdrop.current = false;
         }}
         onPointerCancel={() => { pointerOnBackdrop.current = false; }}>
+        <div className={`${APP}__backdrop`} aria-hidden="true" />
         <Dialog.Popup id={`${APP}-dialog`} ref={props.refs('dialog')} initialFocus={false} finalFocus={false} aria-label={props.minimized ? '迷你播放器' : '小窗播放器'} onKeyDown={onPlayerShellKeyDown}>
           <div id={`${APP}-content`} ref={props.refs('content')}>
             <div id={`${APP}-player-slot`} ref={props.refs('playerSlot')}>
@@ -248,7 +251,11 @@ function usePlayerControls(targetDocument, frameId, open, minimized = false) {
   const [visible, setVisible] = useState(true);
   useEffect(() => {
     const frame = targetDocument.getElementById(frameId);
-    if (open && frame) return installPlayerControls(frame, setVisible);
+    if (open && frame) {
+      const disposeControls = installPlayerControls(frame, setVisible);
+      const disposeMarker = installFullscreenMarker(frame);
+      return () => { disposeControls(); disposeMarker(); };
+    }
     setVisible(false);
   }, [targetDocument, frameId, open, minimized]);
   return { visible };

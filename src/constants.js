@@ -23,6 +23,7 @@ export const STORAGE_RESIZE_HINT_SEEN = `${APP}:resize-hint-seen`;
 export const STORAGE_AUTO_PLAY_NEXT = `${APP}:auto-play-next`;
 export const STORAGE_AUTO_PLAY_COUNTDOWN = `${APP}:auto-play-countdown`;
 export const STORAGE_GAMEPAD_CONTROLS = `${APP}:gamepad-controls`;
+export const STORAGE_BACKGROUND_BLUR = `${APP}:background-blur`;
 export const STORAGE_ACCENT_THEME = `${APP}:accent-theme`;
 // Match the userscript's sites, without restricting their page routes.
 export const ENABLED_URL_RE = /^https?:\/\/(?:www|space|search|live|t)\.bilibili\.com\//;

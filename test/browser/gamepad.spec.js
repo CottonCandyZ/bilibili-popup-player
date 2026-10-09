@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { APP as A, cardButton, loadFixture, mockPlayback } from './fixture.js';
 
-async function prepare(page) {
+async function prepare(page, { enabled = true } = {}) {
+  if (enabled) await page.addInitScript(A => localStorage.setItem(A + ':gamepad-controls', '1'), A);
   const errors = await loadFixture(page, '/');
   await mockPlayback(page);
   await page.evaluate(() => {
@@ -49,6 +50,21 @@ async function prepare(page) {
   return { errors, connect, frames, button, press, keys, open, ready, settings };
 }
 
+test('gamepad control defaults off without polling until explicitly enabled', async ({ page }) => {
+  const pad = await prepare(page, { enabled: false });
+  await pad.open(); await pad.ready(); await pad.connect(); await pad.frames();
+  await page.waitForTimeout(1200);
+  expect(await page.evaluate(() => window.__gamepad.reads)).toBe(0);
+  await pad.settings();
+  await page.getByRole('button', { name: '手柄快捷键', exact: true }).click();
+  const toggle = page.getByRole('switch', { name: '手柄控制', exact: true });
+  await expect(toggle).not.toBeChecked();
+  await toggle.click(); await pad.frames(); await pad.press(0);
+  expect(await pad.keys()).toEqual([' ']);
+  expect(await page.evaluate(A => localStorage.getItem(A + ':gamepad-controls'), A)).toBe('1');
+  expect(pad.errors).toEqual([]);
+});
+
 for (const timing of ['before opening', 'while loading']) test(`a gamepad connected ${timing} works after asynchronous player creation`, async ({ page }) => {
   const pad = await prepare(page);
   let release, requested;
@@ -75,7 +91,9 @@ for (const timing of ['before opening', 'while loading']) test(`a gamepad connec
 test('polling discovers an exposed pad without a new connection event and survives reconnect', async ({ page }) => {
   const pad = await prepare(page);
   await pad.open(); await pad.ready();
-  await pad.connect(true, false); await pad.frames();
+  await pad.connect(true, false);
+  await expect.poll(() => page.evaluate(() => window.__biliPopupPlayerNano.getState().gamepadConnected)).toBe(true);
+  await pad.frames();
   await pad.press(0);
   expect(await pad.keys()).toEqual([' ']);
   await pad.settings();
@@ -91,6 +109,22 @@ test('polling discovers an exposed pad without a new connection event and surviv
   expect(await pad.keys()).toHaveLength(1); // The activation press is not a playback command.
   await pad.button(0, false); await pad.press(0);
   expect(await pad.keys()).toHaveLength(2);
+  expect(pad.errors).toEqual([]);
+});
+
+test('no connected pad uses slow discovery and closing the player stops it', async ({ page }) => {
+  const pad = await prepare(page);
+  await pad.open(); await pad.ready();
+  const before = await page.evaluate(() => window.__gamepad.reads);
+  await page.waitForTimeout(2200);
+  const reads = await page.evaluate(() => window.__gamepad.reads);
+  expect(reads - before).toBeGreaterThanOrEqual(2);
+  expect(reads - before).toBeLessThanOrEqual(4);
+  expect(await page.evaluate(() => window.__biliPopupPlayerNano.getState().gamepadFrame)).toBe(0);
+  await page.evaluate(() => window.__biliPopupPlayerNano.close());
+  const closed = await page.evaluate(() => window.__gamepad.reads);
+  await page.waitForTimeout(1200);
+  expect(await page.evaluate(() => window.__gamepad.reads)).toBe(closed);
   expect(pad.errors).toEqual([]);
 });
 
