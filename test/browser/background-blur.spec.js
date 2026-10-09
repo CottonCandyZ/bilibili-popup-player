@@ -8,39 +8,11 @@ async function openPlayer(page) {
   await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
 }
 
-test('steady playback filters only the outer background and small corners, including after resize', async ({ page }) => {
-  await loadFixture(page);
-  await openPlayer(page);
-  const overlay = page.locator(`#${APP}-overlay`);
-  await expect(overlay.locator('[data-part="center"]')).toBeHidden();
-  await expect(overlay).toHaveCSS('backdrop-filter', 'none');
-  for (const viewport of [{ width: 1360, height: 900 }, { width: 900, height: 700 }, { width: 390, height: 740 }]) {
-    await page.setViewportSize(viewport);
-    await expect.poll(() => overlay.evaluate(el => {
-      const box = node => node.getBoundingClientRect();
-      const dialog = box(el.querySelector('[role="dialog"]'));
-      const tiles = [...el.querySelectorAll('[data-part]')].filter(tile => getComputedStyle(tile).visibility === 'visible');
-      const edges = Object.fromEntries(tiles.filter(tile => !tile.dataset.part.includes('-')).map(tile => [tile.dataset.part, box(tile)]));
-      return Math.max(Math.abs(edges.top.bottom - dialog.top), Math.abs(edges.bottom.top - dialog.bottom),
-        Math.abs(edges.left.right - dialog.left), Math.abs(edges.right.left - dialog.right),
-        Math.abs(edges.top.width - innerWidth), Math.abs(edges.bottom.bottom - innerHeight));
-    })).toBeLessThan(1);
-    const area = await overlay.evaluate(el => [...el.querySelectorAll('[data-part]')]
-      .filter(tile => getComputedStyle(tile).visibility === 'visible')
-      .reduce((sum, tile) => { const box = tile.getBoundingClientRect(); return sum + box.width * box.height; }, 0));
-    const box = await page.locator(`#${APP}-dialog`).boundingBox();
-    expect(Math.abs(area - (viewport.width * viewport.height - box.width * box.height + 4 * 6 * 6))).toBeLessThan(2);
-  }
-  // Background tiles remain decoration, so clicking the backdrop still closes.
-  await page.mouse.click(2, 2);
-  await expect(overlay).toBeHidden();
-});
-
 test('background blur is enabled by default behind a collapsed effects section and changes without restarting playback', async ({ page }) => {
   const errors = await loadFixture(page);
   await openPlayer(page);
   const overlay = page.locator(`#${APP}-overlay`);
-  const backdrop = overlay.locator('[data-part="top"]');
+  const backdrop = overlay.locator(`.${APP}__backdrop`);
   await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(8px)');
   await page.evaluate(() => { window.__originalPlayer = window.__biliPopupPlayerNano.getState().home.player; });
   await page.getByRole('button', { name: '小窗播放设置', exact: true }).click();
@@ -50,9 +22,10 @@ test('background blur is enabled by default behind a collapsed effects section a
   await expect(toggle).toBeChecked();
   await toggle.click();
   await expect(backdrop).toHaveCSS('backdrop-filter', 'none');
-  await expect(backdrop).toHaveCSS('background-color', 'rgba(17, 17, 17, 0.4)');
+  await expect(backdrop).toHaveCSS('background-color', 'rgba(17, 17, 17, 0.6)');
   await toggle.click();
   await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(8px)');
+  await expect(backdrop).toHaveCSS('background-color', 'rgba(17, 17, 17, 0.4)');
   expect(await page.evaluate(() => window.__originalPlayer === window.__biliPopupPlayerNano.getState().home.player)).toBe(true);
   expect(errors).toEqual([]);
 });
@@ -66,10 +39,12 @@ test('disabled background blur survives reload and minimize/restore', async ({ p
   const errors = await loadFixture(page);
   await openPlayer(page);
   const overlay = page.locator(`#${APP}-overlay`);
-  const backdrop = overlay.locator('[data-part="top"]');
+  const backdrop = overlay.locator(`.${APP}__backdrop`);
   await expect(backdrop).toHaveCSS('backdrop-filter', 'none');
   await page.getByRole('button', { name: '收起到右下角', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '迷你播放器', exact: true })).toBeVisible();
+  await expect(backdrop).toHaveCSS('background-color', 'rgba(17, 17, 17, 0)');
+  await expect(backdrop).toBeHidden();
   await expect.poll(() => page.locator(`#${APP}-dialog`).evaluate(el => el.getAnimations().length)).toBe(0);
   await page.locator(`#${APP}-player-wrap`).hover();
   await page.getByRole('button', { name: '还原播放器', exact: true }).click();

@@ -75,7 +75,8 @@ export function installFullscreenMarker(frame) {
   }
 
   function onFullscreen() {
-    active = Boolean(doc.fullscreenElement?.contains(frame));
+    const fullscreen = doc.fullscreenElement;
+    active = Boolean(fullscreen && (fullscreen.contains(frame) || frame.contains(fullscreen)));
     if (active) {
       mutation.observe(frame, { childList: true, subtree: true });
       schedule();

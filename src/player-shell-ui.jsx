@@ -126,8 +126,7 @@ function HomePlayerPage(props) {
           pointerOnBackdrop.current = false;
         }}
         onPointerCancel={() => { pointerOnBackdrop.current = false; }}>
-        {['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'].map(part =>
-          <div key={part} className={`${APP}__backdrop`} data-part={part} aria-hidden="true" />)}
+        <div className={`${APP}__backdrop`} aria-hidden="true" />
         <Dialog.Popup id={`${APP}-dialog`} ref={props.refs('dialog')} initialFocus={false} finalFocus={false} aria-label={props.minimized ? '迷你播放器' : '小窗播放器'} onKeyDown={onPlayerShellKeyDown}>
           <div id={`${APP}-content`} ref={props.refs('content')}>
             <div id={`${APP}-player-slot`} ref={props.refs('playerSlot')}>

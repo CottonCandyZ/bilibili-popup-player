@@ -9,12 +9,12 @@ const adapter = readFileSync(new URL('../../src/fullscreen-marker.js', import.me
 
 // Headless Chromium verifies pixel placement, paint and native state. Whether
 // this avoids Windows/Chrome's fullscreen overlay optimization needs a real GPU.
-for (const kind of ['home', 'pip']) test(`${kind} fullscreen uses a letterbox pixel and preserves native danmaku state`, async ({ page }) => {
+for (const [kind, target] of [['home', 'shell'], ['pip', 'shell'], ['pip', 'container']]) test(`${kind} ${target} fullscreen uses a letterbox pixel and preserves native danmaku state`, async ({ page }) => {
   const shell = kind === 'home' ? `${APP}-dialog` : 'system-shell';
   const root = kind === 'home' ? `${APP}-player` : 'bilibili-player';
   await page.setContent(`<style>
     #${shell} { position:relative; width:800px; height:450px; background:black; }
-    #${shell}:fullscreen { width:100vw; height:100vh; }
+    #${shell}:fullscreen, .bpx-player-container:fullscreen { width:100vw; height:100vh; }
     #${root}, .bpx-player-container, .bpx-player-video-area { position:relative; width:100%; height:100%; }
     video, .bpx-player-dm-mask-wrap, .bpx-player-row-dm-wrap { position:absolute; inset:0; width:100%; height:100%; }
     video { object-fit:contain; }
@@ -44,7 +44,8 @@ for (const kind of ['home', 'pip']) test(`${kind} fullscreen uses a letterbox pi
   await expect(marker).toHaveCount(0);
   await bullet.evaluate(el => { window.__existingDanmaku = { node: el, animation: el.getAnimations()[0] }; });
 
-  await page.locator('#' + shell).evaluate(el => el.requestFullscreen());
+  const fullscreen = page.locator(target === 'container' ? '.bpx-player-container' : '#' + shell);
+  await fullscreen.evaluate(el => el.requestFullscreen());
   await expect(marker).toBeVisible();
   const pixel = await marker.boundingBox(), video = await page.locator('video').boundingBox();
   expect(pixel.width).toBe(1); expect(pixel.height).toBe(1);
@@ -91,7 +92,7 @@ for (const kind of ['home', 'pip']) test(`${kind} fullscreen uses a letterbox pi
   await expect(mask).toHaveCSS('mask-image', smartMask);
   await expect(page.locator('#host-player .bpx-player-dm-mask-wrap')).toHaveCSS('backdrop-filter', 'none');
   expect(await bullet.evaluate(el => el === window.__existingDanmaku.node && el.getAnimations()[0] === window.__existingDanmaku.animation)).toBe(true);
-  await page.locator('#' + shell).evaluate(el => el.requestFullscreen());
+  await fullscreen.evaluate(el => el.requestFullscreen());
   await expect(marker).toBeVisible();
   await page.evaluate(() => window.disposeMarker());
   await expect(marker).toHaveCount(0);
@@ -111,6 +112,9 @@ test('the popup installs the fullscreen marker and cleans it up when closed', as
   await expect(marker).toHaveCount(0);
   await page.locator(`#${APP}-dialog`).evaluate(el => el.requestFullscreen());
   await expect(marker).toBeVisible();
+  await expect(marker).toHaveCSS('animation-duration', '2s');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(marker).toHaveCSS('animation-duration', '2s');
   await expect(page.locator('.bpx-player-dm-mask-wrap')).toHaveCSS('backdrop-filter', 'none');
   await page.evaluate(() => window.__biliPopupPlayerNano.close());
   await expect(marker).toHaveCount(0);
