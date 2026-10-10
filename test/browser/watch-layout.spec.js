@@ -279,13 +279,13 @@ test('late BewlyBewly scrollbar styling keeps native scrollbars without reservin
   expect(errors).toEqual([]);
 });
 
-test('sidebar tabs share compact insets while the thin divider remains draggable', async ({ page }) => {
+test('sidebar tabs share compact insets while the zero-width divider remains draggable', async ({ page }) => {
   const errors = await prepare(page);
   const sidebar = page.locator('#' + A + '-comments');
   const divider = page.locator('#' + A + '-comments-resizer');
   const bounds = await sidebar.boundingBox();
   const video = await page.locator('#' + A + '-player-wrap').boundingBox();
-  expect(bounds.x - video.x - video.width).toBeCloseTo(1, 0);
+  expect(bounds.x - video.x - video.width).toBeCloseTo(0, 0);
   for (const [tab, selector] of [
     ['评论', '#' + A + '-video-intro'],
     ['播放列表', '#' + A + '-playlist-list .' + A + '__playlist-cover'],
@@ -296,7 +296,7 @@ test('sidebar tabs share compact insets while the thin divider remains draggable
     expect(item.x - bounds.x).toBeCloseTo(12, 0);
   }
   const grip = await divider.boundingBox();
-  // Hit the transparent extension of the 1px divider, not only its hairline.
+  // Hit the transparent extension of the zero-width divider.
   await page.mouse.move(grip.x - 3, grip.y + grip.height / 2);
   await page.mouse.down();
   await page.mouse.move(grip.x - 63, grip.y + grip.height / 2, { steps: 5 });

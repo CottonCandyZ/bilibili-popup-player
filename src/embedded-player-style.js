@@ -16,6 +16,13 @@ export function getEmbeddedPlayerCss() {
     #${APP}-player[data-shell-fullscreen="false"] .bpx-player-ctrl-web-leave,
     #${APP}-player[data-shell-fullscreen="true"] .bpx-player-ctrl-web-enter { display: none !important; }
     :is(#${APP}-player, [data-bili-popup-ui="pip"] #bilibili-player) .bpx-player-container { box-shadow: none !important; }
+    /* Leave room for the shell toolbar, including its fade-out padding. Keep
+       the title and close action reachable when the toolbar reappears. */
+    ${embedded} .bpx-player-info-container { top: 76px; }
+    /* Native menu heights exclude padding/borders. Host border-box resets
+       otherwise clip the rows and the final item's text. */
+    ${embedded} .bpx-player-contextmenu,
+    ${embedded} .bpx-player-contextmenu * { box-sizing: content-box; }
     #${APP}-dialog:fullscreen .bpx-player-shadow-progress-area,
     [data-bili-popup-ui="pip"] :fullscreen .bpx-player-shadow-progress-area { display: none !important; }
     /* The marker is placed only in a measured black border during fullscreen.

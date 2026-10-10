@@ -50,6 +50,59 @@ async function openPlayer(page, context, kind) {
 }
 
 for (const kind of ['home', 'pip']) {
+  test(`${kind} statistics leave the toolbar usable and preserve its native auto-hide`, async ({ page, context }) => {
+    const { surface, errors, frame, toolbar, native } = await openPlayer(page, context, kind);
+    await native.evaluate(root => {
+      const info = document.createElement('div');
+      info.className = 'bpx-player-info-container';
+      info.hidden = true;
+      info.style.cssText = 'position:absolute;left:10px;width:300px;height:100px;background:#222;color:white;z-index:80';
+      info.innerHTML = '<span class="bpx-player-info-close" style="position:absolute;top:10px;right:10px;cursor:pointer">关闭统计信息</span>';
+      info.firstChild.addEventListener('click', () => { info.hidden = true; });
+      root.append(info);
+    });
+    const info = native.locator('.bpx-player-info-container');
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => { el.hidden = false; });
+    await expect(toolbar).toBeVisible();
+    await expect(toolbar).toHaveCSS('opacity', '1');
+    const panelBox = await info.boundingBox(), toolbarBox = await toolbar.boundingBox();
+    expect(panelBox.y).toBeGreaterThanOrEqual(toolbarBox.y + toolbarBox.height);
+    await expect(frame).toHaveAttribute('data-controls-visible', 'true');
+    await expect(native.locator('.bpx-player-control-bottom')).toHaveCSS('opacity', '1');
+    await surface.getByRole('button', { name: '小窗播放设置', exact: true }).click();
+    await expect(surface.locator(`.${A}__settings__panel`)).toBeVisible();
+    await expect(info).toBeVisible();
+    await surface.keyboard.press('Escape');
+    await expect(surface.locator(`.${A}__settings__panel`)).toBeHidden();
+    // Escape restores keyboard focus to the toolbar, which deliberately pins
+    // the controls. A pointer press in the panel releases that focus.
+    await info.click({ position: { x: 20, y: 60 } });
+    await frame.hover({ position: { x: 200, y: 210 } });
+    await surface.evaluate(() => window.__nativeIdle(true));
+    await expect(frame).toHaveAttribute('data-controls-visible', 'false');
+    await expect(toolbar).toHaveCSS('opacity', '0');
+    await expect(info).toBeVisible();
+    await surface.evaluate(() => window.__nativeIdle(false));
+    await expect(toolbar).toHaveCSS('opacity', '1');
+    await info.locator('.bpx-player-info-close').click();
+    await expect(info).toBeHidden();
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => { el.hidden = false; });
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => { el.style.display = 'none'; });
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => { el.style.display = ''; });
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => { const replacement = el.cloneNode(true); replacement.hidden = true; el.replaceWith(replacement); });
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => { el.hidden = false; });
+    await expect(toolbar).toBeVisible();
+    await info.evaluate(el => el.remove());
+    await expect(toolbar).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
   test(`${kind} mini buttons outside the native control bar hold both bars visible`, async ({ page, context }) => {
     const { surface, frame, native } = await openPlayer(page, context, kind);
     await native.evaluate(root => {
