@@ -82,19 +82,125 @@ test('player core failure leaves comments available and shows a visible failure 
   expect(errors).toEqual([]);
 });
 
-test('a host core that completed without an API stops waiting and reports a visible error', async ({ page }) => {
+test('a host core that completed without an API can be replaced on retry', async ({ page }) => {
   const errors = await loadFixture(page, '/');
   await mockPlayback(page);
   await page.route('**/player/main/core.*.js', route => route.fulfill({ contentType: 'text/javascript', body: 'window.__coreLoaded = true;' }));
-  await page.evaluate(() => delete window.nano);
+  await page.evaluate(() => { window.__savedNano = window.nano; delete window.nano; });
   await page.addScriptTag({ url: nativeCore });
+  await openHome(page);
+  await expect(page.getByText('评论区测试内容', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('视频加载失败');
+  expect(await page.evaluate(() => window.__biliPopupPlayerNano.getState().home.lastError.message)).toContain('脚本已加载，但组件接口不可用');
+  await expect(page.locator('script[src*="/player/main/core."]')).toHaveCount(0);
+  await page.route('**/player/main/core.*.js', route => route.fulfill({ contentType: 'text/javascript', body: 'window.nano = window.__savedNano;' }));
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
+  await expect(page.getByRole('alert')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('a native core that already errored does not block a fresh core request', async ({ page }) => {
+  const errors = await loadFixture(page, '/');
+  await mockPlayback(page);
+  await page.evaluate(() => { window.__savedNano = window.nano; delete window.nano; });
+  const requested = [];
+  await page.route('**/player/main/core.*.js', route => {
+    requested.push(route.request().url());
+    if (requested.length === 1) return route.abort('connectionfailed');
+    return route.fulfill({ contentType: 'text/javascript', body: 'window.nano = window.__savedNano;' });
+  });
+  await page.addScriptTag({ url: nativeCore }).catch(() => {});
+  await openHome(page);
+  await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
+  await expect(page.getByText('评论区测试内容', { exact: true })).toBeVisible();
+  expect(requested).toHaveLength(2);
+  expect(requested[0]).toBe(nativeCore);
+  await expect(page.locator('script[src*="/player/main/core."]')).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test('a native core that errors during popup startup is requested again on retry', async ({ page }) => {
+  const errors = await loadFixture(page, '/');
+  await mockPlayback(page);
+  await page.evaluate(() => { window.__savedNano = window.nano; delete window.nano; });
+  const requested = [];
+  let fail;
+  const pending = new Promise(resolve => { fail = resolve; });
+  await page.route('**/player/main/core.*.js', async route => {
+    requested.push(route.request().url());
+    if (requested.length === 1) {
+      await pending;
+      return route.abort('connectionfailed');
+    }
+    return route.fulfill({ contentType: 'text/javascript', body: 'window.nano = window.__savedNano;' });
+  });
+  await page.evaluate(src => {
+    const script = document.createElement('script');
+    script.src = src;
+    document.head.append(script);
+  }, nativeCore);
+  await expect.poll(() => requested.length).toBe(1);
+  await openHome(page);
+  await expect(page.getByText('评论区测试内容', { exact: true })).toBeVisible();
+  fail();
+  await expect(page.getByRole('alert')).toContainText('视频加载失败');
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
+  await expect(page.getByRole('alert')).toBeHidden();
+  expect(requested).toHaveLength(2);
+  expect(errors).toEqual([]);
+});
+
+test('retry after a timeout keeps reusing a native core that is still in flight', async ({ page }) => {
+  const errors = await loadFixture(page, '/');
+  await mockPlayback(page);
+  await page.evaluate(() => { window.__savedNano = window.nano; delete window.nano; });
+  const requested = [];
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  await page.route('**/player/main/core.*.js', async route => {
+    requested.push(route.request().url());
+    await pending;
+    return route.fulfill({ contentType: 'text/javascript', body:
+      `customElements.define('bwp-video', class extends HTMLElement {}); window.nano = window.__savedNano;` });
+  });
+  await page.evaluate(src => {
+    const script = document.createElement('script');
+    script.src = src;
+    document.head.append(script);
+  }, nativeCore);
+  await expect.poll(() => requested.length).toBe(1);
   await page.clock.install();
   await openHome(page);
   await expect(page.getByText('评论区测试内容', { exact: true })).toBeVisible();
   await page.clock.fastForward(15001);
-  await expect(page.getByRole('alert')).toContainText('视频加载失败');
-  expect(await page.evaluate(() => window.__biliPopupPlayerNano.getState().home.lastError.message)).toContain('加载脚本超时');
-  expect(await page.evaluate(() => [...document.scripts].filter(script => script.src.includes('/player/main/core.')).length)).toBe(1);
+  await expect(page.getByRole('alert')).toBeVisible();
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__biliPopupPlayerNano.getState().home.ui.status.textContent)).toBe('准备就绪');
+  expect(requested).toEqual([nativeCore]);
+  release();
+  await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
+  await expect(page.getByRole('alert')).toBeHidden();
+  expect(requested).toEqual([nativeCore]);
+  expect(errors).toEqual([]);
+});
+
+test('retry cannot re-register player components after a core finished without its API', async ({ page }) => {
+  const errors = await loadFixture(page, '/');
+  await mockPlayback(page);
+  await page.evaluate(() => delete window.nano);
+  const requested = [];
+  await page.route('**/player/main/core.*.js', route => {
+    requested.push(route.request().url());
+    return route.fulfill({ contentType: 'text/javascript', body: `customElements.define('bwp-video', class extends HTMLElement {});` });
+  });
+  await page.addScriptTag({ url: nativeCore });
+  await openHome(page);
+  await expect(page.getByRole('alert')).toBeVisible();
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__biliPopupPlayerNano.getState().home.lastError?.message)).toContain('请刷新页面后重试');
+  expect(requested).toEqual([nativeCore]);
   expect(errors).toEqual([]);
 });
 

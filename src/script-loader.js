@@ -1,13 +1,38 @@
 import { APP } from './constants.js';
 
 const pendingLoads = new WeakMap();
+const scriptStates = new WeakMap();
+const trackedDocuments = new WeakSet();
 const SCRIPT_TIMEOUT_MS = 15000;
+
+// Native hover previews can finish loading before the popup needs their core.
+// Capture resource events early so an already failed script can be replaced.
+function trackScriptLoads(targetDocument) {
+  if (trackedDocuments.has(targetDocument)) return;
+  trackedDocuments.add(targetDocument);
+  for (const type of ['load', 'error']) {
+    targetDocument.addEventListener(type, event => {
+      if (event.target?.tagName === 'SCRIPT') scriptStates.set(event.target, type);
+    }, true);
+  }
+}
+
+if (typeof document !== 'undefined') trackScriptLoads(document);
+
+function findReusableScript(targetDocument, matches) {
+  trackScriptLoads(targetDocument);
+  for (const script of [...targetDocument.scripts]) {
+    if (!matches(script)) continue;
+    if (scriptStates.get(script) !== 'error') return script;
+    script.remove();
+  }
+}
 
 export function loadPlayerCore(targetDocument, src, getApi, options = {}) {
   const isReady = () => typeof getApi()?.createPlayer === 'function';
   if (isReady()) return Promise.resolve();
   const matches = (script) => /\/player\/main\/core\.[^/]+\.js$/.test(new URL(script.src, targetDocument.baseURI).pathname);
-  const existing = [...targetDocument.scripts].find(matches);
+  const existing = findReusableScript(targetDocument, matches);
   if (!existing && targetDocument.defaultView.customElements?.get('bwp-video')) {
     return Promise.reject(new Error('页面已注册播放器组件，但播放器接口不可用；请刷新页面后重试'));
   }
@@ -41,7 +66,7 @@ export function loadScriptOnce(targetDocument, src, isReady, { matches, timeoutM
   const absoluteSrc = new URL(src, targetDocument.baseURI).href;
   // The host page may already be loading the same runtime. Re-inserting it
   // can register Bilibili's custom comment elements twice.
-  const existing = [...targetDocument.scripts].find(matches || (script => script.src === absoluteSrc));
+  const existing = findReusableScript(targetDocument, matches || (script => script.src === absoluteSrc));
   const key = existing?.src || absoluteSrc;
   let loads = pendingLoads.get(targetDocument);
   if (!loads) pendingLoads.set(targetDocument, loads = new Map());
@@ -65,7 +90,9 @@ export function loadScriptOnce(targetDocument, src, isReady, { matches, timeoutM
       script.removeEventListener('error', onError);
       loads.delete(key);
       if (error) {
-        if (!existing) script.remove();
+        // Removing an in-flight script does not stop it executing later. Keep
+        // it on timeout, and only replace scripts whose load has finished.
+        if (scriptStates.has(script)) script.remove();
         reject(error);
       } else resolve();
     };
@@ -75,15 +102,20 @@ export function loadScriptOnce(targetDocument, src, isReady, { matches, timeoutM
       return false;
     };
     const onLoad = () => {
+      scriptStates.set(script, 'load');
       if (!check()) finish(new Error(`脚本已加载，但组件接口不可用：${key}`));
     };
-    const onError = () => finish(new Error(`加载脚本失败：${key}`));
+    const onError = () => {
+      scriptStates.set(script, 'error');
+      finish(new Error(`加载脚本失败：${key}`));
+    };
     script.addEventListener('load', onLoad, { once: true });
     script.addEventListener('error', onError, { once: true });
     // A host script may have completed before listeners were attached. Polling
     // also detects its API becoming available without another load event.
     poll = targetWindow.setInterval(check, 50);
     timeout = targetWindow.setTimeout(() => finish(new Error(`加载脚本超时：${key}`)), timeoutMs);
+    if (existing && scriptStates.get(existing) === 'load') targetWindow.queueMicrotask(onLoad);
   });
   loads.set(key, promise);
   if (!existing) targetDocument.head.appendChild(script);
