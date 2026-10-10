@@ -34,7 +34,7 @@ export function loadPlayerCore(targetDocument, src, getApi, options = {}) {
   const matches = (script) => /\/player\/main\/core\.[^/]+\.js$/.test(new URL(script.src, targetDocument.baseURI).pathname);
   const existing = findReusableScript(targetDocument, matches);
   if (!existing && targetDocument.defaultView.customElements?.get('bwp-video')) {
-    return Promise.reject(new Error('页面已注册播放器组件，但播放器接口不可用；请刷新页面后重试'));
+    return Promise.reject(Object.assign(new Error('页面已注册播放器组件，但播放器接口不可用；请刷新页面后重试'), { requiresPageReload: true }));
   }
   return loadScriptOnce(targetDocument, src, isReady, { ...options, matches });
 }

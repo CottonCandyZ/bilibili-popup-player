@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { APP, loadFixture, mockPlayback, cardButton } from './fixture.js';
+import { readFileSync } from 'node:fs';
+import { APP, fixture, loadFixture, mockPlayback, cardButton } from './fixture.js';
 
 const nativeCore = 'https://s1.hdslb.com/bfs/static/player/main/core.b237bb82.js';
 const videoData = { aid: 200, bvid: 'BV1test002', cid: 301, title: '备用视频信息', owner: { mid: 100, name: 'UP' },
@@ -9,6 +10,32 @@ async function openHome(page) {
   await page.locator('#card-b .cover').hover();
   await cardButton(page, 'BV1test002').click();
 }
+
+test('document-start tracks host core failures before DOM ready and mounts the UI after parsing', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const bundle = readFileSync(new URL('../../bilibili-popup-player-nano.user.js', import.meta.url), 'utf8');
+  expect(bundle).toContain('@run-at       document-start');
+  await page.addInitScript({ content: bundle });
+  await page.route('**/*', route => route.request().isNavigationRequest()
+    ? route.fulfill({ contentType: 'text/html', body: fixture.replace('</head>', `<script src="${nativeCore}"></script></head>`) })
+    : route.abort());
+  const requested = [];
+  await page.route('**/player/main/core.*.js', route => {
+    requested.push(route.request().url());
+    if (requested.length === 1) return route.abort('connectionfailed');
+    return route.fulfill({ contentType: 'text/javascript', body: 'window.nano = window.__savedNano;' });
+  });
+  await page.goto('https://www.bilibili.com/');
+  expect(requested).toEqual([nativeCore]);
+  await mockPlayback(page);
+  await page.evaluate(() => { window.__savedNano = window.nano; delete window.nano; });
+  await openHome(page);
+  await expect(page.getByText('播放器测试画面', { exact: false })).toBeVisible();
+  await expect(page.getByText('评论区测试内容', { exact: true })).toBeVisible();
+  expect(requested).toHaveLength(2);
+  expect(errors).toEqual([]);
+});
 
 test('a blocked detail request uses basic info and still mounts player and comments', async ({ page }) => {
   const errors = await loadFixture(page, '/');
@@ -200,6 +227,9 @@ test('retry cannot re-register player components after a core finished without i
   await expect(page.getByRole('alert')).toBeVisible();
   await page.getByRole('button', { name: '重试', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__biliPopupPlayerNano.getState().home.lastError?.message)).toContain('请刷新页面后重试');
+  await expect(page.getByRole('alert')).toContainText('请刷新页面后重试');
+  await expect(page.getByRole('button', { name: '刷新页面', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '重试', exact: true })).toHaveCount(0);
   expect(requested).toEqual([nativeCore]);
   expect(errors).toEqual([]);
 });

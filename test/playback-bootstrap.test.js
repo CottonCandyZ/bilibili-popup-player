@@ -95,6 +95,43 @@ test('complete detail data does not wait for an optional pagelist request', asyn
   });
 });
 
+test('a part selected in the URL fetches missing pages instead of playing the first part', async () => {
+  const requested = [];
+  await withPage(async url => {
+    requested.push(url);
+    return url.includes('/pagelist')
+      ? json({ code: 0, data: videoData.pages })
+      : json({ code: 0, data: { View: { ...videoData, pages: [], videos: 1 } } });
+  }, async () => {
+    const result = await resolvePlaybackBootstrap({ ...meta, href: `${meta.href}?p=2` });
+    assert.equal(result.playerInfo.p, 2);
+    assert.equal(result.playerInfo.cid, 302);
+    assert.equal(requested.length, 2);
+  });
+});
+
+test('a selected part without a cid is repaired with the pagelist', async () => {
+  await withPage(async url => url.includes('/pagelist')
+    ? json({ code: 0, data: videoData.pages })
+    : json({ code: 0, data: { View: { ...videoData, pages: [videoData.pages[0], { page: 2, part: '第二 P' }] } } }), async () => {
+    const result = await resolvePlaybackBootstrap({ ...meta, p: 2 });
+    assert.equal(result.playerInfo.p, 2);
+    assert.equal(result.playerInfo.cid, 302);
+  });
+});
+
+test('an unresolved selected part falls back to complete info instead of using the top-level cid', async () => {
+  await withPage(async url => {
+    if (url.includes('/pagelist')) return json({ code: -352, message: 'blocked' });
+    if (url.includes('/wbi/view/detail')) return json({ code: 0, data: { View: { ...videoData, pages: [], videos: 2 } } });
+    return json({ code: 0, data: videoData });
+  }, async () => {
+    const result = await resolvePlaybackBootstrap({ ...meta, p: 2 });
+    assert.equal(result.playerInfo.cid, 302);
+    assert.equal(result.diagnostics.source, '基本视频信息接口');
+  });
+});
+
 for (const stage of ['request', 'response body']) test(`a stalled ${stage} times out even when a wrapped fetch ignores abort`, async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   await withPage(async url => {

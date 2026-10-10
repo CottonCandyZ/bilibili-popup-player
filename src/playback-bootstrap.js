@@ -38,7 +38,10 @@ export async function resolvePlaybackBootstrap(meta) {
       const data = await resolve();
       const vd = normalizeVideoData(data.videoData || data.initialState?.videoData);
       if (!vd?.aid || vd.bvid !== bvid) throw new Error('返回的视频信息缺失或与 BV 号不一致');
-      if (!vd.pages.length && (Number(vd.videos) > 1 || !vd.cid || Number(meta.p || meta.page || 1) > 1)) {
+      const pageP = resolveCurrentPage(meta, { p: data.initialState?.p || 1, videoData: vd });
+      const selectedPage = vd.pages.find(page => Number(page.page) === pageP);
+      if ((!vd.pages.length && (Number(vd.videos) > 1 || !vd.cid || pageP > 1)) ||
+          (vd.pages.length && !(Number(selectedPage?.cid) > 0))) {
         const pages = await fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`).catch(() => null);
         vd.pages = mergeVideoPages(vd.pages, pages?.data);
       }
@@ -61,8 +64,9 @@ function buildPlaybackBootstrap(meta, vd, data) {
   applyDetailCard(vd, data.card);
 
   const pageP = resolveCurrentPage(meta, { p: data.initialState?.p || 1, videoData: vd });
-  const page = getVideoPage(vd, pageP);
-  if (!(Number(page.cid || vd.cid) > 0)) throw new Error('视频信息缺少可播放的分 P');
+  const page = vd.pages.find(page => Number(page.page) === pageP) || {};
+  const cid = page.cid || (!vd.pages.length && pageP === 1 ? vd.cid : 0);
+  if (!(Number(cid) > 0)) throw new Error('视频信息缺少所选分 P 的播放参数');
   const sequence = resolvePlaybackSequence(vd, pageP, page);
   const relatedItems = Array.isArray(data.related || data.initialState?.related)
     ? data.related || data.initialState.related
@@ -81,7 +85,7 @@ function buildPlaybackBootstrap(meta, vd, data) {
     playerInfo: {
       aid: vd.aid,
       bvid: vd.bvid,
-      cid: page.cid || vd.cid || initialState.cid,
+      cid,
       p: sequence.p,
       t: 0,
       hasPrev: sequence.hasPrev,
@@ -238,9 +242,8 @@ function resolveCurrentPage(meta, initialState) {
   const urlPage = Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 0);
   const statePage = Number(initialState?.p || 0);
   const page = metaPage || urlPage || statePage || 1;
-  const pageCount = initialState?.videoData?.pages?.length || 0;
   if (!Number.isFinite(page) || page < 1) return 1;
-  return pageCount ? Math.min(page, pageCount) : page;
+  return page;
 }
 
 function getVideoPage(videoData, p) {

@@ -127,7 +127,10 @@ import {
 } from './video-meta.js';
 
   if (ENABLED_URL_RE.test(location.href)) {
-    bootstrap();
+    // Track host script resource events from document-start, while keeping UI
+    // initialization behind the native DOM so it can safely mount its roots.
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootstrap, { once: true });
+    else bootstrap();
   }
 
   function bootstrap() {
@@ -1765,18 +1768,23 @@ import {
   function failHome(context, error) {
     console.error('[bili-popup-player] modal init failed', error);
     disposeHomePlayer();
-    state.home.lastError = { name: error?.name, message: error?.message, diagnostics: error?.diagnostics };
+    state.home.lastError = { name: error?.name, message: error?.message, diagnostics: error?.diagnostics, requiresPageReload: error?.requiresPageReload };
     context.ui.status.textContent = `初始化失败：${error?.message || 'unknown'}`;
     const notice = context.ui.playbackError;
     notice.replaceChildren();
     const title = document.createElement('strong');
     title.textContent = '视频加载失败';
     const message = document.createElement('p');
-    message.textContent = '请重试，或在原播放页打开此视频。';
+    message.textContent = error?.requiresPageReload
+      ? '播放器组件未完整加载，请刷新页面后重试，或在原播放页打开此视频。'
+      : '请重试，或在原播放页打开此视频。';
     const retry = document.createElement('button');
     retry.type = 'button';
-    retry.textContent = '重试';
-    retry.addEventListener('click', () => openWithRenderer(homeRenderer, context.meta));
+    retry.textContent = error?.requiresPageReload ? '刷新页面' : '重试';
+    retry.addEventListener('click', () => {
+      if (error?.requiresPageReload) pageWindow.location.reload();
+      else openWithRenderer(homeRenderer, context.meta);
+    });
     const original = document.createElement('a');
     original.href = context.meta?.href || context.ui.openOriginal.href;
     original.target = '_blank';
