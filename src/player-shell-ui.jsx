@@ -132,6 +132,7 @@ function HomePlayerPage(props) {
             <div id={`${APP}-player-slot`} ref={props.refs('playerSlot')}>
             <div id={`${APP}-player-wrap`} ref={props.refs('playerWrap')} data-scroll-floating={scrollPlayer.floating} data-controls-visible={controls.visible}>
               <div id={`${APP}-player`} ref={props.refs('playerRoot')} />
+              <div className={`${APP}__playback-error`} ref={props.refs('playbackError')} role="alert" hidden />
           <header id={`${APP}-header`}>
             <div className={`${APP}__header-history`}>
               <ToolButton icon="back" label="上一次播放" buttonRef={props.refs('historyPrevious')} onClick={props.onHistoryPrevious} />

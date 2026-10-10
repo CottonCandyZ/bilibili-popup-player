@@ -86,7 +86,7 @@ import { bindNativePlayerActions } from './native-player-actions.js';
 import { bindNativeProgress } from './native-progress.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
-import { loadScriptOnce, waitForHostScript } from './script-loader.js';
+import { loadPlayerCore, loadScriptOnce, waitForHostScript } from './script-loader.js';
 import { CARD_ACTION_SELECTOR, findCardAnchor, getVisibleCardRect, isCardExposedAt, isControlAreaExposed, pointInRect } from './card-targets.js';
 import { getOverlayCss } from './ui-theme.js';
 import { createSettingsUi } from './settings-ui.jsx';
@@ -252,6 +252,7 @@ import {
       button: null,
     },
     home: {
+      lastError: null,
       minimized: false,
       fullscreen: getStorageItem(STORAGE_HOME_FULLSCREEN) === '1',
       releasePageScroll: null,
@@ -1617,7 +1618,7 @@ import {
   };
 
   function getReusableHome(meta) {
-    if (!state.home.player || !state.home.bootstrap || !isSamePlayback(meta, state.home.bootstrap)) return null;
+    if (state.home.lastError || !state.home.player || !state.home.bootstrap || !isSamePlayback(meta, state.home.bootstrap)) return null;
     return { bootstrap: state.home.bootstrap };
   }
 
@@ -1655,6 +1656,7 @@ import {
     if (isLiveMeta(meta)) return prepareLiveHome(meta);
 
     const ui = ensureHomeShell();
+    clearHomePlaybackError(ui);
     setLiveListMode('home', false);
     const ogv = isOgvMeta(meta);
     setOgvListMode('home', ogv);
@@ -1683,7 +1685,7 @@ import {
     }
     renderRecommendations('home', null, ogv ? '推荐加载中...' : '相关推荐加载中...');
     ensureBiliThemeStylesheets(document);
-    return { ui, ogv, preservePageParts, preserveRightList };
+    return { ui, meta, ogv, preservePageParts, preserveRightList };
   }
 
   async function playHome(context, bootstrap, token) {
@@ -1714,7 +1716,10 @@ import {
     renderRecommendations('home', bootstrap);
     syncVideoIntro('home');
     ensureStylesheetsInWindow(window, bootstrap.stylesheets);
-    await loadScriptOnce(document, bootstrap.coreScript, () => pageWindow.nano);
+    // Comments only need the video's aid; a blocked player bundle must not
+    // prevent them from loading or hide the successfully fetched video info.
+    mountHomeComments(bootstrap, token);
+    await loadPlayerCore(document, bootstrap.coreScript, () => pageWindow.nano);
     if (token !== state.switchToken || !pageWindow.nano || homeRenderer.isClosed()) return;
 
     if (canReloadHome(bootstrap, previousBootstrap)) await reloadHomePlayer(bootstrap, token);
@@ -1722,11 +1727,11 @@ import {
       disposeHomePlayer();
       createHomePlayer(bootstrap, token);
     }
-    mountHomeComments(bootstrap, token);
   }
 
   function prepareLiveHome(meta) {
     const ui = ensureHomeShell();
+    clearHomePlaybackError(ui);
     showHomeShell(meta.title || `Bilibili 直播 ${meta.roomId}`);
     setOriginalLink(ui, meta.href);
     ui.status.textContent = state.home.player ? '直播参数：解析中，准备换源' : '直播参数：解析中';
@@ -1736,7 +1741,7 @@ import {
     state.home.recommendationCards = [];
     capturePageLiveList('home', getPlayableKey(meta));
     renderLiveList('home', '当前页面没有扫到直播卡片');
-    return { ui, live: true };
+    return { ui, meta, live: true };
   }
 
   async function bootLiveHome(context, bootstrap, token) {
@@ -1759,7 +1764,32 @@ import {
 
   function failHome(context, error) {
     console.error('[bili-popup-player] modal init failed', error);
+    disposeHomePlayer();
+    state.home.lastError = { name: error?.name, message: error?.message, diagnostics: error?.diagnostics };
     context.ui.status.textContent = `初始化失败：${error?.message || 'unknown'}`;
+    const notice = context.ui.playbackError;
+    notice.replaceChildren();
+    const title = document.createElement('strong');
+    title.textContent = '视频加载失败';
+    const message = document.createElement('p');
+    message.textContent = '请重试，或在原播放页打开此视频。';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = '重试';
+    retry.addEventListener('click', () => openWithRenderer(homeRenderer, context.meta));
+    const original = document.createElement('a');
+    original.href = context.meta?.href || context.ui.openOriginal.href;
+    original.target = '_blank';
+    original.rel = 'noopener noreferrer';
+    original.textContent = '打开原视频';
+    notice.append(title, message, retry, original);
+    notice.hidden = false;
+  }
+
+  function clearHomePlaybackError(ui) {
+    state.home.lastError = null;
+    ui.playbackError.hidden = true;
+    ui.playbackError.replaceChildren();
   }
 
   function ensureHomeShell() {
@@ -1798,6 +1828,7 @@ import {
 
   function showHomeShell(title, { preserveScroll = false } = {}) {
     const ui = state.home.ui;
+    clearHomePlaybackError(ui);
     ui.setMinimized(state.home.minimized);
     state.home.overlay.classList.toggle(`${APP}--minimized`, state.home.minimized);
     state.home.overlay.classList.toggle(`${APP}--fullscreen`, state.home.fullscreen && !state.home.minimized);
@@ -3085,14 +3116,14 @@ import {
     syncCommentsTabs('pip');
     attachPipPlaylistAutoRefresh(pipWindow);
     ensureStylesheetsInWindow(pipWindow, bootstrap.stylesheets);
-    await loadScriptOnce(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
+    mountPipComments(pipWindow, bootstrap, token);
+    await loadPlayerCore(pipWindow.document, bootstrap.coreScript, () => pipWindow.nano);
     if (token !== state.switchToken || pipWindow.closed) return;
     if (!pipWindow.nano) throw new Error('nano not available after core load');
     attachPipCommentResizer(pipWindow);
     attachPipWindowResizeSync(pipWindow);
     syncCommentWidth('pip');
     connectPipPlayer(pipWindow, bootstrap, token);
-    mountPipComments(pipWindow, bootstrap, token);
   }
 
   function mountLiveHomePlayerShell() {
