@@ -10,9 +10,10 @@ for (const kind of ['home', 'pip']) for (const layout of ['right', 'bottom']) {
       title: index % 2 ? '有两行标题的视频：一起在日常生活里发现有趣的事物' : '留一点时间给自己',
       desc: '在日常里，发现新的视角', pic: '', owner: { mid: 100, name: '日常观察室' }, stat: { view: 10240, danmaku: 120 },
     }));
+    const currentVideo = { ...cards[0], bvid: 'BV1test001', aid: 199, cid: 299 };
     await context.route('https://api.bilibili.com/**', route => route.fulfill({ json: { code: 0, data: {} } }));
     await page.route('https://api.bilibili.com/**', route => {
-      const url = new URL(route.request().url()), card = cards.find(card => card.bvid === url.searchParams.get('bvid')) || cards[0];
+      const url = new URL(route.request().url()), card = cards.find(card => card.bvid === url.searchParams.get('bvid')) || currentVideo;
       const pages = [{ cid: card.cid, page: 1, part: card.title, duration: 180 }];
       return route.fulfill({ json: { code: 0, data: url.pathname.includes('/pagelist') ? pages : url.pathname.includes('/view/detail') ? { View: { ...card, pages }, Related: [] } : {} } });
     });
@@ -55,6 +56,10 @@ for (const kind of ['home', 'pip']) for (const layout of ['right', 'bottom']) {
     const list = surface.locator(kind === 'home' ? `#${A}-playlist-list` : '#playlist-list');
     const items = list.locator('.' + A + '__playlist-card');
     await expect(items).toHaveCount(cards.length);
+    if (kind === 'pip') {
+      await items.first().click();
+      await expect.poll(() => page.evaluate(() => window.__biliPopupPlayerNano.getState().pip.bootstrap.playerInfo.bvid)).toBe(cards[0].bvid);
+    }
     const geometry = () => items.evaluateAll(items => items.map(el => {
       const rect = el.getBoundingClientRect(), list = el.parentElement;
       return { y: rect.y - list.getBoundingClientRect().y + list.scrollTop, height: rect.height };

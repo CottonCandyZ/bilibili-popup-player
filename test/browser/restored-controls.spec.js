@@ -48,7 +48,9 @@ test('bottom comments scroll from a full first-screen video without changing vol
     window.__wheelVolumeChanges = 0;
     root.firstChild.addEventListener('wheel', event => { window.__wheelVolumeChanges++; event.preventDefault(); }, { passive: false });
   }, APP);
-  await page.getByRole('button', { name: '切换布局', exact: true }).click();
+  // The native action binding asynchronously relabels this fixture button to
+  // "宽屏". Select its stable identity so the binding timing cannot hide it.
+  await page.locator(`#${APP}-player .bpx-player-ctrl-wide`).click();
   await expect(page.locator(`#${APP}-overlay`)).not.toHaveAttribute('data-layout-animating', 'true');
   const content = page.locator(`#${APP}-content`), frame = page.locator(`#${APP}-player-wrap`);
   await expect(content).toHaveCSS('overflow-y', 'auto');
