@@ -144,7 +144,9 @@ export function getModernPlayerCss() {
     #${A}-overlay[data-open="true"] > .${A}__backdrop { background: #11111166; backdrop-filter: blur(8px); }
     #${A}-overlay[data-open="true"][data-background-blur="false"]:not(.${A}--minimized) > .${A}__backdrop { background: #11111199; }
     #${A}-overlay.${A}--hidden:not([hidden]) { display: grid; pointer-events: none; }
-    #${A}-overlay[hidden] { display: none; }
+    /* Closing keeps the mini layout mounted for its fade. The final hidden
+       state must win over that layout's later display declaration. */
+    #${A}-overlay[hidden] { display: none !important; }
     @starting-style {
       #${A}-overlay[data-open="true"] > .${A}__backdrop { background: #11111100; backdrop-filter: blur(0px); }
     }
