@@ -5,7 +5,11 @@ import { UGC_CORE_SCRIPT } from '../src/constants.js';
 test('inspect the native horizontal shortcut implementation for issue #10', async () => {
   const response = await fetch(UGC_CORE_SCRIPT, { signal: AbortSignal.timeout(20000) });
   if (!response.ok) throw new Error('Native core HTTP ' + response.status);
-  const source = await response.text();
+  let source = await response.text();
+  console.log('Native content type:', response.headers.get('content-type'));
+  console.log('Native prefix:', source.slice(0, 500));
+  source = source.replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  console.log('Decoded prefix:', source.slice(0, 500));
   console.log('Native core length:', source.length);
   for (const pattern of ['ArrowRight', 'ArrowLeft', 'case 39:', 'case 37:', 'seekStep', 'fastForward', 'keydown', 'keyup']) {
     let offset = 0;

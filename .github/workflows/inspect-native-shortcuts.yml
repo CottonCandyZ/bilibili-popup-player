@@ -1,0 +1,14 @@
+name: Inspect native shortcuts
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.head_ref == 'fix/popup-arrow-seek-10'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: node --test test/issue-10-diagnostic.test.js
