@@ -12,3 +12,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - run: node --test test/issue-10-diagnostic.test.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-shortcut-runtime
+          path: .native-runtime/
+          include-hidden-files: true
+          retention-days: 1

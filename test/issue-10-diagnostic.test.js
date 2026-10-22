@@ -1,23 +1,30 @@
-// Temporary diagnosis for issue #10; removed once the runtime is understood.
+// Temporary native-runtime diagnosis for issue #10.
 import test from 'node:test';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { UGC_CORE_SCRIPT } from '../src/constants.js';
 
-test('inspect the native horizontal shortcut implementation for issue #10', async () => {
-  const response = await fetch(UGC_CORE_SCRIPT, { signal: AbortSignal.timeout(20000) });
-  if (!response.ok) throw new Error('Native core HTTP ' + response.status);
-  let source = await response.text();
-  console.log('Native content type:', response.headers.get('content-type'));
-  console.log('Native prefix:', source.slice(0, 500));
-  source = source.replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-  console.log('Decoded prefix:', source.slice(0, 500));
-  console.log('Native core length:', source.length);
-  for (const pattern of ['toggleFeature', 'shortcut', 'Shortcut', 'seek', 'createPlayer', '__webpack_require__.u', '.js', 'import(', 'core.']) {
-    let offset = 0;
-    for (let count = 0; count < 3; count++) {
-      const index = source.indexOf(pattern, offset);
-      if (index < 0) break;
-      console.log(JSON.stringify({ pattern, index, excerpt: source.slice(Math.max(0, index - 600), index + 1600) }));
-      offset = index + pattern.length;
+test('inspect native controls and save an offline reproduction runtime', async () => {
+  const targets = [
+    UGC_CORE_SCRIPT,
+    new URL('widgets/npd.pc-helper.5cb7b2df.js', UGC_CORE_SCRIPT).href,
+    new URL('widgets/npd.common-helper.44437a31.js', UGC_CORE_SCRIPT).href,
+    new URL('widgets/npd.root-extra.3c4b2142.js', UGC_CORE_SCRIPT).href,
+  ];
+  await mkdir('.native-runtime', { recursive: true });
+  for (const url of targets) {
+    const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    if (!response.ok) throw new Error('Native core HTTP ' + response.status + ': ' + url);
+    let source = await response.text();
+    await writeFile('.native-runtime/' + new URL(url).pathname.split('/').pop(), source);
+    console.log('Native asset:', url, 'length:', source.length);
+    for (const pattern of ['ArrowRight', 'ArrowLeft', 'keyCode', 'keydown', 'keyup', 'disabled.shortcut', 'disabled.seek', 'shortCut']) {
+      let offset = 0;
+      for (let count = 0; count < 3; count++) {
+        const index = source.indexOf(pattern, offset);
+        if (index < 0) break;
+        console.log(JSON.stringify({ url, pattern, index, excerpt: source.slice(Math.max(0, index - 900), index + 2200) }));
+        offset = index + pattern.length;
+      }
     }
   }
 });
