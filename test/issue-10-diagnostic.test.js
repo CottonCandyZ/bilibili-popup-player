@@ -11,12 +11,12 @@ test('inspect the native horizontal shortcut implementation for issue #10', asyn
   source = source.replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
   console.log('Decoded prefix:', source.slice(0, 500));
   console.log('Native core length:', source.length);
-  for (const pattern of ['ArrowRight', 'ArrowLeft', 'case 39:', 'case 37:', 'seekStep', 'fastForward', 'keydown', 'keyup']) {
+  for (const pattern of ['toggleFeature', 'shortcut', 'Shortcut', 'seek', 'createPlayer', '__webpack_require__.u', '.js', 'import(', 'core.')) {
     let offset = 0;
-    for (let count = 0; count < 5; count++) {
+    for (let count = 0; count < 3; count++) {
       const index = source.indexOf(pattern, offset);
       if (index < 0) break;
-      console.log(JSON.stringify({ pattern, index, excerpt: source.slice(Math.max(0, index - 1200), index + 2200) }));
+      console.log(JSON.stringify({ pattern, index, excerpt: source.slice(Math.max(0, index - 600), index + 1600) }));
       offset = index + pattern.length;
     }
   }
