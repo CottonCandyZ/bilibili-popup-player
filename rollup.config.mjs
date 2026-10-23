@@ -24,7 +24,7 @@ const userscriptBanner = `// ==UserScript==
 // @match        https://search.bilibili.com/*
 // @match        https://live.bilibili.com/*
 // @match        https://t.bilibili.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_deleteValue
 // @grant        GM_getValue
 // @grant        GM_setValue

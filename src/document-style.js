@@ -531,6 +531,34 @@ export function installDocumentStyle(targetDocument = document) {
         display: none;
       }
 
+      .${APP}__playback-error {
+        position: absolute;
+        inset: 0;
+        z-index: 30;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 24px;
+        color: #fff;
+        background: rgba(0, 0, 0, .85);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      .${APP}__playback-error[hidden] { display: none; }
+      .${APP}__playback-error p { margin: 0; }
+      .${APP}__playback-error :is(button, a) {
+        padding: 8px 16px;
+        border: 1px solid #ffffff80;
+        border-radius: 6px;
+        color: inherit;
+        background: transparent;
+        font: inherit;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .${APP}__playback-error :is(button, a):hover { background: #ffffff20; }
+
       .${APP}__header-button {
         width: 32px;
         height: 32px;

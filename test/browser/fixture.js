@@ -33,8 +33,9 @@ export async function mockPlayback(page) {
   const pages = [{ cid: 301, page: 1, part: '从日常出发', duration: 180 }, { cid: 302, page: 2, part: '看见新的风景', duration: 240 }];
   await page.route('https://api.bilibili.com/**', route => {
     const url = route.request().url();
+    const bvid = new URL(url).searchParams.get('bvid') || 'BV1test002';
     const data = url.includes('/pagelist') ? pages : url.includes('/view/detail') ? {
-      View: { aid: 200, bvid: 'BV1test002', cid: 301, title: '留一点时间给自己', desc: '在日常里，发现新的视角。', pic: '', owner: { mid: 100, name: '日常观察室' }, stat: { view: 42680, like: 1280 }, pages },
+      View: { aid: 200, bvid, cid: 301, title: '留一点时间给自己', desc: '在日常里，发现新的视角。', pic: '', owner: { mid: 100, name: '日常观察室' }, stat: { view: 42680, like: 1280 }, pages },
       Related: [{ aid: 201, bvid: 'BV1test003', cid: 303, title: '下一站，慢慢走', duration: 180, pic: '', owner: { mid: 100, name: '日常观察室' }, stat: { view: 10240 } }],
     } : {};
     return route.fulfill({ json: { code: 0, data } });
