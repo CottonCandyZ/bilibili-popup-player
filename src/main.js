@@ -95,7 +95,7 @@ import { animatePlayerLayout, capturePlayerLayout } from './layout-motion.js';
 import { installVideoGestures } from './video-gestures.js';
 import { lockPageScroll } from './page-scroll.js';
 import { composedClosest, composedContains, createPageDomTracker, getDeepActiveElement, isRenderedCard } from './page-dom.js';
-import { isMediaShortcut, isShortcutInput } from './media-shortcuts.js';
+import { bindNativeSeekShortcuts, isMediaShortcut, isShortcutInput } from './media-shortcuts.js';
 import { getStorageItem, removeStorageItem, setStorageItem } from './storage.js';
 import {
   ensureBiliThemeStylesheets,
@@ -2656,6 +2656,12 @@ import {
     unbindPlayerActions(kind);
     const slot = state[kind], { player, bootstrap } = slot;
     const root = kind === 'home' ? slot.ui?.playerRoot : slot.win?.document.getElementById('bilibili-player');
+    slot.disposeNativeSeekShortcuts = bindNativeSeekShortcuts({
+      root,
+      isActive: event => slot.player === player && slot.bootstrap === bootstrap && !isLiveBootstrap(bootstrap) &&
+        (kind === 'home' ? isHomeShellOpen() && (!slot.minimized || slot.overlay.contains(event.target)) : slot.win && !slot.win.closed),
+      onKeyDown: kind === 'home' ? cancelHomeDelayedPlay : undefined,
+    });
     slot.disposeNativeProgress = bindNativeProgress(root);
     slot.disposeNativeActions = bindNativePlayerActions({
       player, runtime: getPlayerApiForKind(kind),
@@ -2667,6 +2673,8 @@ import {
   }
 
   function unbindPlayerActions(kind) {
+    state[kind].disposeNativeSeekShortcuts?.();
+    state[kind].disposeNativeSeekShortcuts = null;
     state[kind].disposeNativeProgress?.();
     state[kind].disposeNativeProgress = null;
     state[kind].disposeNativeActions?.();

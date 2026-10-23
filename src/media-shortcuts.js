@@ -16,9 +16,54 @@ export function isMediaShortcut(event) {
   return ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(event.key);
 }
 
+// Nano listens on window. Host pages/extensions can stop horizontal keys on
+// document before they get there. Deliver those sequences directly to the same
+// window, leaving Nano in charge of seeking, right-key holds and speed resets.
+export function bindNativeSeekShortcuts({ root, isActive, onKeyDown }) {
+  const win = root?.ownerDocument.defaultView;
+  if (!win) return () => {};
+  const forwarded = new WeakSet(), pressed = new Map();
+  const send = (event, type = event.type) => {
+    const keyCode = event.key === 'ArrowLeft' ? 37 : 39;
+    const next = new win.KeyboardEvent(type, {
+      key: event.key, code: event.code || event.key, location: event.location,
+      repeat: type === 'keydown' && event.repeat, cancelable: true,
+      keyCode, which: keyCode,
+    });
+    forwarded.add(next);
+    win.dispatchEvent(next);
+  };
+  const handler = event => {
+    if (forwarded.has(event) || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    const release = event.type === 'keyup' && pressed.has(event.key);
+    if (!release && (event.type !== 'keydown' || event.defaultPrevented ||
+      event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+      isShortcutInput(event) || hasNativeLogin(root.ownerDocument) ||
+      hasCommentImagePreview(root.ownerDocument) || !isActive(event))) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (release) pressed.delete(event.key);
+    else {
+      pressed.set(event.key, event);
+      onKeyDown?.();
+    }
+    send(event);
+  };
+  const blur = () => pressed.clear(); // Nano already resets its holds on blur.
+  win.addEventListener('keydown', handler, true);
+  win.addEventListener('keyup', handler, true);
+  win.addEventListener('blur', blur);
+  return () => {
+    win.removeEventListener('keydown', handler, true);
+    win.removeEventListener('keyup', handler, true);
+    win.removeEventListener('blur', blur);
+    for (const event of pressed.values()) send(event, 'keyup');
+    pressed.clear();
+  };
+}
+
 // Base UI stops arrow keys at Dialog.Popup; Nano listens on window. Let the
-// original event reach Nano so it owns short presses, repeats, held speed and
-// release/blur restoration. Do not duplicate the player's keyboard behavior.
+// remaining media keys reach Nano without duplicating its keyboard behavior.
 export function onPlayerShellKeyDown(event) {
   if (hasNativeLogin(event.currentTarget.ownerDocument)) {
     event.stopPropagation();
