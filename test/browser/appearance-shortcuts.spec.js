@@ -267,7 +267,7 @@ test('an explicitly saved monochrome palette survives the new pink default', asy
   await expect(page.getByRole('switch', { name: '小窗播放', exact: true })).toHaveCSS('background-color', 'rgb(32, 33, 36)');
 });
 
-for (const kind of ['home', 'pip']) test(`${kind} sends complete native key sequences without replacing them or stealing widget input`, async ({ page, context }) => {
+for (const kind of ['home', 'pip']) test(`${kind} sends complete native key sequences without duplicating them or stealing widget input`, async ({ page, context }) => {
   const { surface, errors } = await openPlayer(page, context, kind, () => page.evaluate(() => {
     const create = window.nano.createPlayer;
     const media = window.__mediaKeys = { events: [], apiCalls: [] };
@@ -294,7 +294,7 @@ for (const kind of ['home', 'pip']) test(`${kind} sends complete native key sequ
   await root.evaluate(el => { el.tabIndex = -1; el.focus(); });
   for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Space']) await surface.keyboard.press(key);
   expect(await page.evaluate(() => window.__mediaKeys.events)).toEqual(
-    ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', ' '].flatMap(key => ['keydown', 'keyup'].map(type => ({ type, key, repeat: false, trusted: true }))),
+    ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', ' '].flatMap(key => ['keydown', 'keyup'].map(type => ({ type, key, repeat: false, trusted: !['ArrowLeft', 'ArrowRight'].includes(key) }))),
   );
   const downCount = () => page.evaluate(() => window.__mediaKeys.events.filter(event => event.type === 'keydown').length);
   await surface.getByRole('tab', { name: '评论', exact: true }).focus();
@@ -321,10 +321,10 @@ for (const kind of ['home', 'pip']) test(`${kind} sends complete native key sequ
   await input.focus();
   await surface.keyboard.up('ArrowRight');
   expect(await page.evaluate(() => window.__mediaKeys.events)).toEqual([
-    { type: 'keydown', key: 'ArrowRight', repeat: false, trusted: true },
-    { type: 'keydown', key: 'ArrowRight', repeat: true, trusted: true },
-    { type: 'keydown', key: 'ArrowRight', repeat: true, trusted: true },
-    { type: 'keyup', key: 'ArrowRight', repeat: false, trusted: true },
+    { type: 'keydown', key: 'ArrowRight', repeat: false, trusted: false },
+    { type: 'keydown', key: 'ArrowRight', repeat: true, trusted: false },
+    { type: 'keydown', key: 'ArrowRight', repeat: true, trusted: false },
+    { type: 'keyup', key: 'ArrowRight', repeat: false, trusted: false },
   ]);
   await surface.locator(kind === 'home' ? `#${A}-player-wrap` : '#stage').hover();
   await surface.getByRole('button', { name: '小窗播放设置', exact: true }).click();
@@ -333,6 +333,95 @@ for (const kind of ['home', 'pip']) test(`${kind} sends complete native key sequ
   await expect(surface.getByRole('switch', { name: '联播倒计时', exact: true })).not.toBeChecked();
   expect(await downCount()).toBe(3);
   expect(await page.evaluate(() => window.__mediaKeys.apiCalls)).toEqual([]);
+  expect(errors).toEqual([]);
+  if (kind === 'pip') await surface.close();
+});
+
+for (const kind of ['home', 'pip']) test(`${kind} routes seek keys past host document handlers and releases held keys after focus moves`, async ({ page, context }) => {
+  const { surface, errors } = await openPlayer(page, context, kind, () => page.evaluate(() => {
+    const create = window.nano.createPlayer;
+    const media = window.__seekKeys = { time: 30, rate: 1, events: [], intercepted: 0 };
+    window.nano.createPlayer = setting => {
+      const player = create(setting), connect = player.connect;
+      return Object.assign(player, {
+        connect() {
+          connect();
+          const win = setting.element.ownerDocument.defaultView;
+          // A page/extension listener registered before the shell can consume
+          // horizontal keys before Nano's window listeners receive them.
+          for (const type of ['keydown', 'keyup']) win.document.addEventListener(type, event => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            media.intercepted++;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }, true);
+          let right = null;
+          win.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            media.events.push({ type: event.type, key: event.key, repeat: event.repeat, code: event.keyCode });
+            event.preventDefault();
+            if (event.key === 'ArrowLeft') media.time = Math.max(0, media.time - 5);
+            else if (!right) {
+              right = { held: false, timer: win.setTimeout(() => { right.held = true; media.rate = 3; }, 300) };
+            }
+          });
+          const release = event => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            media.events.push({ type: event.type, key: event.key, repeat: event.repeat, code: event.keyCode });
+            if (event.key === 'ArrowRight' && right) {
+              win.clearTimeout(right.timer);
+              if (!right.held) media.time += 5;
+              media.rate = 1;
+              right = null;
+            }
+          };
+          win.addEventListener('keyup', release);
+        },
+      });
+    };
+  }));
+  const root = surface.locator(kind === 'home' ? `#${A}-player` : '#bilibili-player');
+  await root.evaluate(el => { el.tabIndex = -1; el.focus(); });
+  const state = () => page.evaluate(() => window.__seekKeys);
+  await surface.keyboard.press('ArrowRight');
+  expect((await state()).time).toBe(35);
+  await surface.keyboard.press('ArrowLeft');
+  expect((await state()).time).toBe(30);
+  expect((await state()).intercepted).toBe(0);
+  expect((await state()).events).toEqual([
+    { type: 'keydown', key: 'ArrowRight', repeat: false, code: 39 },
+    { type: 'keyup', key: 'ArrowRight', repeat: false, code: 39 },
+    { type: 'keydown', key: 'ArrowLeft', repeat: false, code: 37 },
+    { type: 'keyup', key: 'ArrowLeft', repeat: false, code: 37 },
+  ]);
+  await surface.keyboard.down('ArrowRight');
+  await expect.poll(async () => (await state()).rate).toBe(3);
+  await surface.keyboard.down('ArrowRight');
+  await root.evaluate(el => { el.insertAdjacentHTML('beforeend', '<input aria-label="seek release editor">'); });
+  const input = surface.getByRole('textbox', { name: 'seek release editor', exact: true });
+  await input.focus();
+  await surface.keyboard.up('ArrowRight');
+  expect((await state()).rate).toBe(1);
+  expect((await state()).time).toBe(30);
+  await input.fill('test');
+  await input.press('ArrowLeft');
+  expect((await state()).time).toBe(30);
+  expect((await state()).events).toHaveLength(7);
+  await root.focus();
+  await surface.keyboard.down('ArrowRight');
+  await expect.poll(async () => (await state()).rate).toBe(3);
+  if (kind === 'home') await page.evaluate(() => window.__biliPopupPlayerNano.close());
+  else await surface.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+  await expect.poll(async () => (await state()).rate).toBe(1);
+  expect((await state()).time).toBe(30);
+  if (kind === 'home') {
+    await page.keyboard.up('ArrowRight');
+    await page.locator('#card-b .cover').hover();
+    await cardButton(page, 'BV1test002').click();
+    await root.focus();
+    await page.keyboard.press('ArrowRight');
+    expect((await state()).time).toBe(35);
+  }
   expect(errors).toEqual([]);
   if (kind === 'pip') await surface.close();
 });

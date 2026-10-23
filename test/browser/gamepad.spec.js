@@ -14,7 +14,10 @@ async function prepare(page, { enabled = true } = {}) {
       return [mock.exposed ? pad : null, null, null, null];
     } });
     for (const type of ['keydown', 'keyup']) window.addEventListener(type, event => {
-      if (event.target.matches?.('.bpx-player-container')) mock.keys.push({ type, key: event.key, repeat: event.repeat });
+      if (event.target.matches?.('.bpx-player-container') ||
+        (event.target === window && ['ArrowLeft', 'ArrowRight'].includes(event.key))) {
+        mock.keys.push({ type, key: event.key, repeat: event.repeat });
+      }
     });
   });
   async function connect(connected = true, event = true) {
