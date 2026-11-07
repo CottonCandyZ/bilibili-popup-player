@@ -65,7 +65,7 @@ const getPlayUrlResult = {
   },
 };
 
-test('preserves GET playurl preview, clips and business information', () => {
+test('preserves legacy playurl preview, clips and business information', () => {
   const response = normalizePlayViewResponse({ code: 0, message: 'success', result: getPlayUrlResult });
   assert.equal(response.data.code, 0);
   assert.equal(response.data.result.video_info.is_preview, true);
@@ -73,7 +73,7 @@ test('preserves GET playurl preview, clips and business information', () => {
   assert.deepEqual(response.data.result.play_view_business_info, getPlayUrlResult.play_view_business_info);
 });
 
-test('adapts GET playurl metadata and watch progress to Nano', () => {
+test('adapts legacy playurl metadata and watch progress to Nano', () => {
   const payload = { code: 0, message: 'success', result: getPlayUrlResult };
   const response = createNanoPlayUrlResponse(getPlayUrlResult, payload);
   assert.equal(response.raw, payload);
@@ -94,7 +94,7 @@ test('adapts GET playurl metadata and watch progress to Nano', () => {
   });
 });
 
-test('adapts GET playurl MP4 previews and fragment videos', () => {
+test('adapts legacy playurl MP4 previews and fragment videos', () => {
   const videoInfo = {
     format: 'mp4', quality: 16, timelength: 30000, is_preview: 1,
     durl: [{ length: 30000, url: 'https://example.com/preview.mp4', backup_url: [] }],
@@ -115,7 +115,7 @@ test('adapts GET playurl MP4 previews and fragment videos', () => {
   assert.equal(body.parsedFragmentVideoInfoList[0].mediaDataSource.type, 'mp4');
 });
 
-test('uses credentialed GET requests for bootstrap misses and Nano quality/episode changes', async (t) => {
+test('uses credentialed playview GET requests for bootstrap misses and Nano quality/episode changes', async (t) => {
   const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'location');
   globalThis.location = { href: 'https://www.bilibili.com/' };
   t.after(() => {
@@ -124,7 +124,8 @@ test('uses credentialed GET requests for bootstrap misses and Nano quality/episo
   });
   const episode = { id: 113281, aid: 12098403, bvid: 'BV1Yx411q74q', cid: 93505235, title: '2' };
   const calls = [];
-  let reply = { code: 0, message: 'success', result: getPlayUrlResult };
+  const playViewResult = { ...rawPlayView, play_video_type: 'preview', watch_progress: { current_progress: 120 } };
+  let reply = { code: 0, message: '0', data: playViewResult };
   let status = 200;
   t.mock.method(globalThis, 'fetch', async (href, options) => {
     const url = new URL(href);
@@ -134,7 +135,7 @@ test('uses credentialed GET requests for bootstrap misses and Nano quality/episo
     }
     if (url.pathname === '/pgc/view/web/ep/list') return Response.json({ code: 0, result: { episodes: [episode] } });
     if (url.pathname === '/pgc/season/web/related/recommend') return Response.json({ code: 0, data: { season: [] } });
-    assert.equal(url.pathname, '/pgc/player/web/v2/playurl');
+    assert.equal(url.pathname, '/ogv/player/playview');
     calls.push({ url, options });
     return typeof reply === 'string' ? new Response(reply, { status }) : Response.json(reply, { status });
   });
@@ -142,9 +143,10 @@ test('uses credentialed GET requests for bootstrap misses and Nano quality/episo
   assert.equal(bootstrap.playerInfo.epId, 113281);
   assert.equal(bootstrap.playInfo.result.video_info.is_preview, true);
   assert.equal(calls[0].url.searchParams.get('ep_id'), '113281');
-  assert.equal(calls[0].url.searchParams.get('avid'), '12098403');
+  assert.equal(calls[0].url.searchParams.get('aid'), '12098403');
   assert.equal(calls[0].url.searchParams.get('qn'), '127');
-  assert.equal(calls[0].url.searchParams.get('fourk'), '1');
+  assert.equal(calls[0].url.searchParams.get('biz_type'), 'ogv');
+  assert.equal(calls[0].url.searchParams.get('scene'), 'normal');
 
   const response = await bootstrap.requestPlayUrlInfo({
     avid: 12098404, cid: 93505236, ep_id: 113282, qn: 64, fnval: 16, fnver: 0, drm_tech_type: 2,
@@ -152,7 +154,7 @@ test('uses credentialed GET requests for bootstrap misses and Nano quality/episo
   assert.equal(response.body.quality, 80);
   assert.equal(response.body.lastPlayTime, 120);
   const params = calls[1].url.searchParams;
-  for (const [key, value] of Object.entries({ avid: '12098404', cid: '93505236', ep_id: '113282', season_id: '6311', qn: '64', fnval: '16', fnver: '0', drm_tech_type: '2' })) {
+  for (const [key, value] of Object.entries({ aid: '12098404', cid: '93505236', ep_id: '113282', season_id: '6311', qn: '64', fnval: '16', fnver: '0', drm_tech_type: '2' })) {
     assert.equal(params.get(key), value);
   }
   for (const { url, options } of calls) {
@@ -161,6 +163,8 @@ test('uses credentialed GET requests for bootstrap misses and Nano quality/episo
     assert.equal(options.body, undefined);
     assert.equal(options.headers['content-type'], undefined);
     assert.equal(url.searchParams.has('csrf'), false);
+    assert.equal(url.searchParams.has('avid'), false);
+    assert.equal(url.searchParams.has('buvid'), false);
     assert.equal(url.searchParams.has('video_index'), false);
     assert.equal([...url.searchParams.values()].some(value => value === 'undefined' || value === '[object Object]'), false);
   }
@@ -169,7 +173,7 @@ test('uses credentialed GET requests for bootstrap misses and Nano quality/episo
     [{ code: -10403, message: '地区限制' }, 200, /地区限制/],
     [{ code: 0, result: {} }, 200, /invalid data/],
     ['not json', 200, /OGV playview failed/],
-    [{ code: 0, result: getPlayUrlResult }, 503, /OGV playview failed: 503/],
+    [{ code: 0, data: playViewResult }, 503, /OGV playview failed: 503/],
   ]) {
     reply = payload;
     status = httpStatus;

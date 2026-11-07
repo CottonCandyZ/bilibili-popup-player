@@ -6,7 +6,7 @@ const OGV_SEASON_API = 'https://api.bilibili.com/pgc/view/web/simple/season';
 const OGV_SEASON_FALLBACK_API = 'https://api.bilibili.com/pgc/view/web/season';
 const OGV_EP_LIST_API = 'https://api.bilibili.com/pgc/view/web/ep/list';
 const OGV_RECOMMEND_API = 'https://api.bilibili.com/pgc/season/web/related/recommend';
-const OGV_PLAYVIEW_API = 'https://api.bilibili.com/pgc/player/web/v2/playurl';
+const OGV_PLAYVIEW_API = 'https://api.bilibili.com/ogv/player/playview';
 
 const DEFAULT_QN = 127;
 const DEFAULT_FNVAL = 4048;
@@ -139,6 +139,7 @@ async function requestOgvNanoPlayUrlInfo(request) {
 async function fetchOgvPlayViewResponse(request) {
   const response = await fetch(buildPlayViewUrl(request), {
     method: 'GET',
+    // playview requires the browser's buvid3/buvid4 cookies, including for guests.
     credentials: 'include',
     headers: {
       accept: 'application/json, text/plain, */*',
@@ -161,12 +162,13 @@ function buildPlayViewUrl(request) {
   const url = new URL(OGV_PLAYVIEW_API);
   const index = request.video_index;
   const params = {
-    avid: index.aid,
+    biz_type: 'ogv',
+    scene: request.scene,
+    aid: index.aid,
     bvid: index.bvid,
     cid: index.cid,
     ep_id: index.ogv_episode_id,
     season_id: index.ogv_season_id,
-    fourk: 1,
     ...request.video_param,
     ...request.player_param,
     exp_info: JSON.stringify(request.exp_info),
@@ -237,8 +239,8 @@ function buildPlayViewRequest({ episode = null, season = null, input = {}, fallb
 
 export function normalizePlayViewResponse(payload, fallbackStatus = 200) {
   const data = payload?.data || payload;
-  // Support GET playurl's `result`, weslie SSR's `data.result`, and the
-  // BigPlayer playview response embedded in some pages as `data`.
+  // Support playview's `data`, weslie SSR's `data.result`, and the legacy
+  // playurl response embedded in some pages as `result`.
   const rawResult = extractRawPlayViewResult(payload);
   if (!rawResult) return null;
   return {
