@@ -6,7 +6,7 @@ const OGV_SEASON_API = 'https://api.bilibili.com/pgc/view/web/simple/season';
 const OGV_SEASON_FALLBACK_API = 'https://api.bilibili.com/pgc/view/web/season';
 const OGV_EP_LIST_API = 'https://api.bilibili.com/pgc/view/web/ep/list';
 const OGV_RECOMMEND_API = 'https://api.bilibili.com/pgc/season/web/related/recommend';
-const OGV_PLAYVIEW_API = 'https://api.bilibili.com/ogv/player/playview';
+const OGV_PLAYVIEW_API = 'https://api.bilibili.com/pgc/player/web/v2/playurl';
 
 const DEFAULT_QN = 127;
 const DEFAULT_FNVAL = 4048;
@@ -137,17 +137,15 @@ async function requestOgvNanoPlayUrlInfo(request) {
 }
 
 async function fetchOgvPlayViewResponse(request) {
-  const response = await fetch(buildPlayViewUrl(), {
-    method: 'POST',
+  const response = await fetch(buildPlayViewUrl(request), {
+    method: 'GET',
     credentials: 'include',
     headers: {
       accept: 'application/json, text/plain, */*',
-      'content-type': 'application/json',
     },
-    body: JSON.stringify(request),
   });
   const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.code !== 0 || !payload?.data) {
+  if (!response.ok || payload?.code !== 0) {
     throw new Error(payload?.message || `OGV playview failed: ${response.status}`);
   }
   const rawResult = extractRawPlayViewResult(payload);
@@ -159,9 +157,23 @@ async function fetchOgvPlayViewResponse(request) {
   };
 }
 
-function buildPlayViewUrl() {
+function buildPlayViewUrl(request) {
   const url = new URL(OGV_PLAYVIEW_API);
-  url.searchParams.set('csrf', getCookieValue('bili_jct'));
+  const index = request.video_index;
+  const params = {
+    avid: index.aid,
+    bvid: index.bvid,
+    cid: index.cid,
+    ep_id: index.ogv_episode_id,
+    season_id: index.ogv_season_id,
+    fourk: 1,
+    ...request.video_param,
+    ...request.player_param,
+    exp_info: JSON.stringify(request.exp_info),
+  };
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+  }
   return url.href;
 }
 
@@ -169,7 +181,7 @@ function buildPlayViewRequest({ episode = null, season = null, input = {}, fallb
   const videoIndex = input.video_index || {};
   const videoParam = input.video_param || {};
   const playerParam = input.player_param || {};
-  const aid = pickDefined(input.aid, videoIndex.aid, episode?.aid, fallbackPlayerInfo.aid);
+  const aid = pickDefined(input.avid, input.aid, videoIndex.aid, episode?.aid, fallbackPlayerInfo.aid);
   const bvid = pickDefined(input.bvid, videoIndex.bvid, episode?.bvid, fallbackPlayerInfo.bvid);
   const cid = pickDefined(input.cid, videoIndex.cid, episode?.cid, fallbackPlayerInfo.cid);
   const seasonId = pickDefined(
@@ -225,8 +237,8 @@ function buildPlayViewRequest({ episode = null, season = null, input = {}, fallb
 
 export function normalizePlayViewResponse(payload, fallbackStatus = 200) {
   const data = payload?.data || payload;
-  // weslie SSR data is already wrapped in `data.result`, while the browser
-  // playview endpoint currently returns the raw result directly as `data`.
+  // Support GET playurl's `result`, weslie SSR's `data.result`, and the
+  // BigPlayer playview response embedded in some pages as `data`.
   const rawResult = extractRawPlayViewResult(payload);
   if (!rawResult) return null;
   return {
@@ -241,7 +253,8 @@ export function normalizePlayViewResponse(payload, fallbackStatus = 200) {
 
 function extractRawPlayViewResult(payload) {
   const data = payload?.data || payload;
-  return data?.result || (isRawPlayViewResult(data) ? data : null);
+  const result = data?.result || data;
+  return isRawPlayViewResult(result) ? result : null;
 }
 
 function isRawPlayViewResult(value) {
@@ -287,7 +300,9 @@ export function createNanoPlayUrlResponse(raw, payload = null, status = 200) {
 }
 
 function parseNanoPlayUrlBody(raw) {
-  const videoInfo = raw.video_info || {};
+  const videoInfo = parseVideoInfo(raw);
+  const business = parseNanoPlayViewBusinessInfo(raw);
+  const progress = business.userStatus.watch_progress;
   const parsedFragmentVideoInfoList = parseNanoFragmentVideoInfoList(raw);
   const body = undefinedToNull({
     format: videoInfo.format,
@@ -298,23 +313,23 @@ function parseNanoPlayUrlBody(raw) {
     acceptDescription: videoInfo.accept_description,
     mediaDataSource: parseNanoMediaDataSource(videoInfo),
     supportFormats: parseNanoSupportFormats(videoInfo.support_formats),
-    clipInfoList: parseNanoClipInfoList(raw.video_extra?.clip_info),
-    isPreview: raw.play_video_type === 'preview',
+    clipInfoList: parseNanoClipInfoList(videoInfo.clip_info_list),
+    isPreview: isOgvPreview(raw),
     abTestId: undefined,
     dmOffset: 0,
     session: undefined,
     drmTechType: videoInfo.drm_tech_type,
-    lastPlayTime: toPositiveNumber(raw.watch_progress?.current_progress, 0),
-    recordInfo: raw.supplement?.record_number
+    lastPlayTime: progress.currentWatchProgress,
+    recordInfo: videoInfo.record_info
       ? {
-        record: raw.supplement.record_number.text || '',
-        recordIcon: raw.supplement.record_number.icon,
+        record: videoInfo.record_info.record || '',
+        recordIcon: videoInfo.record_info.record_icon,
       }
       : { record: '' },
     loudnessParams: parseNanoLoudnessParams(videoInfo),
     viewInfo: parseNanoViewInfo(raw),
-    playViewBusinessInfo: parseNanoPlayViewBusinessInfo(raw),
-    lastPlayEpid: raw.supplement?.ogv_season_watch_progress?.last_ep_id,
+    playViewBusinessInfo: business,
+    lastPlayEpid: progress.lastEpId,
   });
 
   parsedFragmentVideoInfoList.forEach((item) => {
@@ -434,41 +449,33 @@ function parseNanoSupportFormats(formats = []) {
 function parseNanoClipInfoList(clipInfos = []) {
   if (!Array.isArray(clipInfos)) return [];
   return clipInfos.map((item) => ({
-    clipType: item.clip_type === 1
+    clipType: item.clipType || (item.clip_type === 1
       ? 'CLIP_TYPE_OP'
       : item.clip_type === 2
         ? 'CLIP_TYPE_ED'
-        : 'NT_UNKNOWN',
+        : 'NT_UNKNOWN'),
     start: item.start,
     end: item.end,
   })).filter((item) => item.clipType !== 'NT_UNKNOWN');
 }
 
 function parseNanoPlayViewBusinessInfo(raw) {
-  const progress = raw.supplement?.ogv_season_watch_progress || {};
+  const business = parsePlayViewBusinessInfo(raw, false);
+  const userStatus = business.user_status || {};
+  const progress = userStatus.watch_progress || {};
   return {
-    episodeInfo: {
-      aid: raw.arc?.aid,
-      cid: raw.arc?.cid,
-      ep_id: raw.supplement?.ogv_episode_info?.episode_id,
-    },
-    seasonInfo: {
-      season_id: raw.supplement?.ogv_season_info?.season_id || 0,
-      season_type: raw.supplement?.ogv_season_info?.season_type || 0,
-    },
+    episodeInfo: business.episode_info,
+    seasonInfo: business.season_info,
     userStatus: {
       watch_progress: {
         lastEpId: progress.last_ep_id || 0,
-        lastEpIndex: progress.last_ep_index_title || 0,
-        lastTime: toPositiveNumber(progress.last_ep_progress, 0),
-        currentWatchProgress: toPositiveNumber(raw.watch_progress?.current_progress, 0),
+        lastEpIndex: progress.last_ep_index || 0,
+        lastTime: toPositiveNumber(progress.last_time, 0),
+        currentWatchProgress: toPositiveNumber(progress.current_watch_progress, 0),
       },
-      vip_info: raw.user_status?.vip_info,
-      pay_info: {
-        pay_check: raw.play_video_type === 'whole' &&
-          Boolean(raw.video_info?.dash?.video?.some((item) => Number(item?.id) >= 112)),
-      },
-      is_login: Boolean(raw.user_status?.is_login),
+      vip_info: userStatus.vip_info,
+      pay_info: userStatus.pay_info,
+      is_login: Boolean(userStatus.is_login),
     },
   };
 }
@@ -483,12 +490,13 @@ function parseNanoViewInfo(raw) {
 }
 
 function parseNanoFragmentVideoInfoList(raw) {
-  if (!Array.isArray(raw.fragments)) return [];
-  return raw.fragments.map((fragment) => {
+  const fragments = raw.fragment_videos || raw.fragments;
+  if (!Array.isArray(fragments)) return [];
+  return fragments.map((fragment) => {
     const videoInfo = fragment.video_info;
     const item = {
       fragmentInfo: fragment.fragment_info,
-      playStatus: fragment.playable,
+      playStatus: fragment.playable_status ?? fragment.playable,
     };
     if (!videoInfo) return undefinedToNull(item);
     return undefinedToNull({
@@ -601,9 +609,11 @@ function parseVideoInfo(raw) {
   const videoInfo = raw.video_info || {};
   return {
     ...videoInfo,
-    clip_info_list: parseClipInfoList(raw.video_extra?.clip_info) || videoInfo.clip_info_list,
+    clip_info_list: Array.isArray(raw.video_extra?.clip_info)
+      ? parseClipInfoList(raw.video_extra.clip_info)
+      : videoInfo.clip_info_list,
     is_drm: raw.arc?.is_drm ?? videoInfo.is_drm,
-    is_preview: raw.play_video_type === 'preview',
+    is_preview: isOgvPreview(raw),
     record_info: raw.supplement?.record_number
       ? {
         record: raw.supplement.record_number.text || '',
@@ -611,6 +621,12 @@ function parseVideoInfo(raw) {
       }
       : videoInfo.record_info,
   };
+}
+
+function isOgvPreview(raw) {
+  return raw.play_video_type
+    ? raw.play_video_type === 'preview'
+    : Boolean(raw.video_info?.is_preview || raw.play_check?.play_detail === 'PLAY_PREVIEW');
 }
 
 function parseClipInfoList(clipInfos = []) {
