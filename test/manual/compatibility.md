@@ -49,4 +49,6 @@ taskset -c 0 env PERF_CHROMIUM=/usr/bin/chromium node test/manual/profile-playba
 
 ## 既有实测
 
+[小电视空降助手兼容性记录](sponsorblock-compatibility.md)：适配依据、自动回归范围与待完成的完整扩展实机验收。
+
 [BewlyCat 4.0.54 实测记录](bewlycat-4.0.54.md)：Windows Chrome、BewlyCat 1.8.0，B 站未登录。

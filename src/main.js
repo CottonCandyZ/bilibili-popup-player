@@ -83,6 +83,7 @@ import {
 } from './pip-document.js';
 import { getPlayerExternalState, getPlayerViewInfo } from './player-view-info.js';
 import { bindNativePlayerActions } from './native-player-actions.js';
+import { createSponsorBlockCompatibility } from './sponsorblock-compat.js';
 import { bindNativeProgress } from './native-progress.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
@@ -133,6 +134,7 @@ import {
   function bootstrap() {
   const pageWindow = typeof unsafeWindow === 'object' && unsafeWindow ? unsafeWindow : window;
   pageWindow.__biliPopupPlayerNano?.destroy?.();
+  const sponsorBlockCompatibility = createSponsorBlockCompatibility(pageWindow);
   const COMMENT_WIDTH_DEFAULT = 420;
   const COMMENT_WIDTH_MIN = 300;
   const COMMENT_WIDTH_MAX = 720;
@@ -2656,6 +2658,7 @@ import {
     unbindPlayerActions(kind);
     const slot = state[kind], { player, bootstrap } = slot;
     const root = kind === 'home' ? slot.ui?.playerRoot : slot.win?.document.getElementById('bilibili-player');
+    syncSponsorBlockPlayback(kind);
     slot.disposeNativeSeekShortcuts = bindNativeSeekShortcuts({
       root,
       isActive: event => slot.player === player && slot.bootstrap === bootstrap && !isLiveBootstrap(bootstrap) &&
@@ -2670,6 +2673,17 @@ import {
       onAction: action => handlePlaybackAction(kind, action),
       onFollow: (mid, follow) => handleFollowUp(kind, mid, follow),
     });
+  }
+
+  function syncSponsorBlockPlayback(kind) {
+    const slot = state[kind];
+    const active = kind === 'home' ? isHomeShellOpen() : slot?.win && !slot.win.closed;
+    if (!state.enabled || state.destroyed || !active || !slot?.player || isLiveBootstrap(slot.bootstrap)) {
+      sponsorBlockCompatibility.clear(kind);
+      return;
+    }
+    const root = kind === 'home' ? slot.ui?.mount : slot.win?.document.getElementById('bilibili-player');
+    sponsorBlockCompatibility.setPlayback(kind, root, slot.bootstrap);
   }
 
   function unbindPlayerActions(kind) {
@@ -3412,13 +3426,18 @@ import {
     targetWindow.__biliPopupPlayerNanoClosed = false;
     targetWindow.addEventListener('pagehide', () => {
       if (state.pip.switchingWindow) return;
+      sponsorBlockCompatibility.clear('pip');
+      if (isHomeShellOpen()) syncSponsorBlockPlayback('home');
       targetWindow.__biliPopupPlayerNanoClosed = true;
       commentsTabsUi.dispose('pip');
       targetWindow.__biliPopupReactUi?.dispose();
       delete targetWindow.__biliPopupReactUi;
       if (state.pip.win === targetWindow) state.pip.win = null;
       settingsUi.sync();
-      if (!isHomeShellOpen()) restoreExternalPlaybackPagePlayer();
+      if (!isHomeShellOpen()) {
+        restoreExternalPlaybackPagePlayer();
+        restoreOriginalPageMeta();
+      }
     }, { capture: true });
   }
 
@@ -4670,6 +4689,7 @@ import {
 
   async function syncPlayerNavigation(kind, fallbackMeta = null) {
     const slot = state[kind];
+    if (!state.enabled || state.destroyed || (kind === 'home' && !isHomeShellOpen())) return;
     if (!slot?.player || !slot.bootstrap || isLiveBootstrap(slot.bootstrap)) return;
 
     const currentMeta = getPlayerNavigationMeta(kind);
@@ -4694,6 +4714,7 @@ import {
 
   function applyInternalPlayerNavigation(kind, meta, bootstrap, token) {
     state[kind].bootstrap = bootstrap;
+    syncSponsorBlockPlayback(kind);
     const ogv = isOgvBootstrap(bootstrap);
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory({ ...meta, fromInternalPlayer: true }, bootstrap);
@@ -5923,6 +5944,7 @@ import {
   }
 
   function closeHome() {
+    sponsorBlockCompatibility.clear('home');
     dismissNativeLogin(document);
     unbindPlayerActions('home');
     cancelHomeDelayedPlay();
@@ -5955,7 +5977,7 @@ import {
     document.removeEventListener('keydown', onKeydown, true);
     document.removeEventListener('keyup', onHomeShortcutKeyup, true);
     if (!state.pip.player) stopGamepadControls();
-    restoreOriginalPageMeta();
+    if (!state.pip.player) restoreOriginalPageMeta();
     if (state.lastFocus?.isConnected) state.lastFocus.focus({ preventScroll: true });
     scheduleViewportSync();
   }
@@ -6342,6 +6364,7 @@ import {
   }
 
   function disposeHomePlayer() {
+    sponsorBlockCompatibility.clear('home');
     unbindPlayerActions('home');
     cancelHomeDelayedPlay();
     state.home.ui?.videoGestures?.cancel();
@@ -6370,6 +6393,7 @@ import {
   }
 
   function disposePipPlayer() {
+    sponsorBlockCompatibility.clear('pip');
     unbindPlayerActions('pip');
     cancelPipLayoutAnimation();
     disconnectEmbeddedControlTooltips(state.pip.win?.document.getElementById('bilibili-player'));
@@ -6422,6 +6446,7 @@ import {
     closeHome();
     disposeHomePlayer();
     disposePipPlayer();
+    sponsorBlockCompatibility.dispose();
     stopGamepadControls();
     disposeHomeComments();
     disposePipComments();
