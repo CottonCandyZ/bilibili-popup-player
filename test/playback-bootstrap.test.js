@@ -171,3 +171,21 @@ test('native JSON extraction handles escaped quotes and brackets inside strings'
   const result = readPlaybackPageData(pageHtml(state), meta.href);
   assert.deepEqual(result.initialState, state);
 });
+
+test('HTML fallback skips core lookalikes and accepts the native entry point', () => {
+  const html = `<script src="https://example.com/bfs/static/player/main/core.other.js"></script>
+    <script data-src="https://s1.hdslb.com/bfs/static/player/main/core.inactive.js"></script>
+    <script src="//s1.hdslb.com/bfs/static/player/main/core.js?v=1"></script>${pageHtml({ videoData })}`;
+  assert.equal(readPlaybackPageData(html, meta.href).coreScript, 'https://s1.hdslb.com/bfs/static/player/main/core.js?v=1');
+});
+
+test('playback and original-page links use the same part when pagelist resolves a CID', async () => {
+  await withPage(async url => url.includes('/pagelist')
+    ? json({ code: 0, data: videoData.pages })
+    : json({ code: 0, data: { View: { ...videoData, pages: [], videos: 2 } } }), async () => {
+    const result = await resolvePlaybackBootstrap({ ...meta, cid: 302 });
+    assert.equal(result.playerInfo.cid, 302);
+    assert.equal(result.initialState.cid, 302);
+    assert.equal(new URL(result.href).searchParams.get('p'), '2');
+  });
+});

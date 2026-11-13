@@ -7,6 +7,13 @@ export function getEmbeddedPlayerCss() {
   const miniFrame = `:is(#${APP}-overlay.${APP}--minimized #${APP}-player-wrap, ${frame}[data-scroll-floating="true"])`;
   const mini = `${miniFrame} ${embedded}`;
   const miniButton = `${mini} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-volume)`;
+  const originalLink = `#${APP}-pip-original`;
+  const bottom = `${player} .bpx-player-control-bottom`;
+  const pipPlayer = `[data-bili-popup-ui="pip"] ${player}`;
+  const pipBottom = `${pipPlayer} .bpx-player-control-bottom`;
+  const right = `${bottom} .bpx-player-control-bottom-right`;
+  const textControls = ':is(.bpx-player-ctrl-quality, .bpx-player-ctrl-playbackrate, .bpx-player-ctrl-subtitle)';
+  const timeWithSkips = `${embedded} .bpx-player-ctrl-time:has(#sponsorBlockDurationAfterSkips)`;
   return `
     /* Nano's fixed lights-off mask escapes into the sidebar. The popup already
        dims the host page; keep the native mask inside its own video docker. */
@@ -47,12 +54,31 @@ export function getEmbeddedPlayerCss() {
        clips only its last two pixels instead of compressing the time axis. */
     ${embedded} [data-bpn-linear-chapter]:not(:last-child) { clip-path: inset(-20px 2px -20px 0); }
     #${APP}-player-wrap, [data-bili-popup-ui="pip"] #stage { container: ${APP}-video / inline-size; }
-    ${player} .bpx-player-control-bottom { min-width: 0 !important; gap: 8px; padding-inline: 12px !important; }
+    ${bottom} {
+      --bpn-control-width: 36px;
+      --bpn-control-gap: 4px;
+      --bpn-icon-size: 22px;
+      min-width: 0 !important; gap: 8px; padding-inline: 12px !important;
+    }
     ${player} .bpx-player-control-bottom-left, ${player} .bpx-player-control-bottom-right { min-width: 0 !important; flex: 0 0 auto !important; }
     ${player} .bpx-player-control-bottom-center { flex: 1 1 0 !important; min-width: 0 !important; max-width: 420px; padding: 0 8px !important; }
     ${player} .bpx-player-sending-bar, ${player} .bpx-player-dm-root, ${player} .bpx-player-video-inputbar { min-width: 0 !important; }
     ${player} .bpx-player-video-info { display: none !important; }
-    ${player} :is(.bpx-player-ctrl-quality-result, .bpx-player-ctrl-playbackrate-result) { font-size: 16px; }
+    ${right} { gap: var(--bpn-control-gap); }
+    ${bottom} .bpx-player-ctrl-btn.playerButton,
+    ${right} > .bpx-player-ctrl-btn {
+      flex: 0 0 auto; width: var(--bpn-control-width); margin-inline: 0;
+    }
+    ${right} > ${textControls} {
+      width: auto; padding-inline: var(--bpn-control-gap);
+    }
+    ${right} :is(.bpx-player-ctrl-quality-result, .bpx-player-ctrl-playbackrate-result, .bpx-player-ctrl-subtitle-result) {
+      font-size: 14px; font-weight: 600; white-space: nowrap;
+    }
+    ${right} > .bpx-player-ctrl-btn > .bpx-player-ctrl-btn-icon { width: 100%; }
+    ${right} > .bpx-player-ctrl-btn > .bpx-player-ctrl-btn-icon > .bpx-common-svg-icon {
+      width: var(--bpn-icon-size); height: var(--bpn-icon-size); vertical-align: middle;
+    }
     @container ${APP}-video (max-width: 1100px) {
       ${player} .bpx-player-control-bottom-center { flex: 1 1 auto !important; max-width: none; padding: 0 !important; }
       ${player} .bpx-player-video-inputbar { display: none !important; }
@@ -60,20 +86,92 @@ export function getEmbeddedPlayerCss() {
       ${player} .bpx-player-dm-switch, ${player} .bpx-player-dm-setting { margin-inline: 0 8px !important; }
     }
     @container ${APP}-video (max-width: 960px) {
-      ${player} .bpx-player-control-bottom { gap: 4px; padding-inline: 10px !important; }
-      ${player} .bpx-player-control-bottom-right > .bpx-player-ctrl-btn { width: 32px !important; margin-inline: 0 !important; }
-      ${player} .bpx-player-control-bottom-right > :is(.bpx-player-ctrl-quality, .bpx-player-ctrl-playbackrate) { width: auto !important; min-width: 42px; padding-inline: 4px; font-size: 12px !important; }
-      ${player} :is(.bpx-player-ctrl-quality-result, .bpx-player-ctrl-playbackrate-result) { font-size: 14px !important; }
-      ${player} .bpx-player-control-bottom .bpx-player-ctrl-btn-icon { width: 28px !important; }
-      ${player} .bpx-player-control-bottom :is(.bpx-player-ctrl-play, .bpx-player-ctrl-prev, .bpx-player-ctrl-next) { width: 32px !important; }
+      ${bottom} { --bpn-control-width: 30px; --bpn-control-gap: 2px; gap: 4px; padding-inline: 10px !important; }
+      ${bottom} :is(.bpx-player-ctrl-play, .bpx-player-ctrl-prev, .bpx-player-ctrl-next) { width: var(--bpn-control-width) !important; }
       ${player} .bpx-player-ctrl-time { width: auto !important; min-width: 90px; margin-right: 4px !important; font-size: 12px !important; }
-      ${player} .bpx-player-ctrl-time-label { font-size: 12px !important; }
+      ${player} .bpx-player-ctrl-time-label { font-size: 12px !important; text-indent: 0; }
       ${player} .bpx-player-ctrl-pip, ${player} .bpx-player-ctrl-web { display: none !important; }
+    }
+    @container ${APP}-video (max-width: 640px) {
+      ${timeWithSkips} #sponsorBlockDurationAfterSkips { display: none; }
+    }
+    @container ${APP}-video (max-width: 575px) {
+      ${bottom} { --bpn-control-width: 28px; }
     }
     @container ${APP}-video (max-width: 560px) {
       ${player} .bpx-player-dm-setting { display: none !important; }
       ${player} .bpx-player-ctrl-time-duration, ${player} .bpx-player-ctrl-time-divide { display: none !important; }
       ${player} .bpx-player-ctrl-time { min-width: 40px; }
+    }
+    @container ${APP}-video (max-width: 480px) {
+      ${pipBottom} .bpx-player-control-bottom-center { display: none !important; }
+    }
+    @container ${APP}-video (max-width: 430px) {
+      ${pipBottom} { --bpn-control-width: 26px; }
+      ${pipBottom} .bpx-player-ctrl-time { display: none; }
+      ${pipBottom} .bpx-player-ctrl-quality-result {
+        max-width: 64px; overflow: hidden; text-overflow: ellipsis;
+      }
+    }
+    @container ${APP}-video (max-width: 400px) {
+      ${pipBottom} :is(.bpx-player-ctrl-prev, .bpx-player-ctrl-next) { display: none; }
+    }
+    /* Nano does not style native-looking <button> elements created by the
+       extension. Keep its shields aligned with the controls and keep hidden
+       buttons out of the hit area, even when the extension stylesheet is late. */
+    ${embedded} :is(#bsbPlayerButtonContainer, .skipButtonControlBarContainer) { align-items: flex-start; flex: 0 0 auto; }
+    ${timeWithSkips} {
+      /* Titan positions the label absolutely. Put it in flow to give the
+         extra duration text space before the skip button. */
+      width: max-content !important;
+      min-width: 40px !important;
+      flex: 0 0 auto !important;
+      white-space: nowrap;
+    }
+    ${timeWithSkips} .bpx-player-ctrl-time-label {
+      position: relative; width: auto !important; text-align: center; text-indent: 0; padding-inline: 4px;
+    }
+    ${timeWithSkips} .bpx-player-ctrl-time-seek { max-width: 100%; box-sizing: border-box; left: 0; }
+    ${timeWithSkips}:has(.bpx-player-ctrl-time-seek:not([style*="display: none"])) {
+      min-width: 74px !important;
+    }
+    [data-bili-popup-ui="pip"] ${timeWithSkips} #sponsorBlockDurationAfterSkips:not(:last-child) { display: none; }
+    ${embedded} .bpx-player-ctrl-btn.playerButton {
+      appearance: none; border: 0; border-radius: 0; padding: 0;
+      background: transparent !important; box-shadow: none;
+    }
+    /* Titan's Web controls place their icons in the line box at the top of a
+       taller hit area. Center our icons on that line as well. */
+    ${embedded} .playerButton .playerButtonImage,
+    ${originalLink} > svg {
+      --bpn-image-size: calc(var(--bpn-icon-size, 22px) + 2px);
+      position: absolute; top: calc((1lh - var(--bpn-image-size)) / 2); left: 50%;
+      width: var(--bpn-image-size); height: var(--bpn-image-size); line-height: inherit; object-fit: contain;
+      translate: -50% 0;
+    }
+    ${embedded} .playerButton .playerButtonImage[src*="/oldIcon/"] { --bpn-image-size: var(--bpn-icon-size, 22px); }
+    ${embedded} .playerButton .playerButtonTooltip {
+      top: 0; left: 50%; transform: translate(-50%, calc(-100% - 6px));
+    }
+    ${embedded} .playerButton:is(:hover, :focus-visible) .playerButtonTooltip {
+      opacity: 1; transform: translate(-50%, calc(-100% - 10px));
+    }
+    ${originalLink} {
+      display: block; flex: 0 0 auto; width: 36px; text-decoration: none; cursor: pointer;
+    }
+    ${originalLink} > svg { --bpn-image-size: 18px; fill: none; opacity: .9; }
+    ${originalLink}:hover > svg { opacity: 1; }
+    ${originalLink}:focus-visible {
+      outline: 2px solid currentColor; outline-offset: -2px; border-radius: 4px;
+    }
+    ${embedded} :is(.playerButton.sbhidden:not(.autoHiding), .skipButtonControlBarContainer.sbhidden) { display: none !important; }
+    ${embedded} .playerButton.autoHiding.sbhidden { opacity: 0; pointer-events: none; transform: none; width: 0 !important; margin-inline: 0; }
+    ${right} #bsbPlayerButtonContainer .playerButton:not(.sbhidden, [style*="display: none"]):has(~ .playerButton:not(.sbhidden, [style*="display: none"])) {
+      margin-inline-end: var(--bpn-control-gap);
+    }
+    ${embedded} .bpx-player-video-wrap > .bpx-player-rich-pip-progress[hidden] { display: none !important; }
+    ${embedded} .bpx-player-progress .sbSegmentOverlay {
+      inset: 0; box-sizing: border-box; pointer-events: none;
     }
     /* Mini controls are siblings of the regular bar. Keep their click handlers
        and give both buttons the same geometry in Web mode. */

@@ -1,4 +1,5 @@
 import { APP } from './constants.js';
+import { getPlayerCoreUrl } from './playback-page-data.js';
 
 const pendingLoads = new WeakMap();
 const scriptStates = new WeakMap();
@@ -31,12 +32,15 @@ function findReusableScript(targetDocument, matches) {
 export function loadPlayerCore(targetDocument, src, getApi, options = {}) {
   const isReady = () => typeof getApi()?.createPlayer === 'function';
   if (isReady()) return Promise.resolve();
-  const matches = (script) => /\/player\/main\/core\.[^/]+\.js$/.test(new URL(script.src, targetDocument.baseURI).pathname);
-  const existing = findReusableScript(targetDocument, matches);
-  if (!existing && targetDocument.defaultView.customElements?.get('bwp-video')) {
-    return Promise.reject(Object.assign(new Error('页面已注册播放器组件，但播放器接口不可用；请刷新页面后重试'), { requiresPageReload: true }));
-  }
-  return loadScriptOnce(targetDocument, src, isReady, { ...options, matches });
+  return loadScriptOnce(targetDocument, src, isReady, {
+    ...options,
+    matches: script => Boolean(getPlayerCoreUrl(script.src, targetDocument.baseURI)),
+    createError: () => {
+      if (targetDocument.defaultView.customElements?.get('bwp-video')) {
+        return Object.assign(new Error('页面已注册播放器组件，但播放器接口不可用；请刷新页面后重试'), { requiresPageReload: true });
+      }
+    },
+  });
 }
 
 export function waitForHostScript(targetDocument, src) {
@@ -59,7 +63,7 @@ export function waitForHostScript(targetDocument, src) {
   });
 }
 
-export function loadScriptOnce(targetDocument, src, isReady, { matches, timeoutMs = SCRIPT_TIMEOUT_MS } = {}) {
+export function loadScriptOnce(targetDocument, src, isReady, { matches, createError, timeoutMs = SCRIPT_TIMEOUT_MS } = {}) {
   if (isReady()) return Promise.resolve();
 
   const attr = `data-${APP}-script`;
@@ -67,6 +71,10 @@ export function loadScriptOnce(targetDocument, src, isReady, { matches, timeoutM
   // The host page may already be loading the same runtime. Re-inserting it
   // can register Bilibili's custom comment elements twice.
   const existing = findReusableScript(targetDocument, matches || (script => script.src === absoluteSrc));
+  if (!existing) {
+    const error = createError?.();
+    if (error) return Promise.reject(error);
+  }
   const key = existing?.src || absoluteSrc;
   let loads = pendingLoads.get(targetDocument);
   if (!loads) pendingLoads.set(targetDocument, loads = new Map());

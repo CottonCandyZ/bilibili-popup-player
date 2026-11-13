@@ -1,5 +1,6 @@
 import { COMMENT_FALLBACK, CORE_FALLBACK, OGV_RE } from './constants.js';
 import { getPlayerNanoTheme } from './player-theme.js';
+import { findPlayerCoreUrl, getPlayerCoreUrl, readAssignedJson } from './playback-page-data.js';
 import { normalizeOgvHref, normalizeResourceUrl } from './video-meta.js';
 
 const OGV_SEASON_API = 'https://api.bilibili.com/pgc/view/web/simple/season';
@@ -114,11 +115,14 @@ async function fetchOgvSsrPlayback(href) {
   });
   if (!response.ok) throw new Error(`OGV SSR request failed: ${response.status}`);
   const html = await response.text();
-  const playurlSSRData = extractAssignedJson(html, 'playurlSSRData');
+  let playurlSSRData = null;
+  try {
+    playurlSSRData = readAssignedJson(html, /\b(?:const|let|var)\s+playurlSSRData\s*=\s*({)/);
+  } catch { /* The playview API can supply missing or malformed SSR data. */ }
   const playViewResponse = normalizePlayViewResponse(playurlSSRData, 200);
   const result = playViewResponse?.data?.result || null;
   return {
-    coreScript: extractCoreScript(html, url),
+    coreScript: findPlayerCoreUrl(html, url),
     epId: getEpisodeIdFromPlayResult(result) || extractOgvEpIdFromHtml(html),
     playViewResponse,
   };
@@ -933,54 +937,6 @@ async function fetchApiJson(url) {
   return payload;
 }
 
-function extractAssignedJson(html, name) {
-  const text = String(html || '');
-  const pattern = new RegExp(`(?:const|let|var)\\s+${name}\\s*=`);
-  const match = pattern.exec(text);
-  if (!match) return null;
-  const start = text.indexOf('{', match.index + match[0].length);
-  if (start < 0) return null;
-  const json = readJsonObjectAt(text, start);
-  if (!json) return null;
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-function readJsonObjectAt(text, start) {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-    if (char === '{') depth += 1;
-    else if (char === '}') {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, index + 1);
-    }
-  }
-  return '';
-}
-
-function extractCoreScript(html, baseUrl) {
-  return normalizeResourceUrl(
-    String(html || '').match(/<script[^>]+src=["']([^"']*\/player\/main\/core\.[^"']+\.js)["']/)?.[1] || '',
-    baseUrl,
-  );
-}
-
 function extractOgvEpIdFromHtml(html) {
   return Number(
     String(html || '').match(/\/bangumi\/play\/ep(\d+)/)?.[1] ||
@@ -991,9 +947,11 @@ function extractOgvEpIdFromHtml(html) {
 
 function getCurrentCoreScript() {
   if (typeof document === 'undefined') return '';
-  return [...(document.querySelectorAll?.('script[src*="/player/main/core."]') || [])]
-    .map((script) => normalizeResourceUrl(script.getAttribute('src')))
-    .find(Boolean) || '';
+  for (const script of document.scripts || []) {
+    const url = getPlayerCoreUrl(script.src, document.baseURI);
+    if (url) return url;
+  }
+  return '';
 }
 
 function getInitialOgvQuality() {

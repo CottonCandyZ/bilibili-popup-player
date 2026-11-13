@@ -83,7 +83,7 @@ import {
 } from './pip-document.js';
 import { getPlayerExternalState, getPlayerViewInfo } from './player-view-info.js';
 import { bindNativePlayerActions } from './native-player-actions.js';
-import { createSponsorBlockCompatibility } from './sponsorblock-compat.js';
+import { createSponsorBlockCompatibility, syncSponsorBlockPlaybackUrl } from './sponsorblock-compat.js';
 import { bindNativeProgress } from './native-progress.js';
 import { resolvePlaybackBootstrap } from './playback-bootstrap.js';
 import { createRendererOrchestrator } from './renderer-orchestrator.js';
@@ -127,17 +127,31 @@ import {
   normalizeVideoHref,
 } from './video-meta.js';
 
-  if (ENABLED_URL_RE.test(location.href)) {
-    // Track host script resource events from document-start, while keeping UI
-    // initialization behind the native DOM so it can safely mount its roots.
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootstrap, { once: true });
-    else bootstrap();
+  function replacePlaybackUrl(url) {
+    if (url.href !== location.href) history.replaceState(history.state, '', url.href);
   }
 
-  function bootstrap() {
-  const pageWindow = typeof unsafeWindow === 'object' && unsafeWindow ? unsafeWindow : window;
-  pageWindow.__biliPopupPlayerNano?.destroy?.();
-  const sponsorBlockCompatibility = createSponsorBlockCompatibility(pageWindow);
+  if (ENABLED_URL_RE.test(location.href)) {
+    const pageWindow = typeof unsafeWindow === 'object' && unsafeWindow ? unsafeWindow : window;
+    pageWindow.__biliPopupPlayerNano?.destroy?.();
+    // Register before the extension adds per-request reply handlers. The rest
+    // of the script still needs the page body and runs after DOM parsing.
+    const sponsorBlockCompatibility = createSponsorBlockCompatibility(pageWindow, {
+      syncPlaybackUrl: href => {
+        const url = new URL(location.href);
+        syncSponsorBlockPlaybackUrl(url, href);
+        replacePlaybackUrl(url);
+      },
+    });
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => bootstrap(pageWindow, sponsorBlockCompatibility), { once: true });
+    } else {
+      bootstrap(pageWindow, sponsorBlockCompatibility);
+    }
+  }
+
+  function bootstrap(pageWindow, sponsorBlockCompatibility) {
+  const pipShellNodes = new WeakMap();
   const COMMENT_WIDTH_DEFAULT = 420;
   const COMMENT_WIDTH_MIN = 300;
   const COMMENT_WIDTH_MAX = 720;
@@ -307,6 +321,7 @@ import {
       win: null,
       lastError: null,
       player: null,
+      originalControl: null,
       comments: null,
       commentContext: '',
       bootstrap: null,
@@ -326,7 +341,6 @@ import {
       likeBusy: false,
       likeBurstTimer: 0,
       keydownHandler: null,
-      switchingWindow: false,
       activeCommentsTab: 'comments',
       liveListMode: false,
       ogvListMode: false,
@@ -1558,32 +1572,30 @@ import {
     };
   }
 
-  function syncPlaybackPageMeta(kind, bootstrap) {
-    if (!bootstrap || isLiveBootstrap(bootstrap)) return;
-    if (isOgvBootstrap(bootstrap)) {
-      captureOriginalPageMeta();
-      const title = String(bootstrap.title || bootstrap.playerInfo?.epId || '').trim();
-      if (title) document.title = title;
+  function syncPlaybackPageMeta(bootstrap) {
+    if (!bootstrap) return;
+    if (isLiveBootstrap(bootstrap)) {
+      restoreOriginalPageMeta();
       return;
     }
-    const bvid = bootstrap.playerInfo?.bvid;
-    if (!bvid) return;
+    const { bvid, epId, p } = bootstrap.playerInfo || {};
+    const ogv = isOgvBootstrap(bootstrap);
+    if (!ogv && !bvid) return;
     captureOriginalPageMeta();
 
-    const title = String(bootstrap.title || bvid).trim();
+    const title = String(bootstrap.title || (ogv ? epId : bvid) || '').trim();
     if (title) document.title = title;
 
-    const page = Number(bootstrap.playerInfo?.p || 0);
     const url = new URL(location.href);
-    url.searchParams.set(URL_PARAM_PLAY, '1');
-    url.searchParams.set(URL_PARAM_BVID, bvid);
-    if (Number.isInteger(page) && page > 1) url.searchParams.set(URL_PARAM_PAGE, String(page));
-    else url.searchParams.delete(URL_PARAM_PAGE);
-
-    const nextHref = `${url.pathname}${url.search}${url.hash}`;
-    if (nextHref !== `${location.pathname}${location.search}${location.hash}`) {
-      history.replaceState(history.state, '', nextHref);
+    if (!ogv) {
+      const page = Number(p);
+      url.searchParams.set(URL_PARAM_PLAY, '1');
+      url.searchParams.set(URL_PARAM_BVID, bvid);
+      if (Number.isInteger(page) && page > 1) url.searchParams.set(URL_PARAM_PAGE, String(page));
+      else url.searchParams.delete(URL_PARAM_PAGE);
     }
+    if (sponsorBlockCompatibility.detected) syncSponsorBlockPlaybackUrl(url, bootstrap.href);
+    replacePlaybackUrl(url);
   }
 
   function captureOriginalPageMeta() {
@@ -1598,10 +1610,7 @@ import {
     if (state.originalPageMeta?.title != null) document.title = state.originalPageMeta.title;
     const fallbackHref = getUrlWithoutPlaybackParams(location.href);
     const targetHref = state.originalPageMeta?.href || fallbackHref;
-    if (targetHref && targetHref !== location.href) {
-      const url = new URL(targetHref, location.href);
-      history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
-    }
+    if (targetHref) replacePlaybackUrl(new URL(targetHref, location.href));
     state.originalPageMeta = null;
   }
 
@@ -1610,6 +1619,7 @@ import {
     url.searchParams.delete(URL_PARAM_PLAY);
     url.searchParams.delete(URL_PARAM_BVID);
     url.searchParams.delete(URL_PARAM_PAGE);
+    syncSponsorBlockPlaybackUrl(url);
     return url.href;
   }
 
@@ -1633,11 +1643,11 @@ import {
     const preserveRightList = Boolean(meta.fromHistory);
     const ogv = isOgvBootstrap(bootstrap);
     showHomeShell(bootstrap.title || meta.title || meta.bvid);
-    setOriginalLink(ui, meta.href || bootstrap.href);
+    setOriginalLink(ui, bootstrap.href || meta.href);
     ui.status.textContent = '播放器：继续播放';
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory(meta, bootstrap);
-    syncPlaybackPageMeta('home', bootstrap);
+    syncPlaybackPageMeta(bootstrap);
     setOgvListMode('home', ogv);
     if (ogv) {
       state.home.playlistCards = [];
@@ -1661,7 +1671,6 @@ import {
     if (isLiveMeta(meta)) return prepareLiveHome(meta);
 
     const ui = ensureHomeShell();
-    clearHomePlaybackError(ui);
     setLiveListMode('home', false);
     const ogv = isOgvMeta(meta);
     setOgvListMode('home', ogv);
@@ -1704,7 +1713,7 @@ import {
     state.home.bootstrap = bootstrap;
     const ogv = isOgvBootstrap(bootstrap);
     setOgvListMode('home', ogv);
-    syncPlaybackPageMeta('home', bootstrap);
+    syncPlaybackPageMeta(bootstrap);
     ui.title.textContent = bootstrap.title || ui.title.textContent;
     setOriginalLink(ui, bootstrap.href);
     ui.status.textContent = '准备就绪';
@@ -1736,7 +1745,6 @@ import {
 
   function prepareLiveHome(meta) {
     const ui = ensureHomeShell();
-    clearHomePlaybackError(ui);
     showHomeShell(meta.title || `Bilibili 直播 ${meta.roomId}`);
     setOriginalLink(ui, meta.href);
     ui.status.textContent = state.home.player ? '直播参数：解析中，准备换源' : '直播参数：解析中';
@@ -1981,6 +1989,8 @@ import {
     if (!bvid) return;
     openWithRenderer(pipRenderer, {
       bvid,
+      cid: info?.cid,
+      p: info?.p,
       href,
       title: bootstrap.title || ui?.title?.textContent || bvid,
     });
@@ -2982,8 +2992,9 @@ import {
     const ogv = isOgvBootstrap(bootstrap);
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory(meta, bootstrap);
-    syncPlaybackPageMeta('pip', bootstrap);
-    ensurePipPlayerControls(context.pipWindow, meta.href || bootstrap.href);
+    syncPlaybackPageMeta(bootstrap);
+    syncSponsorBlockPlayback('pip');
+    ensurePipPlayerControls(context.pipWindow, bootstrap.href || meta.href);
     attachPipCommentsTabs(context.pipWindow);
     setOgvListMode('pip', ogv);
     if (ogv) {
@@ -3035,6 +3046,13 @@ import {
         return null;
       }
       if (!state.enabled || state.destroyed || token !== state.switchToken) { pipWindow.close(); return null; }
+      // Set the initial document URL from the opener, so Nano's media requests
+      // carry the normal Bilibili referrer. Do this before PiP's queued enter
+      // event, when extensions start attaching to the document.
+      const doc = pipWindow.document;
+      doc.open();
+      doc.write('<!doctype html><html><head></head><body></body></html>');
+      doc.close();
       state.pip.win = pipWindow;
     }
     attachPipWindowCloseSync(pipWindow);
@@ -3091,7 +3109,7 @@ import {
   }
 
   async function playPip(context, bootstrap, token) {
-    syncPlaybackPageMeta('pip', bootstrap);
+    syncPlaybackPageMeta(bootstrap);
     await bootPipWindow(context.pipWindow, bootstrap, token);
   }
 
@@ -3363,14 +3381,6 @@ import {
     targetWindow.setTimeout(() => attachPipLivePlayerOnlyControl(targetWindow), 600);
     targetWindow.setTimeout(() => attachPipLivePlayerOnlyControl(targetWindow), 1600);
     setPipStatus('播放中');
-
-    targetWindow.addEventListener('pagehide', () => {
-      if (state.pip.switchingWindow) return;
-      stopPipLivePlayerOnlyControlObserver();
-      if (state.pip.player) disposePipPlayer();
-      if (state.pip.win === targetWindow) state.pip.win = null;
-      settingsUi.sync();
-    });
   }
 
   function attachPipLivePlayerOnlyControl(targetWindow = state.pip.win) {
@@ -3464,20 +3474,26 @@ import {
     targetWindow.__biliPopupPlayerNanoCloseSyncBound = true;
     targetWindow.__biliPopupPlayerNanoClosed = false;
     targetWindow.addEventListener('pagehide', () => {
-      if (state.pip.switchingWindow) return;
-      sponsorBlockCompatibility.clear('pip');
-      if (isHomeShellOpen()) syncSponsorBlockPlayback('home');
+      if (state.pip.win !== targetWindow) return;
       targetWindow.__biliPopupPlayerNanoClosed = true;
+      // Dispose while the closing window still owns its player and controls.
+      disposePipPlayer();
+      disposePipComments();
       commentsTabsUi.dispose('pip');
       targetWindow.__biliPopupReactUi?.dispose();
+      targetWindow.__biliPopupPlayerNanoResizeSyncCleanup?.();
       delete targetWindow.__biliPopupReactUi;
-      if (state.pip.win === targetWindow) state.pip.win = null;
+      state.pip.win = null;
+      if (isHomeShellOpen()) {
+        syncPlaybackPageMeta(state.home.bootstrap);
+        syncSponsorBlockPlayback('home');
+      }
       settingsUi.sync();
       if (!isHomeShellOpen()) {
         restoreExternalPlaybackPagePlayer();
         restoreOriginalPageMeta();
       }
-    }, { capture: true });
+    }, { capture: true, once: true });
   }
 
   function isHomeShellOpen() {
@@ -3616,25 +3632,6 @@ import {
         setPipStatus('等待用户播放');
       }
     }, 800);
-
-    targetWindow.addEventListener('pagehide', () => {
-      if (state.pip.player === player) unbindPlayerActions('pip');
-      if (state.pip.player === player) unbindPipScreenChange();
-      if (state.pip.player === player) unbindPipPlayerNavigate();
-      if (state.pip.player === player) unbindPipPlayerHandoff();
-      if (state.pip.player === player) unbindPipPlayerEnded();
-      try {
-        if (state.pip.player === player) player.disconnect?.();
-      } catch {
-        // Ignore cleanup failures.
-      }
-      if (state.pip.switchingWindow) return;
-      disposePipComments();
-      setPipPlaying(null);
-      if (state.pip.win === targetWindow) state.pip.win = null;
-      if (state.pip.player === player) state.pip.player = null;
-      if (!isHomeShellOpen()) stopGamepadControls();
-    });
   }
 
   function buildPipPrimarySetting(targetWindow, bootstrap) {
@@ -3659,6 +3656,8 @@ import {
       autoplay: true,
       enableHEVC: true,
       enableAV1: true,
+      // Keep the native control row available at Titan's tiny-view breakpoint.
+      businessEmbededMode: true,
       screenKind: getScreenKind(targetWindow.nano),
       revision: 1,
       viewInfo: getPlayerViewInfo(bootstrap.initialState),
@@ -4757,7 +4756,7 @@ import {
     const ogv = isOgvBootstrap(bootstrap);
     saveLastPlayed(meta, bootstrap);
     recordPlaybackHistory({ ...meta, fromInternalPlayer: true }, bootstrap);
-    syncPlaybackPageMeta(kind, bootstrap);
+    syncPlaybackPageMeta(bootstrap);
     setOgvListMode(kind, ogv);
     if (ogv) {
       setSelectedPageKey(kind, meta.pageKey || getSelectedOgvPageKey(bootstrap));
@@ -5301,93 +5300,47 @@ import {
         root.addEventListener(type, event => onEmbeddedPlayerControl(event, 'pip'), true);
       }
     }
-    const controls = getOrCreatePipControls(targetWindow, href);
-    const controlsToken = (targetWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
-    targetWindow.__biliPopupPlayerNanoControlsToken = controlsToken;
-    const isCurrentControlsRun = () => targetWindow.__biliPopupPlayerNanoControlsToken === controlsToken;
-
-    targetWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
-    targetWindow.__biliPopupPlayerNanoControlsObserver = null;
+    if (!root) return;
+    if (state.pip.originalControl?.root === root) {
+      const { link } = state.pip.originalControl;
+      link.dataset.href = href;
+      link.href = href;
+      return;
+    }
+    disposePipOriginalControl();
+    const link = doc.createElement('a');
+    link.id = `${APP}-pip-original`;
+    link.className = 'bpx-player-ctrl-btn';
+    link.href = href;
+    link.dataset.href = href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.title = '打开原播放页';
+    link.setAttribute('aria-label', link.title);
+    link.append(createExternalLinkIcon());
+    const refreshHref = () => {
+      link.href = withPlaybackTime(link.dataset.href, getPlaybackTime(state.pip.player));
+    };
+    for (const type of ['pointerdown', 'contextmenu', 'focus', 'click']) link.addEventListener(type, refreshHref);
 
     const attach = () => {
-      if (!isCurrentControlsRun() || targetWindow.closed || !doc.body) return false;
-      const slot = findPipOriginalButtonSlot(doc);
-      if (!slot?.container) return false;
-      if (controls.parentNode !== slot.container || controls.nextSibling !== slot.before) {
-        slot.container.insertBefore(controls, slot.before || null);
-      }
-      syncPipCommentLayout(targetWindow);
-      return true;
+      if (root.contains(link)) return;
+      const row = root.querySelector('.bpx-player-control-bottom-right, .bpx-player-ctrl-right');
+      if (!row) return;
+      const quality = row.querySelector(':scope > .bpx-player-ctrl-quality');
+      row.insertBefore(link, quality || row.firstElementChild);
     };
-
-    if (attach()) return;
-
-    let scheduled = false;
-    let stopped = false;
-    const stop = () => {
-      if (!isCurrentControlsRun()) return;
-      stopped = true;
-      targetWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
-      targetWindow.__biliPopupPlayerNanoControlsObserver = null;
-    };
-    const scheduleAttach = () => {
-      if (!isCurrentControlsRun() || scheduled || stopped || targetWindow.closed) return;
-      scheduled = true;
-      targetWindow.setTimeout(() => {
-        scheduled = false;
-        if (!isCurrentControlsRun()) return;
-        if (attach()) stop();
-      }, 120);
-    };
-
-    [250, 600, 1200, 2400, 4800].forEach((delay) => targetWindow.setTimeout(scheduleAttach, delay));
-    targetWindow.setTimeout(stop, 7000);
-
-    const observer = new targetWindow.MutationObserver(scheduleAttach);
-    observer.observe(doc.body || doc.documentElement, { childList: true, subtree: true });
-    targetWindow.__biliPopupPlayerNanoControlsObserver = observer;
+    const observer = new targetWindow.MutationObserver(attach);
+    observer.observe(root, { childList: true, subtree: true });
+    state.pip.originalControl = { root, link, observer };
+    attach();
   }
 
-  function getOrCreatePipControls(targetWindow, href) {
-    const doc = targetWindow.document;
-    let controls = doc.getElementById(`${APP}-pip-controls`);
-    if (controls) {
-      const original = doc.getElementById(`${APP}-pip-original`);
-      if (original) {
-        original.dataset.href = href;
-        original.href = href;
-      }
-      return controls;
-    }
-
-    controls = doc.createElement('div');
-    controls.id = `${APP}-pip-controls`;
-
-    const original = doc.createElement('a');
-    original.id = `${APP}-pip-original`;
-    original.href = href;
-    original.dataset.href = href;
-    original.target = '_blank';
-    original.rel = 'noopener noreferrer';
-    original.title = '打开原播放页';
-    original.setAttribute('aria-label', '打开原播放页');
-    original.textContent = '原页面';
-    original.addEventListener('pointerdown', () => {
-      original.href = getPipOriginalHref(targetWindow, original.dataset.href);
-    });
-    original.addEventListener('click', () => {
-      original.href = getPipOriginalHref(targetWindow, original.dataset.href);
-    });
-
-    controls.append(original);
-    return controls;
-  }
-
-  function getPipOriginalHref(targetWindow, href) {
-    return withPlaybackTime(
-      href,
-      getPlaybackTime(state.pip.player),
-    );
+  function disposePipOriginalControl() {
+    const control = state.pip.originalControl;
+    control?.observer.disconnect();
+    control?.link.remove();
+    state.pip.originalControl = null;
   }
 
   function isOgvMeta(meta) {
@@ -5410,22 +5363,6 @@ import {
     const seasonId = info.seasonId || '';
     const epId = info.epId || info.cid || '';
     return ['ogv', seasonId, epId].filter(Boolean).join(':');
-  }
-
-  function findPipOriginalButtonSlot(doc) {
-    const container = doc.querySelector([
-      '.bpx-player-control-bottom-right',
-      '.bpx-player-control-bottom .bpx-player-control-bottom-right',
-      '.bpx-player-control-wrap .bpx-player-control-bottom-right',
-      '.bpx-player-ctrl-right',
-    ].join(','));
-    if (!container) return null;
-    const quality = container.querySelector([
-      '.bpx-player-ctrl-quality',
-      '[aria-label="清晰度"]',
-      'button[aria-label="清晰度"]',
-    ].join(','));
-    return { container, before: quality || container.firstElementChild };
   }
 
   function saveLastPlayed(meta, bootstrap) {
@@ -5884,38 +5821,16 @@ import {
   }
 
   function syncPipSize(targetWindow) {
+    if (!targetWindow || targetWindow.closed) return;
     syncEmbeddedLayoutControl('pip');
-    const root = targetWindow.document?.getElementById('bilibili-player') ||
-      targetWindow.document?.getElementById('live-player');
-    if (!root) return;
-    const stage = targetWindow.document.getElementById('stage');
-    const width = Math.max(1, stage?.clientWidth || targetWindow.innerWidth);
-    const height = Math.max(1, stage?.clientHeight || targetWindow.innerHeight);
-    root.style.width = `${width}px`;
-    root.style.height = `${height}px`;
-    root.style.minWidth = '0px';
-    root.style.minHeight = '0px';
-    targetWindow.dispatchEvent(new targetWindow.Event('resize'));
+    // The stage owns its dimensions. Nano observes its container and video
+    // directly; the live-player adapter can still request an explicit resize.
     try {
       state.pip.player?.resize?.();
     } catch {
       // Ignore resize failures.
     }
     schedulePipBottomFixedWrapperSync(targetWindow);
-    targetWindow.requestAnimationFrame(() => {
-      const nextWidth = Math.max(1, stage?.clientWidth || targetWindow.innerWidth);
-      const nextHeight = Math.max(1, stage?.clientHeight || targetWindow.innerHeight);
-      root.style.width = `${nextWidth}px`;
-      root.style.height = `${nextHeight}px`;
-      root.style.minWidth = '0px';
-      root.style.minHeight = '0px';
-      targetWindow.dispatchEvent(new targetWindow.Event('resize'));
-      try {
-        state.pip.player?.resize?.();
-      } catch {
-        // Ignore resize failures.
-      }
-    });
   }
 
   function writePipLoading(pipWindow, title, href) {
@@ -5939,25 +5854,24 @@ import {
   }
 
   function writePipDocument(pipWindow, html) {
-    state.pip.switchingWindow = true;
     commentsTabsUi.dispose('pip');
     pipWindow.__biliPopupReactUi?.dispose();
     delete pipWindow.__biliPopupReactUi;
-    pipWindow.__biliPopupPlayerNanoControlsObserver?.disconnect?.();
     pipWindow.__biliPopupPlayerNanoResizeSyncCleanup?.();
-    delete pipWindow.__biliPopupPlayerNanoControlsObserver;
-    pipWindow.__biliPopupPlayerNanoControlsToken = (pipWindow.__biliPopupPlayerNanoControlsToken || 0) + 1;
-    pipWindow.document.open();
-    pipWindow.document.write(html);
-    pipWindow.document.close();
-    applyAccentTheme(pipWindow.document.body, state.accentTheme);
-    // document.open() clears document/window listeners, but leaves JS globals.
-    delete pipWindow.__biliPopupPlayerNanoCloseSyncBound;
-    delete pipWindow.__biliPopupPlayerNanoKeydownBound;
-    attachPipWindowCloseSync(pipWindow);
-    window.setTimeout(() => {
-      state.pip.switchingWindow = false;
-    }, 0);
+
+    // Keep the original document and its listeners: extensions mount on PiP's
+    // enter event, before our loading screen. Replace only our shell markup.
+    const doc = pipWindow.document;
+    const next = new pipWindow.DOMParser().parseFromString(html, 'text/html');
+    for (const node of pipShellNodes.get(pipWindow) || []) node.remove();
+    const head = [...next.head.children].filter(node => node.tagName !== 'TITLE');
+    doc.head.append(...head);
+    pipShellNodes.set(pipWindow, head);
+    doc.title = next.title;
+    doc.documentElement.className = next.documentElement.className;
+    doc.body.className = next.body.className;
+    doc.body.replaceChildren(...next.body.childNodes);
+    applyAccentTheme(doc.body, state.accentTheme);
   }
 
   function getPipThemeClassMarkup() {
@@ -6009,14 +5923,19 @@ import {
     }
     setHomePlayerFeatureBlocked(true);
     setExternalPlayerFeaturesBlocked(false);
-    restoreExternalPlaybackPagePlayer();
     stopAutoPlayCountdownMonitor('home');
     unlockHomePageScroll();
     document.body.classList.remove(`${APP}--modal-open`);
     document.removeEventListener('keydown', onKeydown, true);
     document.removeEventListener('keyup', onHomeShortcutKeyup, true);
     if (!state.pip.player) stopGamepadControls();
-    if (!state.pip.player) restoreOriginalPageMeta();
+    if (!state.pip.win || state.pip.win.closed) {
+      restoreExternalPlaybackPagePlayer();
+      restoreOriginalPageMeta();
+    } else if (state.enabled && state.pip.player) {
+      syncPlaybackPageMeta(state.pip.bootstrap);
+      syncSponsorBlockPlayback('pip');
+    }
     if (state.lastFocus?.isConnected) state.lastFocus.focus({ preventScroll: true });
     scheduleViewportSync();
   }
@@ -6434,6 +6353,7 @@ import {
   function disposePipPlayer() {
     sponsorBlockCompatibility.clear('pip');
     unbindPlayerActions('pip');
+    disposePipOriginalControl();
     cancelPipLayoutAnimation();
     disconnectEmbeddedControlTooltips(state.pip.win?.document.getElementById('bilibili-player'));
     if (state.pip.likeBurstTimer) {
