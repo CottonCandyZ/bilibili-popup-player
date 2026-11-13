@@ -10,7 +10,7 @@ test('built userscript retains its installation metadata and the distribution ma
   assert.equal(metadata.name[0], 'Bilibili Popup Player');
   assert.equal(metadata.namespace[0], 'https://www.bilibili.com/');
   assert.equal(metadata.license[0], 'AGPL-3.0-only');
-  assert.equal(metadata['run-at'][0], 'document-idle');
+  assert.equal(metadata['run-at'][0], 'document-start');
   assert.deepEqual(new Set(metadata.grant), new Set(['GM_getValue', 'GM_setValue', 'GM_deleteValue', 'unsafeWindow']));
   for (const host of ['www', 'space', 'search', 'live', 't']) {
     assert.ok(metadata.match.includes(`https://${host}.bilibili.com/*`));

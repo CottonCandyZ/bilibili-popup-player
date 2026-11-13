@@ -5,85 +5,143 @@ import {
 } from './video-meta.js';
 import { getPlayerNanoTheme } from './player-theme.js';
 import { isOgvMeta, resolveOgvPlaybackBootstrap } from './ogv-playback-bootstrap.js';
+import { readPlaybackPageData } from './playback-page-data.js';
+
+const REQUEST_TIMEOUT_MS = 8000;
 
 export async function resolvePlaybackBootstrap(meta) {
   if (isOgvMeta(meta)) return resolveOgvPlaybackBootstrap(meta);
 
-  const apiBootstrap = await resolvePlaybackBootstrapFromApis(meta);
-  if (apiBootstrap) return apiBootstrap;
-
-  throw new Error('Playback API bootstrap failed');
+  const bvid = meta.bvid || meta.href?.match(BV_RE)?.[1];
+  if (!bvid) throw new Error('视频链接缺少 BV 号');
+  const errors = [];
+  const pageWindow = typeof unsafeWindow === 'object' && unsafeWindow ? unsafeWindow : globalThis.window;
+  let currentState;
+  try { currentState = pageWindow?.__INITIAL_STATE__; } catch { /* Other scripts can wrap page globals. */ }
+  const sources = [];
+  if (currentState?.videoData?.bvid === bvid) {
+    sources.push(['当前播放页', () => ({ initialState: currentState, playInfo: pageWindow.__playinfo__ })]);
+  }
+  sources.push(
+    ['视频详情接口', async () => {
+      const payload = await fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/wbi/view/detail?bvid=${encodeURIComponent(bvid)}&need_view=1&platform=web`);
+      return { videoData: payload.data?.View, related: payload.data?.Related, card: payload.data?.Card };
+    }],
+    ['基本视频信息接口', async () => {
+      const payload = await fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`);
+      return { videoData: payload.data };
+    }],
+    ['原播放页', () => fetchPlaybackPage(meta, bvid)],
+  );
+  for (const [source, resolve] of sources) {
+    try {
+      const data = await resolve();
+      const vd = normalizeVideoData(data.videoData || data.initialState?.videoData);
+      if (!vd?.aid || vd.bvid !== bvid) throw new Error('返回的视频信息缺失或与 BV 号不一致');
+      const pageP = resolveCurrentPage(meta, { p: data.initialState?.p || 1, videoData: vd });
+      const selectedPage = vd.pages.find(page => Number(page.page) === pageP);
+      if ((!vd.pages.length && (Number(vd.videos) > 1 || !vd.cid || pageP > 1)) ||
+          (vd.pages.length && !(Number(selectedPage?.cid) > 0))) {
+        const pages = await fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`).catch(() => null);
+        vd.pages = mergeVideoPages(vd.pages, pages?.data);
+      }
+      const bootstrap = buildPlaybackBootstrap(meta, vd, data);
+      bootstrap.diagnostics = { source, failures: errors.map(describeFailure) };
+      if (errors.length) console.warn('[bili-popup-player] video info fallback', bootstrap.diagnostics);
+      return bootstrap;
+    } catch (error) {
+      const failure = new Error(`${source}：${error?.message || String(error)}`, { cause: error });
+      Object.assign(failure, { source, status: error?.status, code: error?.code, url: error?.url });
+      errors.push(failure);
+    }
+  }
+  const error = new AggregateError(errors, '视频信息加载失败，请重试或打开原视频');
+  error.diagnostics = errors.map(describeFailure);
+  throw error;
 }
 
-async function resolvePlaybackBootstrapFromApis(meta) {
-  const bvid = meta.bvid || meta.href?.match(BV_RE)?.[1];
-  if (!bvid) return null;
+function buildPlaybackBootstrap(meta, vd, data) {
+  applyDetailCard(vd, data.card);
 
-  try {
-    const [detailResult, pagelistResult] = await Promise.allSettled([
-      fetchPlaybackJson(`https://api.bilibili.com/x/web-interface/wbi/view/detail?bvid=${encodeURIComponent(bvid)}&need_view=1&platform=web`),
-      fetchPlaybackJson(`https://api.bilibili.com/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`),
-    ]);
-    if (detailResult.status !== 'fulfilled') return null;
+  const pageP = resolveCurrentPage(meta, { p: data.initialState?.p || 1, videoData: vd });
+  const page = vd.pages.find(page => Number(page.page) === pageP) || {};
+  const cid = page.cid || (!vd.pages.length && pageP === 1 ? vd.cid : 0);
+  if (!(Number(cid) > 0)) throw new Error('视频信息缺少所选分 P 的播放参数');
+  const sequence = resolvePlaybackSequence(vd, pageP, page);
+  const relatedItems = Array.isArray(data.related || data.initialState?.related)
+    ? data.related || data.initialState.related
+    : [];
+  const initialState = { ...data.initialState, ...buildInitialStateFromApis({ meta, p: sequence.p, relatedItems, videoData: vd }) };
+  const recommendationCards = extractPlaylistCardsFromRelatedItems(relatedItems, meta.href, vd.bvid);
 
-    const detail = detailResult.value?.data || {};
-    const vd = normalizeVideoData(
-      detail.View,
-      pagelistResult.status === 'fulfilled' ? pagelistResult.value?.data : null,
-    );
-    if (!vd?.aid || !vd?.bvid) return null;
-    applyDetailCard(vd, detail.Card);
-
-    const pageP = resolveCurrentPage(meta, { p: 1, videoData: vd });
-    const page = getVideoPage(vd, pageP);
-    const sequence = resolvePlaybackSequence(vd, pageP, page);
-    const relatedItems = Array.isArray(detail.Related)
-      ? detail.Related
-      : [];
-    const initialState = buildInitialStateFromApis({ meta, p: sequence.p, relatedItems, videoData: vd });
-    const recommendationCards = extractPlaylistCardsFromRelatedItems(relatedItems, meta.href, vd.bvid);
-
-    return {
-      title: vd.title || meta.title,
-      coreScript: UGC_CORE_SCRIPT,
-      commentScript: COMMENT_FALLBACK,
-      stylesheets: [],
-      initialState,
-      playInfo: null,
-      recommendationCards,
-      playerInfo: {
-        aid: vd.aid,
-        bvid: vd.bvid,
-        cid: page.cid || vd.cid || initialState.cid,
-        p: sequence.p,
-        t: 0,
-        hasPrev: sequence.hasPrev,
-        hasNext: sequence.hasNext,
-        seasonId: sequence.seasonId,
-      },
-      href: meta.href,
-      commentInfo: {
-        params: `1,${vd.aid}`,
-        spmPrefix: '333.788',
-        cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || '',
-      },
-    };
-  } catch {
-    return null;
-  }
+  return {
+    title: vd.title || meta.title,
+    coreScript: data.coreScript || UGC_CORE_SCRIPT,
+    commentScript: data.commentScript || COMMENT_FALLBACK,
+    stylesheets: [],
+    initialState,
+    playInfo: Number(data.initialState?.p || 1) === pageP ? data.playInfo || null : null,
+    recommendationCards,
+    playerInfo: {
+      aid: vd.aid,
+      bvid: vd.bvid,
+      cid,
+      p: sequence.p,
+      t: 0,
+      hasPrev: sequence.hasPrev,
+      hasNext: sequence.hasNext,
+      seasonId: sequence.seasonId,
+    },
+    href: meta.href,
+    commentInfo: {
+      params: `1,${vd.aid}`,
+      spmPrefix: '333.788',
+      cmFromTrackId: new URL(meta.href, location.href).searchParams.get('track_id') || '',
+    },
+  };
 }
 
 async function fetchPlaybackJson(url) {
-  const response = await fetch(url, {
-    credentials: 'include',
-    headers: {
-      accept: 'application/json, text/plain, */*',
-    },
+  return fetchPlaybackResource(url, 'application/json, text/plain, */*', async response => {
+    const payload = await response.json();
+    if (payload?.code !== 0) {
+      throw Object.assign(new Error(`${payload?.message || '接口返回错误'}（code=${payload?.code}）`), { code: payload?.code, status: response.status });
+    }
+    return payload;
   });
-  if (!response.ok) throw new Error(`Playback API request failed: ${response.status}`);
-  const payload = await response.json();
-  if (payload?.code !== 0) throw new Error(payload?.message || `Playback API error: ${payload?.code}`);
-  return payload;
+}
+
+async function fetchPlaybackPage(meta, bvid) {
+  const href = normalizeVideoHref(meta.href) || `https://www.bilibili.com/video/${bvid}/`;
+  return fetchPlaybackResource(href, 'text/html', async response => readPlaybackPageData(await response.text(), href));
+}
+
+async function fetchPlaybackResource(url, accept, read) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('请求超时'));
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([timeout, (async () => {
+      const response = await fetch(url, { credentials: 'include', headers: { accept }, signal: controller.signal });
+      if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+      return await read(response);
+    })()]);
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause), { cause });
+    error.url = url;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function describeFailure(error) {
+  return { source: error.source, message: error.message, status: error.status, code: error.code, url: error.url };
 }
 
 function normalizeVideoData(videoData, pageList) {
@@ -184,9 +242,8 @@ function resolveCurrentPage(meta, initialState) {
   const urlPage = Number(parsed.searchParams.get('p') || parsed.searchParams.get('page') || 0);
   const statePage = Number(initialState?.p || 0);
   const page = metaPage || urlPage || statePage || 1;
-  const pageCount = initialState?.videoData?.pages?.length || 0;
   if (!Number.isFinite(page) || page < 1) return 1;
-  return pageCount ? Math.min(page, pageCount) : page;
+  return page;
 }
 
 function getVideoPage(videoData, p) {
