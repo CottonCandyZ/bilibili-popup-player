@@ -336,52 +336,6 @@ ${getPlayerThemeVariableCss('#bilibili-player')}
         display: block;
         stroke: currentColor;
       }
-      #${APP}-pip-controls {
-        position: static !important;
-        z-index: auto !important;
-        transform: none !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        height: 100% !important;
-        margin: 0 14px 0 0 !important;
-        padding: 0 !important;
-        vertical-align: middle !important;
-        pointer-events: auto !important;
-        flex: 0 0 auto !important;
-      }
-      #${APP}-pip-controls a {
-        all: unset;
-        box-sizing: border-box !important;
-        position: relative !important;
-        top: -8px !important;
-        width: auto !important;
-        height: 100% !important;
-        min-width: auto !important;
-        max-width: none !important;
-        padding: 0 !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        flex: 0 0 auto !important;
-        border: 0 !important;
-        color: #fff !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        text-decoration: none !important;
-        white-space: nowrap !important;
-        font: 600 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-        letter-spacing: 0 !important;
-        cursor: pointer !important;
-        opacity: 0.92 !important;
-        text-shadow: 0 0 2px rgba(0, 0, 0, 0.6) !important;
-      }
-      #${APP}-pip-controls a:hover,
-      #${APP}-pip-controls a:focus-visible {
-        color: #fff !important;
-        background: transparent !important;
-        outline: none !important;
-        opacity: 1 !important;
-      }
       #comments-mount {
         box-sizing: border-box;
         min-height: 360px;
